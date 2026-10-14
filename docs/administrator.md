@@ -57,6 +57,20 @@ uv run claude-foundry admin --config .local/organization.json models \
 
 The command never changes an existing deployment's SKU or capacity, and it does not silently fall back between deployment types. Review the selected type's regional availability, data-processing geography and pricing for your organization.
 
+### Size quota for Desktop traffic
+
+The default capacity of 10 is a starting allocation for validation, not an organization-wide sizing recommendation. Desktop can issue several token-counting requests together. Check each deployment's actual `properties.rateLimits`, monitor 429 responses by operation, and allocate sufficient request and token capacity before rollout. [Claude quota is shared across resources and regions for Global Standard, and within a data zone for Data Zone Standard](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models-quotas-limits).
+
+For a new model, use `models --model MODEL_NAME --capacity N` (and `--sku` when applicable). For an existing deployment, change its capacity in Foundry or use an explicit ARM patch after reviewing available quota. This keeps the model and deployment type unchanged:
+
+```bash
+az rest --method patch --subscription YOUR_SUBSCRIPTION_ID \
+  --url 'https://management.azure.com/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/YOUR_RESOURCE_GROUP/providers/Microsoft.CognitiveServices/accounts/YOUR_FOUNDRY_ACCOUNT/deployments/YOUR_DEPLOYMENT_NAME?api-version=2025-10-01-preview' \
+  --body '{"sku":{"name":"DataZoneStandard","capacity":40}}'
+```
+
+Replace the example SKU with the deployment's current SKU and the capacity with the reviewed allocation. Wait for `provisioningState: Succeeded`, then repeat the affected live check and inspect the response's `x-ratelimit-*` headers. A successful management update does not prove that the inference service already enforces the new limits. More users or large uncached contexts may require a subscription quota increase; adding a resource or changing region does not create new Global Standard quota.
+
 `sync-models` includes successful Anthropic deployments and sets the newest model in each family as the default. Review the list before publishing it. Provisioning success must still be checked with live inference. To intentionally limit the published catalog, remove models from the local configuration after synchronization; the gateway enforces that list for all its users.
 
 ## 3. Publish the dedicated API

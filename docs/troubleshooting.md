@@ -4,6 +4,7 @@
 | --- | --- |
 | APIM 401 | Run `claude-foundry login`; check tenant, Cognitive Services audience, issuer and the optional object-ID allowlist. A token for Azure Resource Manager is not an inference token. |
 | Foundry 401/403 | Verify Cognitive Services User inference RBAC on the Foundry account for the signed-in user/group. Allow time for RBAC propagation. |
+| Foundry 429 | Inspect the operation and model in Application Insights. Token-counting bursts can be throttled even when inference succeeds. Check the deployment's `rateLimits` and available model/SKU quota, increase its allocation if appropriate, or request additional quota. Clients must respect retry delays; do not hide throttling with a synthetic successful response. |
 | 404 from a model after deployment | Provisioning success does not prove inference availability. Check the exact deployment/model identifier, then test the Foundry endpoint to distinguish a gateway issue from a provider issue. Keep a failing model out of the published client catalog until validated. |
 | Marketplace purchase denied | Review the saved report and subscription offer/purchase policy. An internal or sandbox subscription may disallow nonzero-priced offers. Resolve with the billing administrator; retries do not bypass the restriction. |
 | No available quota | Request regional/model quota or free unused capacity. Discovery does not claim access based only on the catalog. |
