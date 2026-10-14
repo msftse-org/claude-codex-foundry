@@ -36,10 +36,12 @@ class Authenticator:
             )
             if (
                 claims["tid"] != self.tenant
+                or not isinstance(claims.get("scp"), str)
                 or "access_as_user" not in claims.get("scp", "").split()
                 or claims.get("azp") != self.client_id
+                or not isinstance(claims["oid"], str)
             ):
                 raise ValueError("Wrong tenant, scope, or client")
             return str(UUID(claims["oid"]))
-        except (jwt.PyJWTError, ValueError, KeyError) as exc:
+        except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
             raise HTTPException(401, "Your sign-in is invalid or expired. Sign in again.") from exc

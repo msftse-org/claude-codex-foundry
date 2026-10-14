@@ -333,7 +333,7 @@ def test_azure_publication_restores_first_policy_on_second_failure(org, state):
     with pytest.raises(RuntimeError):
         publish(org, state, azure)
     writes = [call for call in azure.calls if call[0] == "PUT"]
-    assert len(writes) == 3
+    assert len(writes) == 4
     assert writes[-1][2]["properties"]["value"] == "<old-policy/>"
     assert writes[-1][2]["properties"]["format"] == "xml"
 
@@ -453,3 +453,280 @@ def test_planning_rates_keep_public_source_and_reject_unsafe_urls(state):
     assert updated["audit"][-1]["after"]["source_url"] == value["source_url"]
     with pytest.raises(ValueError):
         change(state, "pricing", {**value, "source_url": "javascript:alert(1)"})
+
+
+@pytest.mark.parametrize(
+    "claims", [{"scp": None}, {"scp": ["access_as_user"]}, {"oid": 123}, {"exp": None}]
+)
+def test_malformed_claim_types_fail_closed(app, org, key, claims):
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/state", headers={"Authorization": "Bearer " + token(org, key, **claims)}
+        )
+        assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "length,body,status",
+    [
+        ("1", b"x" * 1_000_001, 413),
+        ("1", b"{}", 400),
+        ("invalid", b"{}", 400),
+        ("1000001", b"{}", 413),
+    ],
+)
+def test_body_limit_checks_received_bytes_and_secures_rejections(app, length, body, status):
+    with TestClient(app) as client:
+        response = client.post("/api/changes", content=body, headers={"Content-Length": length})
+        assert response.status_code == status
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
+@pytest.mark.parametrize("role", ["owner", "admin", "billing", "auditor", "developer"])
+def test_complete_role_read_and_write_journey(app, org, key, monkeypatch, role):
+    data, etag = app.state.store.read()
+    actor = add_member(data, role)
+    app.state.store.save(data, etag)
+    monkeypatch.setattr("claude_foundry.portal.app.publish", lambda *args: None)
+    with TestClient(app) as client:
+        auth = headers(org, key, actor["id"])
+        read = client.get("/api/state", headers=auth)
+        assert read.status_code == 200
+        for route in ["/api/impact", "/api/telemetry"]:
+            assert client.get(route, headers=auth).status_code == (
+                403 if role == "developer" else 200
+            )
+        assert client.get("/api/client-profile", headers=auth).status_code == 200
+        assert client.get(
+            "/api/client-profile", params={"group_id": actor["group_id"]}, headers=auth
+        ).status_code == (200 if role in {"owner", "admin"} else 403)
+        csv = f"object_id,name,email\n{uuid4()},Test developer,test@example.com"
+        values = {
+            "member": {**actor, "id": str(uuid4()), "role": "developer"},
+            "member_import": {"csv": csv, "group_id": actor["group_id"]},
+            "group": {**data["groups"][0], "id": str(uuid4()), "name": "Test group"},
+            "settings": {**data["settings"], "monthly_budget_usd": 123},
+            "pricing": {
+                "model": "claude-sonnet-4-6",
+                "input_per_million": 3,
+                "output_per_million": 15,
+            },
+            "request": {"model": "claude-sonnet-4-6", "reason": "Needed for validation"},
+        }
+        preview = client.post("/api/import-preview", headers=auth, json=values["member_import"])
+        assert preview.status_code == (200 if role in {"owner", "admin"} else 403)
+        for kind, value in values.items():
+            before = app.state.store.read()[0]
+            allowed = (
+                role in {"owner", "admin"}
+                or kind == "request"
+                or (role == "billing" and kind in {"settings", "pricing"})
+            )
+            response = client.post(
+                "/api/changes",
+                headers=auth,
+                json={"revision": before["revision"], "kind": kind, "value": value},
+            )
+            assert response.status_code == (200 if allowed else 403), (role, kind, response.text)
+            after = app.state.store.read()[0]
+            if not allowed:
+                assert after == before
+            else:
+                assert after["revision"] == before["revision"] + 1
+                assert after["audit"][-1]["actor_id"] == actor["id"]
+        before = app.state.store.read()[0]
+        decision = {"id": before["requests"][-1]["id"], "approve": True, "note": "Validated"}
+        response = client.post(
+            "/api/changes",
+            headers=auth,
+            json={"revision": before["revision"], "kind": "decision", "value": decision},
+        )
+        assert response.status_code == (200 if role in {"owner", "admin"} else 403)
+        before = app.state.store.read()[0]
+        result = client.post(
+            "/api/publish",
+            headers=auth,
+            json={"revision": before["revision"], "organization": before["settings"]["name"]},
+        )
+        assert result.status_code == (200 if role in {"owner", "admin"} else 403)
+
+
+def test_concurrent_role_revocation_cannot_authorize_against_newer_state(
+    app, org, key, monkeypatch
+):
+    store = app.state.store
+    data, etag = store.read()
+    actor = add_member(data, "admin")
+    store.save(data, etag)
+    read = store.read
+    changed = False
+
+    def revoke_after_authorization_read():
+        nonlocal changed
+        snapshot, version = read()
+        if not changed:
+            changed = True
+            latest = copy.deepcopy(snapshot)
+            next(m for m in latest["members"] if m["id"] == actor["id"])["status"] = "suspended"
+            latest["revision"] += 1
+            store.save(latest, version)
+        return snapshot, version
+
+    monkeypatch.setattr(store, "read", revoke_after_authorization_read)
+    with TestClient(app) as client:
+        result = client.post(
+            "/api/changes",
+            headers=headers(org, key, actor["id"]),
+            json={
+                "revision": 1,
+                "kind": "settings",
+                "value": {**data["settings"], "name": "Unauthorized overwrite"},
+            },
+        )
+        assert result.status_code == 409
+        assert read()[0]["settings"]["name"] == data["settings"]["name"]
+
+
+def test_pending_requests_are_deduplicated_and_decline_does_not_grant(state):
+    value = {"model": "claude-sonnet-4-6", "reason": "Needed for evaluation"}
+    pending = change(state, "request", value)
+    with pytest.raises(ValueError, match="open request"):
+        change(pending, "request", value)
+    declined = change(
+        pending,
+        "decision",
+        {"id": pending["requests"][0]["id"], "approve": False, "note": "Not needed"},
+    )
+    assert declined["requests"][0]["status"] == "declined"
+    assert declined["members"][0]["extra_models"] == []
+    assert len(change(declined, "request", value)["requests"]) == 2
+
+
+def test_profile_is_scoped_and_has_valid_defaults(app, org, key, monkeypatch):
+    monkeypatch.setenv("PORTAL_DESKTOP_CLIENT_ID", CLIENT)
+    with TestClient(app) as client:
+        response = client.get("/api/client-profile", headers=headers(org, key))
+        assert response.status_code == 200
+        assert "attachment" in response.headers["content-disposition"]
+        profile = response.json()
+        assert profile["auth_mode"] == "msal"
+        assert profile["client_id"] == CLIENT
+        assert [m["name"] for m in profile["models"] if m["isFamilyDefault"]] == [
+            "claude-sonnet-4-6"
+        ]
+        assert "subscription_id" not in profile
+        assert "secret" not in response.text.lower()
+        assert (
+            client.get(
+                "/api/client-profile", params={"group_id": str(uuid4())}, headers=headers(org, key)
+            ).status_code
+            == 404
+        )
+        data, etag = app.state.store.read()
+        data["groups"][0].update(model_ids=[], default_model="")
+        app.state.store.save(data, etag)
+        assert client.get("/api/client-profile", headers=headers(org, key)).status_code == 409
+
+
+def test_publication_timeout_restores_every_attempt_even_when_first_restore_fails(org, state):
+    class Azure:
+        def __init__(self):
+            self.writes = []
+
+        def request(self, method, path, body=None):
+            if method == "GET":
+                return {"properties": {"format": "rawxml", "value": "old"}}
+            self.writes.append((path, body["properties"]["value"]))
+            if len(self.writes) in {2, 3}:
+                raise TimeoutError("Uncertain remote outcome")
+
+    azure = Azure()
+    with pytest.raises(RuntimeError, match="rollback is incomplete"):
+        publish(org, state, azure)
+    assert len(azure.writes) == 4
+    assert [value for _, value in azure.writes[-2:]] == ["old", "old"]
+
+
+def test_active_publication_blocks_edits_and_duplicate_publish(app, org, key):
+    from claude_foundry.portal.domain import now
+
+    data, etag = app.state.store.read()
+    data.update(publish_status="publishing", publish_started_at=now())
+    app.state.store.save(data, etag)
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        assert (
+            client.post(
+                "/api/changes",
+                headers=auth,
+                json={"revision": 0, "kind": "settings", "value": data["settings"]},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                "/api/publish",
+                headers=auth,
+                json={"revision": 0, "organization": data["settings"]["name"]},
+            ).status_code
+            == 409
+        )
+
+
+def test_invalid_group_and_default_cannot_be_saved(state):
+    with pytest.raises(ValueError, match="existing group"):
+        change(
+            state,
+            "member",
+            {
+                **state["members"][0],
+                "id": str(uuid4()),
+                "group_id": str(uuid4()),
+                "role": "developer",
+            },
+        )
+    with pytest.raises(ValueError, match="default model"):
+        change(state, "group", {**state["groups"][0], "model_ids": []})
+    with pytest.raises(ValueError, match="existing default group"):
+        import_members(state, {"csv": "object_id,name,email", "group_id": []})
+
+
+def test_chunked_oversized_body_is_stopped_before_application():
+    import asyncio
+
+    from claude_foundry.portal.boundary import RequestBoundary
+
+    called, sent = [], []
+    chunks = iter(
+        [
+            {"type": "http.request", "body": b"x" * 600_000, "more_body": True},
+            {"type": "http.request", "body": b"x" * 600_000, "more_body": False},
+        ]
+    )
+
+    async def receive():
+        return next(chunks)
+
+    async def send(message):
+        sent.append(message)
+
+    async def application(*args):
+        called.append(True)
+
+    asyncio.run(
+        RequestBoundary(application)(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/changes",
+                "headers": [(b"content-length", b"1")],
+            },
+            receive,
+            send,
+        )
+    )
+    assert not called
+    assert sent[0]["status"] == 413
+    assert (b"cache-control", b"no-store") in sent[0]["headers"]

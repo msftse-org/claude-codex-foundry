@@ -2,7 +2,7 @@
 
 Thanks for helping improve Claude Foundry. Useful contributions include clearer installation instructions, reproducible bug reports, accessibility improvements, authentication fixes, and tested gateway or portal changes.
 
-Start with the [README](README.md) for the product and the [security model](docs/security.md) before changing authentication or enforcement. The portal is a preview in `main`; remaining rollout work is tracked in [portal/VALIDATION.md](portal/VALIDATION.md).
+Start with the [README](README.md) for the product and the [security model](docs/security.md) and [identity/permission reference](docs/identity-and-permissions.md) before changing authentication or enforcement. The portal is a preview in `main`; remaining rollout work is tracked in [portal/VALIDATION.md](portal/VALIDATION.md).
 
 ## Before you start
 
@@ -110,3 +110,18 @@ For UI changes, update the [portal walkthrough](docs/portal-guide.md) when behav
 5. Open a PR against `main` using the template. Explain the problem, resulting behavior, validation, and any rollout or compatibility concerns.
 
 Keep follow-up changes on feature branches and merge through reviewed PRs. Source merges do not trigger cloud deployment or constitute a production release. Update the validation record as real evidence closes preview gaps; tagging and customer rollout are separate maintainer decisions.
+
+## Verify security-sensitive portal changes
+
+Run the role journey and failure-boundary tests with `uv run --extra portal pytest tests/test_portal.py tests/test_portal_costs.py`. Preserve tenant/audience/client/scope checks, use the same state snapshot for authorization and conditional writes, and test denied writes for absence of mutation. Never use local-owner mode as proof of authentication.
+
+Audit the pinned runtime dependencies when changing packages:
+
+```bash
+uv export --frozen --extra portal --no-dev --no-hashes --no-emit-project \
+  --format requirements-txt --output /tmp/claude-foundry-runtime.txt
+uvx pip-audit --no-deps --disable-pip --requirement /tmp/claude-foundry-runtime.txt
+npm --prefix portal/web audit --omit=dev
+```
+
+The export contains all resolved transitive runtime dependencies; `--no-deps --disable-pip` avoids resolving a second, potentially different environment. Inspect audit errors and skipped packages; an unavailable advisory service is not a passing result. Keep a dated, sanitized result in the validation record. Never publish a live token or raw customer policy to reproduce a security issue.

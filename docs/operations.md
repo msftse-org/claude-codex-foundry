@@ -64,11 +64,23 @@ For Mac updates, distribute a newly built organization bundle. Users rerun `Inst
 | --- | --- |
 | Mac configuration problem | Run the installed `claude-foundry restore`, then restart Claude. This restores managed settings, not credentials or history migration. |
 | Baseline gateway regression | Reapply the last reviewed baseline configuration/policies to that API and verify allowed/denied requests. |
-| Portal policy publication failure | Retain the draft, inspect the visible failure and identity permissions, and check the actual APIM policy before retrying. Offline rollback behavior is tested; live interruption/recovery still needs validation. |
+| Portal policy publication failure | Retain the draft and follow the publication recovery procedure below. Restore attempts are best effort; do not assume that an error means Azure changed nothing. |
 | Portal code regression | Redeploy the last verified application package after checking state compatibility. |
 | Accidental portal state change | Private Blob versioning and 30-day soft deletion support recovery. Have an authorized operator select and validate a prior version, and reconcile it with the policy currently published in APIM. Exercise this procedure in preview before relying on it. |
 
 Blob recovery and gateway-policy recovery are separate actions. Restoring one does not automatically restore the other. Audit records share the mutable state Blob and are not an immutable archive. Preserve authorized incident evidence before a recovery operation.
+
+### Portal publication recovery
+
+1. Stop other publication jobs and manual policy edits for the affected API. Record the API ID, UTC time, reviewed revision, status, and audit events. Keep snapshots private because policies contain principal object IDs and grants.
+2. An Azure operator should read **both** the API-level `policies/policy` resource and `operations/models/policies/policy`. Compare them with the last reviewed policy pair and retained backup. A timeout can occur after a write was applied. The application tries to restore every attempted policy, but abrupt termination or another Azure failure can prevent recovery.
+3. Inspect ARM activity and the portal managed identity's API-scoped role assignment. A portal `failed` result does not certify successful rollback. A `publishing` state can remain after termination; the server blocks another publication for ten minutes from `publish_started_at`.
+4. Choose either the last known-good pair or the current reviewed draft. Restore both old policies through an authorized operator, or, after the ten-minute stale-publication window, reload and explicitly review/publish the current draft. Do not clear the marker or change a revision manually merely to bypass the lock.
+5. Verify an allowed caller, a denied model/member, the filtered model catalog, and streaming. Confirm the portal's published hash/status and retain a recovery audit. Successful ARM writes and actual gateway propagation are different events.
+
+Publication is serialized within the portal using Blob ETags, but the two ARM writes are not transactional and do not protect against external manual policy writers. Designate one management path per API. A process-kill recovery drill and a real Blob-version restore drill remain customer acceptance requirements.
+
+For Blob recovery, use an operator with data-plane rights from a network that can reach the private endpoint. List versions of `portal-state/organization.json`, download the current and selected versions to restricted storage, validate membership/ownership/model references, then restore the reviewed version with a conditional write. Do not enable a public endpoint or shared keys to make recovery easier. Restored portal state can differ from APIM's active policy; review and reconcile the pair before reopening administration.
 
 ## Offboarding and retirement
 

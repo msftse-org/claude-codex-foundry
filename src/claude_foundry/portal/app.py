@@ -5,7 +5,6 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from azure.identity import AzureCliCredential, ManagedIdentityCredential
@@ -16,6 +15,7 @@ from pydantic import ValidationError
 
 from ..config import export_client, load_org
 from .auth import Authenticator
+from .boundary import RequestBoundary
 from .costs import CostQuery, cost_analysis
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
@@ -61,50 +61,11 @@ def create_app(config=None, store=None, credential=None, local=None):
             )
         return app.state.store
 
-    @app.middleware("http")
-    async def headers(request, call_next):
-        if local and request.client.host not in {"127.0.0.1", "::1", "testclient"}:
-            return JSONResponse(
-                {"detail": "Local administrator mode accepts loopback requests only."},
-                status_code=403,
-            )
-        if local and (
-            request.url.hostname not in {"localhost", "127.0.0.1", "::1", "testserver"}
-            or (
-                request.headers.get("origin")
-                and urlsplit(request.headers["origin"]).hostname
-                not in {"localhost", "127.0.0.1", "::1"}
-            )
-            or request.headers.get("sec-fetch-site") == "cross-site"
-        ):
-            return JSONResponse(
-                {"detail": "Use a loopback origin for local preview."}, status_code=403
-            )
-        try:
-            size = int(request.headers.get("content-length", "0"))
-        except ValueError:
-            return JSONResponse({"detail": "Invalid content length."}, status_code=400)
-        if request.method in {"POST", "PUT", "PATCH"} and "content-length" not in request.headers:
-            return JSONResponse({"detail": "A content length is required."}, status_code=411)
-        if size < 0 or size > 1_000_000:
-            return JSONResponse({"detail": "Request too large."}, status_code=413)
-        response = await call_next(request)
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://login.microsoftonline.com; frame-src https://login.microsoftonline.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
-        )
-        if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
-        if not local:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000"
-        return response
+    app.add_middleware(RequestBoundary, local=local)
 
     def actor(request: Request):
         oid = owner_id if local else auth.identity(request.headers.get("authorization"))
-        state, _ = storage().read()
+        state, etag = storage().read()
         member = next(
             (m for m in state["members"] if m["id"] == oid and m["status"] == "active"), None
         )
@@ -112,7 +73,7 @@ def create_app(config=None, store=None, credential=None, local=None):
             raise HTTPException(
                 403, "Your organization has not granted portal access, or your access is suspended."
             )
-        return member
+        return state, etag, member
 
     def administrative(member):
         if member["role"] == "developer":
@@ -131,8 +92,8 @@ def create_app(config=None, store=None, credential=None, local=None):
         }
 
     @app.get("/api/state")
-    def state(member=actor_dependency):
-        data, _ = storage().read()
+    def state(access=actor_dependency):
+        data, _, member = access
         data.update(
             viewer=member,
             models=config["models"],
@@ -152,8 +113,8 @@ def create_app(config=None, store=None, credential=None, local=None):
         return data
 
     @app.post("/api/changes")
-    def change(body: Change, member=actor_dependency):
-        data, etag = storage().read()
+    def change(body: Change, access=actor_dependency):
+        data, etag, member = access
         if data["revision"] != body.revision:
             raise HTTPException(
                 409, "Another administrator saved changes. Reload and review again."
@@ -181,10 +142,10 @@ def create_app(config=None, store=None, credential=None, local=None):
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/import-preview")
-    def import_preview(body: dict, member=actor_dependency):
+    def import_preview(body: dict, access=actor_dependency):
+        data, _, member = access
         if member["role"] not in {"owner", "admin"}:
             raise HTTPException(403, "Only owners and administrators can import members.")
-        data, _ = storage().read()
         try:
             members = import_members(data, body)
             data["members"].extend(members)
@@ -198,15 +159,16 @@ def create_app(config=None, store=None, credential=None, local=None):
             raise HTTPException(422, str(exc)) from exc
 
     @app.get("/api/impact")
-    def preview(member=actor_dependency):
+    def preview(access=actor_dependency):
+        data, _, member = access
         administrative(member)
-        return impact(config, storage().read()[0])
+        return impact(config, data)
 
     @app.post("/api/publish")
-    def deploy(body: dict, member=actor_dependency):
+    def deploy(body: dict, access=actor_dependency):
+        data, etag, member = access
         if member["role"] not in {"owner", "admin"}:
             raise HTTPException(403, "Only owners and administrators can publish gateway access.")
-        data, etag = storage().read()
         if (
             body.get("revision") != data["revision"]
             or body.get("organization") != data["settings"]["name"]
@@ -250,7 +212,7 @@ def create_app(config=None, store=None, credential=None, local=None):
             storage().save(data, etag)
             raise HTTPException(
                 502,
-                "Azure could not publish this policy. Check the portal identity's APIM permission and Application Insights. The draft is retained.",
+                "Azure could not confirm publication. The draft is retained. An operator must inspect both gateway policies before retrying; automatic rollback may be incomplete.",
             ) from None
         data["revision"] += 1
         data.update(
@@ -264,7 +226,8 @@ def create_app(config=None, store=None, credential=None, local=None):
         return {"published": True, "revision": data["revision"]}
 
     @app.get("/api/telemetry")
-    def usage(days: int = 30, member=actor_dependency):
+    def usage(days: int = 30, access=actor_dependency):
+        _, _, member = access
         administrative(member)
         if days not in {7, 30, 90}:
             raise HTTPException(422, "Choose 7, 30, or 90 days.")
@@ -282,9 +245,10 @@ def create_app(config=None, store=None, credential=None, local=None):
             ) from None
 
     @app.post("/api/cost-analysis")
-    def costs(body: CostQuery, member=actor_dependency):
+    def costs(body: CostQuery, access=actor_dependency):
+        data, _, member = access
         administrative(member)
-        prices = storage().read()[0]["prices"]
+        prices = data["prices"]
         key = body.model_dump_json() + json.dumps(prices, sort_keys=True)
         cached = app.state.cost_cache.get(key)
         if cached and (datetime.now(UTC) - cached[0]).total_seconds() < 60:
@@ -305,8 +269,8 @@ def create_app(config=None, store=None, credential=None, local=None):
         return result
 
     @app.get("/api/client-profile")
-    def client_profile(group_id: str | None = None, member=actor_dependency):
-        data, _ = storage().read()
+    def client_profile(group_id: str | None = None, access=actor_dependency):
+        data, _, member = access
         allowed = effective_models(data, member)
         group = next(g for g in data["groups"] if g["id"] == member["group_id"])
         if group_id:

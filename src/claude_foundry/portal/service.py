@@ -23,25 +23,34 @@ def publish(config, state, azure):
         api_path(config) + "/operations/models/policies/policy",
     ]
     old = [azure.request("GET", p) for p in paths]
-    changed = []
+    attempted = []
     try:
         for path, xml in zip(paths, [policy, catalog], strict=True):
+            # A timeout may occur after Azure applied the write. Include that policy in recovery.
+            attempted.append(path)
             azure.request("PUT", path, {"properties": {"format": "rawxml", "value": xml}})
-            changed.append(path)
     except Exception:
-        # Restore both policies if the second update failed; report rollback failures too.
+        failed = False
         for path, previous in zip(paths, old, strict=True):
-            if path in changed:
-                azure.request(
-                    "PUT",
-                    path,
-                    {
-                        "properties": {
-                            "format": previous["properties"].get("format", "rawxml"),
-                            "value": previous["properties"]["value"],
-                        }
-                    },
-                )
+            if path in attempted:
+                try:
+                    azure.request(
+                        "PUT",
+                        path,
+                        {
+                            "properties": {
+                                "format": previous["properties"].get("format", "rawxml"),
+                                "value": previous["properties"]["value"],
+                            }
+                        },
+                    )
+                except Exception:
+                    # Still attempt the other restore. Never report success after partial recovery.
+                    failed = True
+        if failed:
+            raise RuntimeError(
+                "Gateway policy rollback is incomplete; operator recovery required"
+            ) from None
         raise
 
 

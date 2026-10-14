@@ -1,6 +1,8 @@
 # Screenshot provenance
 
-These JPEGs were captured on **2026-10-14** from the real Azure-hosted Claude Foundry Admin preview, using the owner's signed-in Microsoft Edge session. The application build was based on commit `4ff8c720bc723a5451a1de6404192633adc34efd`. The sign-in capture used a separate unsigned-in tab without signing out the owner's session.
+The original walkthrough JPEGs were captured on **2026-10-14** from the real Azure-hosted Claude Foundry Admin preview, using the owner's signed-in Microsoft Edge session. The application build was based on commit `4ff8c720bc723a5451a1de6404192633adc34efd`. The sign-in capture used a separate unsigned-in tab without signing out the owner's session.
+
+`portal-security-status.jpg` was captured later on the same date from the deployed code in `10bd051`, after the hosted managed identity successfully published the preview policy. It shows the real published/connected status and excludes both pointers and operator identifiers.
 
 The environment is an isolated preview, not a customer production release. Usage comes from small real verification requests, including deliberate 401/403 tests. Empty request lists and unset budgets are genuine current state. Capturing the images did not save form changes or publish gateway policies.
 

@@ -1,15 +1,8 @@
 import { useState } from "react";
 import type { State, Telemetry } from "./types";
-import {
-    Empty,
-    Field,
-    fmt,
-    Drawer,
-    DrawerClose,
-    Notice,
-    Status,
-} from "./components";
+import { Empty, fmt, Notice, Status } from "./components";
 import { standardRateEstimate } from "./estimates";
+import { RatesDrawer } from "./CostAnalysis";
 
 const dollars = (n: number) =>
     new Intl.NumberFormat("en-US", {
@@ -34,7 +27,6 @@ export function Spend({
     const rows = usage.month_tokens || [];
     const estimate = standardRateEstimate(rows, state.prices);
     const budget = state.settings.monthly_budget_usd;
-    const currentPrice = state.prices.find((p) => p.model === editing);
     return (
         <section className="section" style={{ marginTop: 36 }}>
             <div className="sectionhead">
@@ -287,75 +279,13 @@ export function Spend({
                 it does not change Azure prices.
             </p>
             {editing && (
-                <Drawer
+                <RatesDrawer
+                    state={state}
                     busy={busy}
-                    title="Set model planning rates"
-                    description={
-                        state.models.find((m) => m.name === editing)
-                            ?.labelOverride || editing
-                    }
-                    onClose={() => setEditing(undefined)}
-                >
-                    <form
-                        className="drawer-form"
-                        onSubmit={async (e) => {
-                            e.preventDefault();
-                            const form = new FormData(e.currentTarget);
-                            if (
-                                await save({
-                                    model: editing,
-                                    input_per_million: Number(
-                                        form.get("input"),
-                                    ),
-                                    output_per_million: Number(
-                                        form.get("output"),
-                                    ),
-                                })
-                            )
-                                setEditing(undefined);
-                        }}
-                    >
-                        <div className="drawer-scroll">
-                            <Notice>
-                                Use your contracted Azure rates. These values
-                                are for estimates only and do not change the
-                                price charged by Microsoft.
-                            </Notice>
-                            <Field label="Input USD per million tokens">
-                                <input
-                                    name="input"
-                                    type="number"
-                                    min="0"
-                                    max="10000"
-                                    step="0.000001"
-                                    defaultValue={
-                                        currentPrice?.input_per_million
-                                    }
-                                    required
-                                />
-                            </Field>
-                            <Field label="Output USD per million tokens">
-                                <input
-                                    name="output"
-                                    type="number"
-                                    min="0"
-                                    max="10000"
-                                    step="0.000001"
-                                    defaultValue={
-                                        currentPrice?.output_per_million
-                                    }
-                                    required
-                                />
-                            </Field>
-                        </div>
-                        <div className="dialogfooter">
-                            <DrawerClose disabled={busy} />
-                            <button className="button primary" disabled={busy}>
-                                {busy ? "Saving…" : "Save planning rates"}
-                            </button>
-                        </div>
-                    </form>
-                </Drawer>
+                    initialModel={editing}
+                    save={save}
+                    close={() => setEditing(undefined)}
+                />
             )}
         </section>
     );

@@ -131,7 +131,7 @@ def import_members(state, value):
     if set(value) != {"csv", "group_id"} or not isinstance(value["csv"], str):
         raise ValueError("Provide CSV content and the default group")
     groups = {group["id"] for group in state["groups"]}
-    if value["group_id"] not in groups:
+    if not isinstance(value["group_id"], str) or value["group_id"] not in groups:
         raise ValueError("Select an existing default group")
     reader = csv.DictReader(io.StringIO(value["csv"].lstrip("\ufeff")), strict=True)
     fields = reader.fieldnames or []
@@ -241,6 +241,11 @@ def apply_change(state, change, actor, model_ids):
             or not 5 <= len(value["reason"]) <= 1000
         ):
             raise ValueError("Choose a deployed model and give a reason (5–1000 characters)")
+        if any(
+            r["member_id"] == actor["id"] and r["model"] == value["model"] and r["status"] == "open"
+            for r in state["requests"]
+        ):
+            raise ValueError("You already have an open request for this model")
         value = {
             **value,
             "id": str(uuid4()),

@@ -116,13 +116,15 @@ npm --prefix portal/web test
 az bicep build --file infra/portal.bicep --outfile /tmp/portal.arm.json
 ```
 
-The live governance test temporarily changes **only a preview API** and restores both policies. It sends small billable inference requests. Supply a state file containing the signed-in test principal; never use a production route.
+The live governance test temporarily changes **only a preview API** and restores both policies. It covers catalog filtering, model denial, suspension, streaming, token counting, all three monthly quota scopes, and per-member token/request rates. It sends small billable inference requests. Supply a state file containing the signed-in test principal; never use a production route.
 
 ```bash
 uv run --extra portal python scripts/verify_portal_preview.py \
   --organization .local/portal/organization.json \
   --state .local/portal/state.json --all-models
 ```
+
+The current outcomes and limitations are tracked in [VALIDATION.md](VALIDATION.md). Read the [identity and permissions reference](../docs/identity-and-permissions.md) for token flows, exact Azure scopes, role boundaries and revocation timing.
 
 Before release, record evidence for all of the following:
 

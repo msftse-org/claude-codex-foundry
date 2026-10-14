@@ -1,8 +1,12 @@
 # Security architecture
 
-[← README](../README.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
+[← README](../README.md) · [Identity and permission reference](identity-and-permissions.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
 
 Claude Foundry has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow prepares a separate preview API so this can be evaluated without replacing the baseline API.
+
+![Hosted preview showing Entra sign-in, published gateway policy, connected reporting, and no portal conversation storage](images/portal-security-status.jpg)
+
+Actual hosted preview, 2026-10-14. This status panel reports portal behavior; it does not audit separate Azure diagnostic settings or certify deployment security.
 
 ## Inference authorization
 
@@ -38,7 +42,7 @@ Saving member suspension immediately affects portal access; gateway access chang
 
 ## Azure identities, storage, and network
 
-The portal template uses managed identity and narrowly scoped access to the configured APIM API policy/model operation, selected Insights component, and portal storage. It does not grant directory management or Azure invoice access. The portal is outside the inference path.
+The portal template uses managed identity with access to policies for one configured APIM API (including its operation policies), the selected Insights component, and the dedicated portal storage account. It does not grant directory management or Azure invoice access. The portal is outside the inference path. The [permission reference](identity-and-permissions.md#azure-runtime-identities-and-exact-scope) distinguishes the code's operations from the broader authority of each Azure role.
 
 Blob state uses managed-identity access, shared keys disabled, versioning, 30-day soft deletion, and ETag conflict checks. Private networking is enabled by default. The optional public-storage-endpoint configuration is a different network posture and must meet organization policy. A private Blob endpoint does not make the public portal, APIM, or Foundry endpoint private.
 
@@ -49,6 +53,12 @@ Administrative state and audit events share a mutable Blob. Authorized Azure sto
 New gateway diagnostics record request metadata, model, request ID, and Entra principal object ID, with zero request/response body bytes. The portal stores member names/emails/object IDs, entitlements, limits, planning rates, access-request reasons, and administrative changes. Treat this as organizational data and restrict state/log readers accordingly.
 
 Existing APIM diagnostics are preserved and may have different body/header capture settings. Review them explicitly, including service-level diagnostics. Do not log authorization headers or API keys. Token metrics are operational telemetry, not a billing ledger; interrupted streams may be incomplete.
+
+The 2026-10-14 deployment audit found zero captured body bytes and no captured headers in the preview API and Application Insights service diagnostic, with query parameters hidden and credential headers masked. A separate, pre-existing service-level `azuremonitor` diagnostic has client-IP logging enabled. That diagnostic was preserved. Customer documentation and retention policies must account for client IPs when enabled.
+
+The API caps received request bodies at 1 MB before JSON parsing, checks their declared length, validates structured input, rejects unknown fields, and returns no-store responses for API data. CSP, frame denial, no-referrer, nosniff and HSTS protect hosted responses, including normal authorization/validation rejections. React escapes rendered values; CSV exports neutralize spreadsheet formula prefixes. These controls do not provide a WAF, distributed portal API rate limiting, or protection against every denial-of-service scenario. Azure's HTTP host may buffer a request before application code sees it.
+
+State and audit history currently share one growing JSON document. Monitor its size and latency, and plan an indexed store/archived audit design before relying on sustained enterprise-scale administration. There is no automatic immutable audit retention, SCIM provisioning, automatic Entra group synchronization, or billing reconciliation.
 
 The portal does not read Claude conversations or control local history/retention. Provider hosting, processing geography, and retention depend on model version/SKU and service terms. Review [Microsoft's Claude model documentation](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models) for your deployments.
 

@@ -234,20 +234,24 @@ function FiltersDrawer({
     );
 }
 
-function RatesDrawer({
+export function RatesDrawer({
     state,
     busy,
     save,
     close,
+    initialModel,
 }: {
+    initialModel?: string;
     state: State;
     busy: boolean;
     save: (value: unknown) => Promise<boolean>;
     close: () => void;
 }) {
     const [model, setModel] = useState(
-        state.models.find((m) => !state.prices.some((p) => p.model === m.name))
-            ?.name ||
+        initialModel ||
+            state.models.find(
+                (m) => !state.prices.some((p) => p.model === m.name),
+            )?.name ||
             state.models[0]?.name ||
             "",
     );

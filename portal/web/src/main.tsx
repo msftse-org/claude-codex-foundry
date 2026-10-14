@@ -9,7 +9,7 @@ import {
     SettingsForm,
     PublishDialog,
 } from "./editors";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
     ArrowClockwise,
@@ -130,6 +130,8 @@ function App() {
     const [state, setState] = useState<State>();
     const [usage, setUsage] = useState<Telemetry>(emptyTelemetry);
     const [usageError, setUsageError] = useState("");
+    const [usageLoading, setUsageLoading] = useState(false);
+    const usageSequence = useRef(0);
     const [signInDetails, setSignInDetails] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
@@ -155,12 +157,21 @@ function App() {
         return data;
     };
     const loadUsage = async (period = days) => {
+        const sequence = ++usageSequence.current;
+        setUsageLoading(true);
         setUsageError("");
         try {
-            setUsage(await api<Telemetry>(`/api/telemetry?days=${period}`));
+            const result = await api<Telemetry>(
+                `/api/telemetry?days=${period}`,
+            );
+            if (sequence === usageSequence.current) setUsage(result);
         } catch (e) {
-            setUsageError((e as Error).message);
-            setUsage((current) => ({ ...current, status: "error" }));
+            if (sequence === usageSequence.current) {
+                setUsageError((e as Error).message);
+                setUsage((current) => ({ ...current, status: "error" }));
+            }
+        } finally {
+            if (sequence === usageSequence.current) setUsageLoading(false);
         }
     };
     useEffect(() => {
@@ -677,20 +688,24 @@ function App() {
                                                         : "warn"
                                                 }
                                             >
-                                                {usage.status === "connected"
-                                                    ? "Connected"
-                                                    : "Not connected"}
+                                                {usageLoading
+                                                    ? "Loading…"
+                                                    : usage.status ===
+                                                        "connected"
+                                                      ? "Connected"
+                                                      : "Not connected"}
                                             </Status>
                                         </dd>
                                     </div>
                                     <div className="health">
-                                        <dt>Conversation capture</dt>
-                                        <dd>Off</dd>
+                                        <dt>Portal conversation storage</dt>
+                                        <dd>Not collected</dd>
                                     </div>
                                 </dl>
                                 <p className="footnote">
-                                    Content stays out of the admin console. Logs
-                                    contain operational metadata only.
+                                    This portal does not store conversation
+                                    content. Review Azure diagnostic capture
+                                    settings separately.
                                 </p>
                             </section>
                         </div>
@@ -1057,7 +1072,14 @@ function App() {
                                                         m.name,
                                                     ) ? (
                                                         <span aria-label="Allowed">
-                                                            <Check size={18} />
+                                                            <Check
+                                                                size={18}
+                                                                role="img"
+                                                                aria-label="Allowed"
+                                                                aria-hidden={
+                                                                    false
+                                                                }
+                                                            />
                                                         </span>
                                                     ) : (
                                                         <span
@@ -1117,7 +1139,11 @@ function App() {
                                     {values.map((v, i) => (
                                         <div key={i}>
                                             {v ? (
-                                                <Check aria-label="Allowed" />
+                                                <Check
+                                                    role="img"
+                                                    aria-label="Allowed"
+                                                    aria-hidden={false}
+                                                />
                                             ) : (
                                                 <span aria-label="Not allowed">
                                                     —
@@ -1317,7 +1343,11 @@ function App() {
                         </button>
                         <button
                             className="button"
-                            disabled={!usage.requests.length}
+                            disabled={
+                                usageLoading ||
+                                usage.status !== "connected" ||
+                                !usage.requests.length
+                            }
                             onClick={() =>
                                 exportCsv(
                                     "gateway-requests.csv",
@@ -1329,6 +1359,12 @@ function App() {
                             Export
                         </button>
                     </PageHead>
+                    {usageLoading && (
+                        <Notice>
+                            Updating usage… Previous results remain visible
+                            until this period finishes loading.
+                        </Notice>
+                    )}
                     {usageError ? (
                         <Notice tone="error">{usageError}</Notice>
                     ) : (

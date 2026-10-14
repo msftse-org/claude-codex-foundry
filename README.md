@@ -115,6 +115,7 @@ The portal is outside the inference path: its availability does not determine wh
 | Operate, upgrade, recover, and plan a rollout | [Operations guide](docs/operations.md) |
 | Query requests, errors, and token metrics | [Observability](docs/observability.md) |
 | Review identities, data, and trust boundaries | [Security architecture](docs/security.md) |
+| Understand sign-in, roles, Azure RBAC, and publication | [Identity and permissions](docs/identity-and-permissions.md) |
 | Diagnose errors | [Troubleshooting](docs/troubleshooting.md) |
 | Understand scope and common questions | [FAQ](docs/faq.md) |
 | Make a code or documentation contribution | [Contributing](CONTRIBUTING.md) |
