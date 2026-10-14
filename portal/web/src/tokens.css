@@ -1,0 +1,55 @@
+@import "@fontsource/spectral/400.css";
+@import "@fontsource/spectral/500.css";
+@import "@fontsource/atkinson-hyperlegible-next/400.css";
+@import "@fontsource/atkinson-hyperlegible-next/500.css";
+@import "@fontsource/atkinson-hyperlegible-next/600.css";
+:root {
+    color-scheme: light;
+    --paper: #f4f3ef;
+    --sheet: #fbfaf8;
+    --raised: #ffffff;
+    --recess: #ebeae5;
+    --rule: #dedcd5;
+    --rule-strong: #c9c6bd;
+    --control: #8e928c;
+    --ink: #1d2422;
+    --ink-2: #434c49;
+    --ink-3: #5f6965;
+    --accent: #1e5a66;
+    --accent-hover: #174a55;
+    --wash: #e4eceb;
+    --on-accent: #ffffff;
+    --positive: #33652a;
+    --positive-wash: #e6eee1;
+    --caution: #855a0c;
+    --caution-wash: #f6ecd9;
+    --critical: #b3261e;
+    --critical-wash: #f8e3e0;
+    --scrim: rgb(29 36 34 / 0.32);
+    --shadow: 0 24px 64px -16px rgb(29 36 34 / 0.28);
+}
+[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #141a19;
+    --sheet: #1a2120;
+    --raised: #222a28;
+    --recess: #0f1413;
+    --rule: #2a3331;
+    --rule-strong: #38423f;
+    --control: #6b7571;
+    --ink: #e8eae6;
+    --ink-2: #aeb5b1;
+    --ink-3: #8c9591;
+    --accent: #7dbfc9;
+    --accent-hover: #9bd0d8;
+    --wash: #1c3236;
+    --on-accent: #0f1413;
+    --positive: #8cc07e;
+    --positive-wash: #1d2b1a;
+    --caution: #e0b261;
+    --caution-wash: #2e2414;
+    --critical: #f08a80;
+    --critical-wash: #33191a;
+    --scrim: rgb(0 0 0 / 0.5);
+    --shadow: none;
+}
