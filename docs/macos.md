@@ -34,7 +34,11 @@ For an existing checkout, supply the profile explicitly:
 
 Use `--no-login` only if the selected authentication method already has a working session. Credential validation still runs before changing settings. The installer stops when it detects managed inference settings that local settings cannot override; your MDM administrator must deploy that configuration.
 
-Fully quit and reopen Claude Desktop. Its third-party profile enables Chat and Code and lists the organization's published models. The CLI uses the same gateway and credential helper. Existing consumer Claude conversations remain in their previous profile; they do not automatically move into the third-party profile.
+Fully quit and reopen Claude Desktop. Its third-party profile enables Chat and Code and lists the organization's published models. The CLI uses the same gateway and credential helper.
+
+## Bring your existing conversations
+
+An import-enabled bundle exposes Claude's native **Settings → Import & export → Import…** workflow. For a locally managed installation, pass `--enable-history-import` to `Install.command` to enable it explicitly. The importer preserves originals; installing alone does not copy history. Follow the [migration guide](conversation-migration.md) for source permissions, local Code sessions, attachment limits, and verification.
 
 ## Confirm it works
 

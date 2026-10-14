@@ -1,5 +1,8 @@
 import copy
 import json
+from pathlib import Path
+
+import pytest
 
 from claude_foundry.client import install, restore
 from claude_foundry.config import export_client, read_json, write_json
@@ -81,6 +84,130 @@ def test_invalid_profile_cannot_mutate_settings(org, tmp_path):
 
     c = copy.deepcopy(export_client(org))
     c["models"][0]["name"] = "../invalid"
+    with pytest.raises(ValueError):
+        install(c, home=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_history_import_is_opt_in_and_never_edits_conversations(org, tmp_path):
+    c = export_client(org)
+    histories = [
+        tmp_path / "Library/Application Support/Claude/local-agent-mode-sessions/history.json",
+        tmp_path / "Library/Application Support/Claude-3p/local-agent-mode-sessions/history.json",
+        tmp_path / ".claude/projects/project/transcript.jsonl",
+    ]
+    for path in histories:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"existing conversation\n")
+    first = install(c, home=tmp_path)
+    profile = Path(first["profile"])
+    assert "claudeAiImport" not in read_json(profile)
+    c["conversation_import"] = {"enabled": True}
+    install(c, home=tmp_path)
+    policy = json.loads(read_json(profile)["claudeAiImport"])
+    assert policy["enabled"] is True
+    assert policy["automatic3pImport"] is False
+    assert policy["exportEnabled"] is False
+    assert policy["bannerBehavior"] == "detect"
+    restore(tmp_path)
+    assert not profile.exists()
+    assert all(path.read_bytes() == b"existing conversation\n" for path in histories)
+
+
+@pytest.mark.parametrize("source_ids", [[], ["00000000-0000-0000-0000-000000000003"]])
+def test_enable_history_preserves_existing_source_restrictions(org, tmp_path, source_ids):
+    c = export_client(org)
+    profile = Path(install(c, home=tmp_path)["profile"])
+    existing = {"enabled": False, "allowedOrganizationUuids": source_ids}
+    settings = read_json(profile)
+    settings["claudeAiImport"] = json.dumps(existing)
+    write_json(profile, settings)
+    c["conversation_import"] = {"enabled": True}
+    install(c, home=tmp_path)
+    actual = json.loads(read_json(profile)["claudeAiImport"])
+    assert actual["allowedOrganizationUuids"] == source_ids
+    assert actual["enabled"] is True
+    assert "allowedOrganizationUuids" not in c["conversation_import"]
+    restore(tmp_path)
+    assert json.loads(read_json(profile)["claudeAiImport"]) == existing
+
+
+def test_import_policy_restore_preserves_later_customer_changes(org, tmp_path):
+    c = export_client(org)
+    c["conversation_import"] = {"enabled": True}
+    profile = Path(install(c, home=tmp_path)["profile"])
+    settings = read_json(profile)
+    settings["claudeAiImport"] = json.dumps({"enabled": False, "bannerBehavior": "off"})
+    write_json(profile, settings)
+    restore(tmp_path)
+    assert read_json(profile)["claudeAiImport"] == settings["claudeAiImport"]
+
+
+def test_import_never_redirects_an_existing_custom_export_endpoint(org, tmp_path):
+    c = export_client(org)
+    profile = Path(install(c, home=tmp_path)["profile"])
+    settings = read_json(profile)
+    settings["claudeAiImport"] = json.dumps({"url": "https://export.example.com"})
+    write_json(profile, settings)
+    before = profile.read_bytes()
+    c["conversation_import"] = {"enabled": True}
+    with pytest.raises(ValueError, match="custom history import endpoint"):
+        install(c, home=tmp_path)
+    assert profile.read_bytes() == before
+
+
+def test_mdm_import_policy_cannot_be_overridden(monkeypatch, tmp_path):
+    import plistlib
+
+    from claude_foundry import client
+
+    managed = tmp_path / "Library/Managed Preferences/com.anthropic.claudefordesktop.plist"
+    managed.parent.mkdir(parents=True)
+    managed.write_bytes(plistlib.dumps({"claudeAiImport": {"enabled": False}}))
+    monkeypatch.setattr(client, "Path", lambda path: tmp_path / path.lstrip("/"))
+    with pytest.raises(RuntimeError, match="MDM administrator"):
+        client.check_managed_preferences()
+
+
+@pytest.mark.parametrize("version", ["1.99999.0", "2.26453.9", "unknown", 123])
+def test_import_rejects_builds_without_source_policy_support(tmp_path, version):
+    import plistlib
+
+    from claude_foundry.client import check_desktop_import_version
+
+    path = tmp_path / "Info.plist"
+    path.write_bytes(plistlib.dumps({"CFBundleShortVersionString": version}))
+    with pytest.raises(RuntimeError, match="2.26454.0"):
+        check_desktop_import_version(path)
+
+
+def test_import_accepts_build_with_source_policy_support(tmp_path):
+    import plistlib
+
+    from claude_foundry.client import check_desktop_import_version
+
+    path = tmp_path / "Info.plist"
+    path.write_bytes(plistlib.dumps({"CFBundleShortVersionString": "2.26454.0"}))
+    check_desktop_import_version(path)
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        True,
+        {},
+        {"enabled": "true"},
+        {"enabled": True, "automatic3pImport": True},
+        {"enabled": True, "url": "https://export.example.com"},
+        {"enabled": True, "bannerBehavior": []},
+        {"enabled": True, "allowedOrganizationUuids": "not-a-list"},
+        {"enabled": True, "allowedOrganizationUuids": ["invalid"]},
+        {"enabled": True, "allowedOrganizationUuids": ["00000000-0000-0000-0000-000000000001"] * 2},
+    ],
+)
+def test_invalid_import_policy_cannot_mutate_settings(org, tmp_path, policy):
+    c = export_client(org)
+    c["conversation_import"] = policy
     with pytest.raises(ValueError):
         install(c, home=tmp_path)
     assert not list(tmp_path.iterdir())

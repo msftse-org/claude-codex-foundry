@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import zipfile
 from pathlib import Path
 
@@ -39,3 +40,24 @@ def test_distribution_refuses_an_admin_profile(org, tmp_path):
     with pytest.raises(ValueError, match="client profile only"):
         build(profile, tmp_path / "client.zip", root)
     assert not (tmp_path / "client.zip").exists()
+
+
+def test_history_policy_reaches_customer_bundle_without_admin_data(org, tmp_path):
+    build, root = builder()
+    policy = {
+        "enabled": True,
+        "allowedOrganizationUuids": ["00000000-0000-0000-0000-000000000003"],
+        "bannerBehavior": "show",
+    }
+    org["conversation_import"] = policy
+    config = export_client(org)
+    assert config["conversation_import"] == policy
+    assert config["conversation_import"] is not policy
+    profile = tmp_path / "client.json"
+    write_json(profile, config)
+    output = build(profile, tmp_path / "client.zip", root)
+    with zipfile.ZipFile(output) as bundle:
+        packaged = json.loads(bundle.read("claude-foundry/client.json"))
+        assert packaged["conversation_import"] == policy
+        assert "subscription_id" not in packaged
+        assert "claude-foundry/docs/conversation-migration.md" in bundle.namelist()

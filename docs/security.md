@@ -30,6 +30,8 @@ Background credential helpers never launch interactive sign-in. Users explicitly
 
 The client profile controls the HTTPS destination receiving the user's token. Distribute it and the installer through a trusted organization channel. Files use private permissions. Recovery snapshots can contain credentials that predated installation; protect them like the original settings. The installer is a source/script distribution, not a signed or notarized application package.
 
+Optional [conversation import](conversation-migration.md) enables Claude's native importer. Source Claude.ai authorization/export is separate from Entra inference authorization. Review the source-organization policy and allowed network egress before rollout; Entra tenant restrictions do not restrict the Claude.ai source account. Imported content stays in Desktop's local store and can be sent through APIM/Foundry when resumed. The portal and installer never receive the archives. Protect exports and local history with endpoint controls and disk encryption. Installation rollback does not erase copied history. This integration disables automatic background copying and session export when applying an import policy, preserves existing source restrictions unless explicitly replaced, and refuses to override MDM import settings or redirect custom import endpoints.
+
 ## Portal identity and permissions
 
 The hosted portal uses a separate, single-tenant Entra SPA/API registration with authorization-code flow and PKCE. The server validates access tokens and active-member state; browser-displayed roles are not an authorization boundary. The desktop public-client registration is distinct from the portal registration.

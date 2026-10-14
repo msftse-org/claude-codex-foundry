@@ -1,5 +1,6 @@
 """Configuration validation and private, atomic local file writes."""
 
+import copy
 import json
 import os
 import re
@@ -52,6 +53,31 @@ def uuid_value(value, field):
         raise ValueError(f"{field} must be a UUID") from None
 
 
+def validate_conversation_import(value):
+    """Validate the supported subset of Claude's native import policy."""
+    allowed = {"enabled", "allowedOrganizationUuids", "bannerBehavior"}
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise ValueError("conversation_import must contain only supported import policy fields")
+    if type(value.get("enabled")) is not bool:
+        raise ValueError("conversation_import.enabled must be a boolean")
+    if "bannerBehavior" in value and (
+        not isinstance(value["bannerBehavior"], str)
+        or value["bannerBehavior"] not in {"off", "detect", "show"}
+    ):
+        raise ValueError("conversation_import.bannerBehavior must be off, detect, or show")
+    if "allowedOrganizationUuids" in value:
+        ids = value["allowedOrganizationUuids"]
+        if not isinstance(ids, list) or len(ids) > 100:
+            raise ValueError(
+                "conversation_import.allowedOrganizationUuids must be a list of at most 100 UUIDs"
+            )
+        for item in ids:
+            uuid_value(item, "conversation_import.allowedOrganizationUuids entry")
+        if len({str(UUID(item)) for item in ids}) != len(ids):
+            raise ValueError("Duplicate conversation import organization UUID")
+    return value
+
+
 def validate_client(c):
     uuid_value(c.get("tenant_id"), "tenant_id")
     c["gateway_url"] = https_url(c["gateway_url"], "gateway_url")
@@ -61,6 +87,8 @@ def validate_client(c):
         uuid_value(c.get("client_id"), "client_id")
     if c.get("token_resource", TOKEN_RESOURCE) != TOKEN_RESOURCE:
         raise ValueError("This release supports the Azure public-cloud Cognitive Services audience")
+    if "conversation_import" in c:
+        validate_conversation_import(c["conversation_import"])
     if not c.get("models"):
         raise ValueError("models must contain at least one deployed model")
     seen = set()
@@ -87,6 +115,8 @@ def load_client(path):
 
 def load_org(path):
     c = read_json(Path(path))
+    if "conversation_import" in c:
+        validate_conversation_import(c["conversation_import"])
     uuid_value(c.get("tenant_id"), "tenant_id")
     uuid_value(c.get("subscription_id"), "subscription_id")
     for field in (
@@ -138,4 +168,6 @@ def export_client(c, auth_mode="azure-cli", client_id=None):
     )
     if client_id:
         result["client_id"] = client_id
+    if "conversation_import" in c:
+        result["conversation_import"] = copy.deepcopy(c["conversation_import"])
     return validate_client(result)
