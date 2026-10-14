@@ -17,10 +17,10 @@ jobs:
         with:
           version: '0.11.13'
           python-version: ${{ matrix.python }}
-      - run: uv sync --frozen --extra auth
-      - run: uv run --frozen --extra auth ruff check src scripts tests
-      - run: uv run --frozen --extra auth ruff format --check src scripts tests
-      - run: uv run --frozen --extra auth pytest -q
+      - run: uv sync --frozen --extra auth --extra portal
+      - run: uv run --frozen --extra auth --extra portal ruff check src scripts tests
+      - run: uv run --frozen --extra auth --extra portal ruff format --check src scripts tests
+      - run: uv run --frozen --extra auth --extra portal pytest -q
       - run: bash -n scripts/macos/install.sh Install.command
       - run: uv build
   bicep:
@@ -28,3 +28,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
+      - run: az bicep build --file infra/portal.bicep --outfile /tmp/claude-foundry-portal.arm.json
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal/web
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: portal/web/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm test

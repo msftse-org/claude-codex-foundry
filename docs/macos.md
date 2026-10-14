@@ -1,5 +1,11 @@
 # Mac installation
 
+Use Claude Desktop Chat, Desktop Code, and the Code CLI with the models approved by your organization. Your platform team deploys Azure and supplies the installation bundle; you do not need to clone this repository or administer Azure.
+
+## Before you begin
+
+You need a Mac, your work Microsoft account, your organization’s installation ZIP, and permission to use its models. Install the approved Claude apps first. Keep any current Claude work safe and quit the app before changing its connection settings. Internet access is needed for runtime/dependency downloads and Microsoft sign-in.
+
 Obtain the installation bundle from your organization and unzip it. The bundle must include `client.json`. Use your organization's approved distribution of Claude Desktop and, if needed, the Claude Code CLI. The installer configures those apps; it does not replace or update them.
 
 ## Install and sign in
@@ -29,6 +35,12 @@ For an existing checkout, supply the profile explicitly:
 Use `--no-login` only if the selected authentication method already has a working session. Credential validation still runs before changing settings. The installer stops when it detects managed inference settings that local settings cannot override; your MDM administrator must deploy that configuration.
 
 Fully quit and reopen Claude Desktop. Its third-party profile enables Chat and Code and lists the organization's published models. The CLI uses the same gateway and credential helper. Existing consumer Claude conversations remain in their previous profile; they do not automatically move into the third-party profile.
+
+## Confirm it works
+
+After restarting Desktop, select the organization profile, choose one of its published models, and send a short message. If you use the Code CLI, open a new terminal and check it uses the same organization connection. The installer ends with an “Installed” message and the restore command. If installation fails, retain the error message and contact your platform team; do not paste access tokens.
+
+The installer configures your local apps. It does not enroll your device in MDM, create a Microsoft account, or grant model permissions.
 
 ## Later sign-in and verification
 
@@ -60,3 +72,7 @@ To restore settings:
 Restore reverts managed values that have not subsequently been changed. It preserves later user changes, unrelated preferences and conversations. Restart Desktop afterward. Backups and sign-in caches remain available; this is a settings rollback, not a credential wipe. An administrator can remove the isolated runtime after rollback if it is no longer needed.
 
 To update the installation, run the new organization's bundle. The helper uses the durable runtime path, so the downloaded bundle can be removed after successful installation.
+
+## Get help
+
+Ask your platform team for a new bundle when the organization changes its model catalog. For expired sign-in, run `login` above; for an incorrect endpoint or MDM conflict, use the [online troubleshooting guide](https://github.com/orsharon7/claude-foundry/blob/main/docs/troubleshooting.md). Share the error code, time, app version, and whether the CLI or Desktop is affected. Remove tokens, tenant identifiers, prompts, and customer content from screenshots and logs.

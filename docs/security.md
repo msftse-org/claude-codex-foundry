@@ -1,17 +1,57 @@
-# Security model
+# Security architecture
 
-The client obtains a delegated Microsoft Entra access token for `https://cognitiveservices.azure.com`. Standard APIM validates the signed token, issuer, tenant, audience and expiry, optionally restricts caller object IDs, and forwards the original bearer token to Foundry. Foundry enforces each caller's Azure inference RBAC. APIM does not impersonate all users using a shared backend key or managed identity.
+[← README](../README.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
 
-The provided foundation disables Foundry local/API-key authentication. APIM's `subscriptionRequired: false` removes the subscription-key gate **after** JWT validation is installed. It does not make the API anonymous. Incoming API-key headers are stripped before forwarding.
+Claude Foundry has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow prepares a separate preview API so this can be evaluated without replacing the baseline API.
 
-The gateway enforces one organization-wide model allowlist. This release does not implement per-user model permissions, spending limits or a management portal. Foundry RBAC revocation remains the inference authorization control. A tenant user without Foundry RBAC may see the authenticated static model catalog unless an APIM object-ID allowlist is configured.
+## Inference authorization
 
-The public Foundry endpoint remains reachable directly by users with valid Foundry RBAC. Therefore APIM logging/model restrictions are not a guaranteed enforcement boundary against deliberate direct access. Mandatory gateway-only access needs a separately designed private network path or backend credential architecture; the public foundation does not claim to enforce organization budgets.
+| Boundary | Baseline gateway | Portal governance preview |
+| --- | --- | --- |
+| User identity | Delegated Entra access token for `https://cognitiveservices.azure.com` | Same user-token audience |
+| APIM validation | Signature, issuer, tenant, audience, expiry; optional caller object-ID allowlist | Token validation plus published active membership, model entitlements, and token/rate controls |
+| Backend identity | Original user's bearer token | APIM's managed identity |
+| Foundry authorization | User/group inference RBAC | APIM managed-identity inference RBAC |
+| Model catalog | Organization-wide published allowlist | Catalog filtered by published member entitlements |
 
-MSAL uses a tenant-owned public client, browser PKCE, and encrypted persistence backed by macOS Keychain. No client secret is shipped. There is no plaintext token-cache fallback. Azure CLI mode uses the CLI's own credential storage and account selection. Tenant targeting avoids changing the default subscription during background refresh. Interactive Azure CLI login may change CLI account state as part of normal CLI behavior.
+The foundation disables Foundry local/API-key authentication. APIM's `subscriptionRequired: false` removes the subscription-key gate after JWT validation is installed; it does not make inference anonymous. Incoming API-key headers are stripped before forwarding. Optional baseline `allowed_object_ids` contains user/service-principal object IDs, not group IDs.
 
-The local profile controls the HTTPS destination receiving the user's token. Distribute it and the installer through a trusted organization channel. Files use private permissions. Backups can contain credentials that predated installation and should receive the same protection as the original settings. This release is a source/script distribution, not a signed or notarized installer package.
+The public Foundry endpoint remains directly reachable by identities with valid inference RBAC. Direct access bypasses APIM restrictions and telemetry in either mode. Portal membership alone cannot remove separately granted Azure permissions. Review direct RBAC and network design before relying on gateway-only governance; the baseline foundation is not a private inference network.
 
-New diagnostics log request metadata, model, request ID and the Entra principal object ID, with zero request/response body bytes. Treat user object IDs as organizational personal data, restrict log-reader RBAC, and apply your retention policy. Existing diagnostics are preserved; review them separately for payload/header logging. Token metrics are operational telemetry, not a billing ledger.
+## User workstation
 
-Provider hosting, geographic processing and retention depend on the model version/SKU. Review [Microsoft's Claude model documentation](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models) for the deployments selected by your organization.
+MSAL uses a tenant-owned public client, browser PKCE, and encrypted persistence backed by macOS Keychain. There is no client secret or plaintext token-cache fallback. Azure CLI mode uses the CLI's own credentials; background refresh targets the tenant without changing the default subscription. Interactive CLI login may change normal CLI account state.
+
+Background credential helpers never launch interactive sign-in. Users explicitly run `login` when interaction is needed. Browser-based MSAL does not implement device-broker authentication; validate device-bound-token and broker requirements with the customer identity team.
+
+The client profile controls the HTTPS destination receiving the user's token. Distribute it and the installer through a trusted organization channel. Files use private permissions. Recovery snapshots can contain credentials that predated installation; protect them like the original settings. The installer is a source/script distribution, not a signed or notarized application package.
+
+## Portal identity and permissions
+
+The hosted portal uses a separate, single-tenant Entra SPA/API registration with authorization-code flow and PKCE. The server validates access tokens and active-member state; browser-displayed roles are not an authorization boundary. The desktop public-client registration is distinct from the portal registration.
+
+Owner and administrator roles can publish reviewed access policies. Billing can update planning rates and the organization dollar threshold. Auditors have administrative read access; developers receive their own setup/request views. Only owners can change ownership; the domain rules preserve at least one active owner. [See the role matrix](portal-guide.md#roles-and-permissions).
+
+Saving member suspension immediately affects portal access; gateway access changes after the reviewed policy is published and propagated. In-flight requests may finish. Monthly token quotas use gateway-region counters; streaming estimation and concurrency can overshoot. Dollar budgets are not billing caps.
+
+`PORTAL_LOCAL_MODE=1` is an explicit local owner bypass for development. It is restricted to loopback and rejected in Azure hosting. Never expose it through a proxy/tunnel or use it as authentication-test evidence.
+
+## Azure identities, storage, and network
+
+The portal template uses managed identity and narrowly scoped access to the configured APIM API policy/model operation, selected Insights component, and portal storage. It does not grant directory management or Azure invoice access. The portal is outside the inference path.
+
+Blob state uses managed-identity access, shared keys disabled, versioning, 30-day soft deletion, and ETag conflict checks. Private networking is enabled by default. The optional public-storage-endpoint configuration is a different network posture and must meet organization policy. A private Blob endpoint does not make the public portal, APIM, or Foundry endpoint private.
+
+Administrative state and audit events share a mutable Blob. Authorized Azure storage administrators can change it; versioning is not an immutable compliance archive. Validate backup/restore and publication recovery before customer production use.
+
+## Data and diagnostics
+
+New gateway diagnostics record request metadata, model, request ID, and Entra principal object ID, with zero request/response body bytes. The portal stores member names/emails/object IDs, entitlements, limits, planning rates, access-request reasons, and administrative changes. Treat this as organizational data and restrict state/log readers accordingly.
+
+Existing APIM diagnostics are preserved and may have different body/header capture settings. Review them explicitly, including service-level diagnostics. Do not log authorization headers or API keys. Token metrics are operational telemetry, not a billing ledger; interrupted streams may be incomplete.
+
+The portal does not read Claude conversations or control local history/retention. Provider hosting, processing geography, and retention depend on model version/SKU and service terms. Review [Microsoft's Claude model documentation](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models) for your deployments.
+
+## Evidence and remaining review
+
+See [portal/VALIDATION.md](../portal/VALIDATION.md) for what was actually verified and what remains, including customer Conditional Access, hosted roles, recovery, and scale. This document describes the design and its boundaries; it is not a compliance certification or penetration-test report.

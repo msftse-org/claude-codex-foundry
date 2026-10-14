@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "portalName": { "value": "your-claude-admin-preview" },
+    "location": { "value": "eastus2" },
+    "organization": { "value": { "replace": "Use the complete preview organization configuration" } },
+    "ownerObjectId": { "value": "00000000-0000-0000-0000-000000000001" },
+    "ownerName": { "value": "Organization owner" },
+    "ownerEmail": { "value": "owner@example.com" },
+    "entraClientId": { "value": "00000000-0000-0000-0000-000000000002" },
+    "desktopClientId": { "value": "" },
+    "insightsName": { "value": "your-existing-application-insights" },
+    "insightsResourceGroup": { "value": "your-monitoring-resource-group" },
+    "privateStorage": { "value": true }
+  }
+}

@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible problem with setup, the gateway, or the portal.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: "Remove tokens, customer identifiers, endpoints, and conversation content. For vulnerabilities, use the repository's Security tab and private reporting."
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [Mac onboarding, Authentication, Models or gateway, Portal, Infrastructure, Documentation]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit and environment
+      description: Commit SHA, OS, relevant app version, and baseline or preview mode. No subscription or tenant IDs.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest reproducible example with placeholders.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence and recovery attempted
+      description: Error codes, relevant logs, or screenshots without credentials, people, or customer resources.

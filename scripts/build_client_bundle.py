@@ -27,7 +27,6 @@ def build(profile, output, root):
         root / p
         for p in (
             "pyproject.toml",
-            "README.md",
             "requirements-auth.lock",
             "Install.command",
             "scripts/macos/install.sh",
@@ -41,6 +40,7 @@ def build(profile, output, root):
             if path.is_symlink():
                 raise ValueError(f"Symlinks are not accepted: {path}")
             bundle.write(path, "claude-foundry/" + str(path.relative_to(root)))
+        bundle.write(root / "docs/macos.md", "claude-foundry/README.md")
         bundle.writestr("claude-foundry/client.json", json.dumps(config, indent=2) + "\n")
     return output
 

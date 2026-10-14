@@ -1,5 +1,21 @@
 # Organization deployment
 
+[← README](../README.md) · [Mac guide](macos.md) · [Operations](operations.md)
+
+This guide takes an Azure administrator from an empty resource group (or existing resources) to a verified gateway and a Mac installation ZIP. Developers receive the ZIP; they do not perform these cloud steps. The commands in this guide configure the **baseline user-token gateway**. Add the [isolated portal preview](../portal/README.md#isolated-azure-preview) afterward to evaluate per-member governance. Do not run the baseline `gateway` command against a portal-governed API: it replaces that API’s policy.
+
+## Before you begin
+
+Install Git, [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), and [uv](https://docs.astral.sh/uv/). Clone the repository and run every command below from its root:
+
+```bash
+git clone https://github.com/orsharon7/claude-foundry.git
+cd claude-foundry
+uv sync --frozen --extra auth
+```
+
+Have the subscription/tenant IDs, approved regions, publisher contact, legal Marketplace details, and an Entra inference group ready. Parameter files and generated profiles belong in ignored `.local/`, not public Git. Review expected APIM, model, and monitoring charges with your subscription owner.
+
 Use a dedicated resource group for a new installation. The administrator needs Azure deployment permissions, permission to assign inference RBAC, and subscription eligibility for the selected Anthropic Marketplace offers. Azure CLI and uv are administrator prerequisites. Confirm tenant, subscription, region and Marketplace billing details before applying deployments.
 
 ## 1. Sign in and choose infrastructure
@@ -122,6 +138,10 @@ uv run python scripts/build_client_bundle.py --profile .local/client.json \
 Distribute the bundle through an approved internal channel. Its file allowlist excludes `.local`, deployment reports, cloud administrator configuration, Git metadata and caches. `client.json` contains tenant ID, gateway URL, public client ID when applicable, and the model list; it contains no secret. Users follow [the Mac guide](macos.md).
 
 To update models, repeat discovery/deployment, synchronize, redeploy the gateway, export and verify a fresh profile, then redistribute the bundle. Existing client catalogs do not refresh automatically.
+
+## Completion checklist
+
+You should now have a dedicated **Claude via Azure Foundry** API, successfully verified model calls, telemetry in the intended Insights resource, and a client ZIP ready for internal distribution. Test that ZIP on a pilot Mac before wider rollout. For portal evaluation, continue with the [Azure preview guide](../portal/README.md#isolated-azure-preview); for ongoing ownership, upgrades, and offboarding, use [operations](operations.md).
 
 ## Recovery
 

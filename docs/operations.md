@@ -1,0 +1,79 @@
+# Operating Claude Foundry
+
+[← README](../README.md) · [Deployment](administrator.md) · [Troubleshooting](troubleshooting.md)
+
+The organization owns its Azure subscription, Entra registrations, gateway configuration, user distribution, and operating costs. Assign owners before a pilot so an expired login, denied model, or failed policy publication has a clear support path.
+
+## Assign ownership
+
+| Responsibility | Typical owner |
+| --- | --- |
+| Subscription, Marketplace eligibility, quota, and billed spend | Azure subscription/billing administrator |
+| Entra consent, MFA, Conditional Access, and directory account lifecycle | Identity team |
+| APIM policies, Foundry deployments, monitoring, and recovery | Platform team |
+| Portal membership, groups, and model grants | Portal owner/administrator |
+| Planning rates and budget estimates | Billing administrator |
+| Claude installation, MDM precedence, and settings recovery | Desktop support |
+
+Portal roles do not grant Azure subscription or Entra administrator permissions.
+
+## Pilot acceptance checklist
+
+- Deploy with the customer's own parameters and review Azure `what-if` output.
+- Verify representative models, streaming, token counting, rejected credentials, and denied model access.
+- Complete Microsoft sign-in under the customer's actual Conditional Access policy.
+- Install the generated bundle on a pilot Mac; test Chat, Code, CLI, and settings restore.
+- Confirm requests and token metrics arrive in the intended Application Insights resource.
+- For portal governance, publish only to the separate preview API, verify allowed/denied identities, and review direct Foundry RBAC.
+- Set Azure billing alerts separately from portal planning thresholds. Record model SKU, geography, quota, and the source/date of planning rates.
+- Exercise recovery and measure representative workload latency, throttling, and cost before expanding the pilot.
+
+The [portal validation record](../portal/VALIDATION.md) lists outstanding production checks. Configuration tests involving 2,000 members are not a throughput guarantee for 2,000 concurrent developers.
+
+## Monitor the service
+
+Use the [observability queries](observability.md) to track requests, failures, latency, and tokens. Monitor 401/403 authorization failures separately from 429 throttling and 5xx backend errors. An empty Live Metrics pane alone is not proof of no traffic; inspect ingested Logs and the configured resource/API scope.
+
+The portal's usage page reads operational metadata. Cost analysis uses retained token metrics, current planning rates, and a short query cache. It does not ingest invoices. Document log retention, sampling, access to identity data, and alert ownership in your organization's operating procedures.
+
+The portal can scale down independently of inference. Published APIM policies continue to operate if the portal is unavailable; administrators cannot make new publications until it recovers.
+
+## Change models or quota
+
+1. Retain the current organization config, model report, client profile, and gateway policies in restricted storage.
+2. Discover available models and review cost, eligibility, retirement, and quota. Deploy only the reviewed selection.
+3. Run `sync-models` and review the resulting catalog and family defaults.
+4. For the baseline API, publish with the administrator gateway command and verify it. For a portal-governed API, update the portal's configured catalog and review/publish through the portal workflow; do not overwrite its policy with the baseline gateway command.
+5. Update sourced planning rates as needed, export fresh client profiles, rebuild bundles, and distribute them internally.
+
+Client model catalogs do not refresh automatically. Catalog changes must also be reflected in existing portal groups/defaults and personal grants; there is no automatic model-retirement migration. Validate changes in the preview first.
+
+Model capacity allocation is not a spending cap. The deployment command preserves existing capacity; review and change existing allocations explicitly through Azure. Additional resources do not create additional subscription-wide model quota.
+
+## Upgrade application code
+
+Use a reviewed commit and keep the previous package/commit available. Re-run relevant checks, inspect configuration/schema changes, and validate in the preview environment before rollout. `main` updates and GitHub CI do not deploy Azure automatically.
+
+Build portal code with `scripts/build_portal.py` and deploy the explicit package as described in the [portal guide](../portal/README.md#isolated-azure-preview). Verify health, Microsoft sign-in, authenticated state, telemetry, and a reviewed preview publication after deployment. Record the deployed commit and verification outcome.
+
+For Mac updates, distribute a newly built organization bundle. Users rerun `Install.command`, then restart Claude. Existing unrelated settings and later user changes must be preserved; [restore](macos.md#settings-and-recovery) is available if required.
+
+## Recovery and rollback
+
+| Situation | Recovery approach |
+| --- | --- |
+| Mac configuration problem | Run the installed `claude-foundry restore`, then restart Claude. This restores managed settings, not credentials or history migration. |
+| Baseline gateway regression | Reapply the last reviewed baseline configuration/policies to that API and verify allowed/denied requests. |
+| Portal policy publication failure | Retain the draft, inspect the visible failure and identity permissions, and check the actual APIM policy before retrying. Offline rollback behavior is tested; live interruption/recovery still needs validation. |
+| Portal code regression | Redeploy the last verified application package after checking state compatibility. |
+| Accidental portal state change | Private Blob versioning and 30-day soft deletion support recovery. Have an authorized operator select and validate a prior version, and reconcile it with the policy currently published in APIM. Exercise this procedure in preview before relying on it. |
+
+Blob recovery and gateway-policy recovery are separate actions. Restoring one does not automatically restore the other. Audit records share the mutable state Blob and are not an immutable archive. Preserve authorized incident evidence before a recovery operation.
+
+## Offboarding and retirement
+
+For the baseline gateway, revoke the user's/group's Foundry inference permission and any applicable APIM object-ID entry. For portal governance, suspend the member, review/publish the policy, and verify denial of a new request. Portal sign-in uses the current active-member state; gateway enforcement uses the last published state. In-flight requests may finish.
+
+Review direct Foundry RBAC and any separately granted permissions. Portal suspension does not disable an Entra account, erase a user's local conversations, or uninstall Claude. Coordinate those actions with identity and desktop support.
+
+To retire the deployment, first restore affected client settings, stop new onboarding, and retain required configuration/log/audit evidence. Inventory dedicated and shared Azure resources and app registrations. Remove only resources approved for deletion; never delete a shared resource group as a shortcut. Stopping the portal alone does not remove APIM's ongoing charges.

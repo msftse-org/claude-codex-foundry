@@ -19,3 +19,10 @@ __pycache__/
 .DS_Store
 client.json
 *.zip
+node_modules/
+portal/web/dist/
+portal/web/.vite/
+portal/test-results/
+portal/playwright-report/
+.python_packages/
+*.tsbuildinfo

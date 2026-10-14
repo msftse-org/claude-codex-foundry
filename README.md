@@ -1,78 +1,128 @@
-# Claude on Azure Foundry through API Management
+# Claude Foundry
 
-Configure Claude Desktop **Chat and Code**, plus the Claude Code CLI, to use an organization's Anthropic deployments in Microsoft Foundry through standard Azure API Management.
+**Claude Desktop Chat, Desktop Code, and the Claude Code CLI—connected to your organization's Azure Foundry models through standard Azure API Management.**
 
-Users sign in with Microsoft Entra ID. APIM validates their token and forwards it to Foundry, where Azure RBAC authorizes inference. No shared API key or new AI Gateway resource is required.
+Give developers a familiar Claude experience with Microsoft Entra sign-in. Deploy the infrastructure in your Azure subscription, distribute a Mac installer, and manage access and usage through a customer-owned administration portal. No shared inference API key or separate AI Gateway resource is required.
+
+[Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
+
+> **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
+
+![Cost analysis in the hosted Azure portal: date controls, estimated model spend, token consumption, and rate coverage](docs/images/portal-cost-analysis.jpg)
+
+*Captured from the running Azure-hosted preview on October 14, 2026. Real verification traffic; planning estimates, not an Azure invoice. [See the complete feature tour](docs/portal-guide.md).*
+
+## What you can do
+
+| For | Capabilities |
+| --- | --- |
+| **Developers** | Use Desktop Chat, Desktop Code, and the Code CLI with organization models. Sign in with Microsoft. Install without Azure CLI using an MSAL profile. Restore previous Claude settings when needed. |
+| **Platform teams** | Deploy Foundry, standard APIM, and monitoring; discover eligible Anthropic models; publish a model catalog; build organization-specific Mac installation bundles. |
+| **Portal administrators** | Register members, import CSVs, assign groups and model grants, review access requests, and publish token quotas and rate limits to a dedicated gateway API. |
+| **Finance and operations** | Explore usage by model, group, and developer; combine filters; compare periods; export CSVs; maintain sourced planning rates and dollar thresholds. |
+| **Security reviewers** | Inspect Entra authentication, API-enforced roles, managed identities, private portal storage, policy publication, and administrative audit records. |
+
+The portal manages gateway access and operational metadata. Entra remains responsible for directory accounts and sign-in policy; Azure Cost Management remains responsible for billed spend. Conversations are not displayed or managed in the portal.
+
+## Choose your starting point
+
+### I want to use Claude on my Mac
+
+Ask your organization for its installation ZIP. You do **not** need an Azure subscription, Git checkout, or infrastructure deployment permissions.
+
+1. Install your organization's approved Claude Desktop and, if needed, Claude Code CLI.
+2. Extract the organization ZIP and open `Install.command`.
+3. Complete Microsoft sign-in, then fully quit and reopen Claude Desktop.
+4. Select the organization profile and a published model. Send a small test message.
+
+The installer supplies its own isolated runtime and preserves unrelated settings. An MSAL profile requires no Azure CLI. Existing consumer Claude history stays in its original profile and does not migrate automatically.
+
+**[Mac installation, verification, and restore →](docs/macos.md)**
+
+### I want to deploy this for my organization
+
+An Azure administrator deploys the shared foundation once. An Entra administrator may also be needed for app registration and consent. Start with a small pilot and your own reviewed configuration.
+
+```bash
+git clone https://github.com/orsharon7/claude-foundry.git
+cd claude-foundry
+uv sync --frozen --extra auth
+mkdir -p .local
+cp infra/parameters.example.json .local/parameters.json
+```
+
+Edit the placeholders before deploying. The [administrator guide](docs/administrator.md) covers the complete sequence:
+
+1. Confirm subscription eligibility, regions, permissions, and Marketplace details.
+2. Deploy new infrastructure, or configure a dedicated API on existing APIM/Foundry resources.
+3. Discover eligible models, review paid terms, deploy, and verify inference.
+4. Publish **Claude via Azure Foundry** in APIM and connect observability.
+5. Choose Azure CLI or MSAL sign-in, export a client profile, and build the Mac ZIP.
+6. Optionally deploy the [isolated management portal preview](portal/README.md#isolated-azure-preview).
+
+Model availability and quota depend on the subscription, region, and deployment type. Catalog discovery is not a guarantee that a model can be purchased or invoked.
+
+**[Organization deployment guide →](docs/administrator.md)**
+
+### I want to evaluate the management portal
+
+Start with the [visual walkthrough](docs/portal-guide.md), then follow the [Azure preview deployment guide](portal/README.md). The portal is a single-tenant application hosted in your subscription. There is no shared hosted service to sign up for.
+
+![Register a developer in a drawer with role, primary group, status, token limit, and personal model grants](docs/images/portal-member-drawer.jpg)
+
+*Access changes are saved as drafts. An owner or administrator reviews and publishes them before gateway enforcement changes.*
+
+## How it fits together
 
 ```mermaid
 flowchart LR
-  C[Claude Desktop / Code CLI] -->|User access token| A[Standard Azure API Management]
-  A -->|Same user token| F[Foundry Anthropic deployments]
+  U[Claude Desktop / Code CLI] -->|Entra user token| A[Standard Azure API Management]
+  A -->|Baseline: user token| F[Azure Foundry / Anthropic models]
+  A -->|Portal governance: managed identity| F
   A --> I[Application Insights]
-  H[Credential helper] --> E[Microsoft Entra ID]
-  H --> C
+  P[Administration portal / Azure Functions] -->|Reviewed policy publication| A
+  P -->|Read usage| I
+  P --> B[Private Blob state]
+  E[Microsoft Entra ID] -->|Sign-in| U
+  E -->|Sign-in| P
 ```
 
-## Start here
+These are two gateway authorization modes, not two requests for every inference call:
 
-| Audience | Guide |
-| --- | --- |
-| Organization administrator | [Deploy infrastructure, models and gateway](docs/administrator.md) |
-| Mac user or desktop support | [Install, sign in and restore settings](docs/macos.md) |
-| Platform operations | [Logs and metrics](docs/observability.md) |
-| Security reviewer | [Authentication and trust boundaries](docs/security.md) |
-| Troubleshooting | [Known errors and recovery](docs/troubleshooting.md) |
-
-Administrators deploy infrastructure once, discover the models their subscription can actually provision, then export a small client profile. Users receive an installation bundle and complete Microsoft sign-in in their browser. The installer preserves unrelated Claude settings and creates recovery snapshots.
-
-## Authentication options
-
-| Mode | User installation | Organization prerequisite |
+| Mode | Where inference access is decided | When to use |
 | --- | --- | --- |
-| Azure CLI | Reuse an installed CLI, or install the official CLI without extensions | Foundry inference RBAC |
-| MSAL | Isolated Python runtime and authentication libraries; no Azure CLI | Single-tenant public client app, delegated Cognitive Services permission/consent, Foundry inference RBAC |
+| **Baseline gateway** | APIM validates the user token; Foundry applies the user's inference RBAC. One published model allowlist applies to callers. | Establish the gateway and Mac onboarding without the portal. |
+| **Portal governance preview** | APIM validates the user token and enforces published membership, model grants, and token limits. APIM's managed identity calls Foundry. | Evaluate per-developer/group administration on a separate preview API. |
 
-The MSAL mode stores its token cache in macOS Keychain. Both modes acquire short-lived Cognitive Services access tokens. Background helpers never launch a sign-in prompt; users run the login command when interaction is required.
+The portal is outside the inference path: its availability does not determine whether an already-published gateway policy can serve requests. Users with direct Foundry RBAC can bypass gateway controls; review that access when adopting portal governance. Read the [security model](docs/security.md) for the full boundaries.
 
-## Repository layout
+## Costs and practical limits
 
-- `infra/`: Bicep for Foundry, standard APIM v2, inference RBAC and monitoring.
-- `src/claude_foundry/`: administrator commands, gateway policies, authentication and client configuration.
-- `scripts/`: Mac bootstrap, client bundle creation and optional Entra app registration.
-- `examples/`: placeholder configuration only.
-- `tests/`: offline security, deployment and settings recovery checks.
-- `.local/`: ignored organization configuration, deployment reports and verification evidence.
+- **Azure charges apply.** APIM has an ongoing service charge; inference and monitoring are metered. The portal uses Functions Flex Consumption with no always-ready instances, but storage, private endpoints, DNS, and logs can still incur charges.
+- **Dollar budgets are planning thresholds.** They do not stop Azure billing. Token quotas and request limits apply after policy publication; streaming estimates and concurrent requests can overshoot.
+- **Cost analysis is an estimate.** Rates are maintained by administrators. Cache pricing, some prompt-length tiers, discounts, tax, and infrastructure costs are not reconciled. See the [pricing reference](portal/PRICING.md).
+- **Scale must be measured.** A 2,000-member import/policy-size check has passed; 2,000 concurrent developers have not been load-tested.
+- **Current onboarding targets macOS and Azure public cloud.** The baseline inference endpoints are public HTTPS. Private portal storage does not make Foundry or APIM private. Windows/Linux installers, SCIM, MDM enrollment, conversation migration, and immutable compliance archives are not included.
 
-## Development
+## Documentation
 
-Use Python 3.11 or newer and [uv](https://docs.astral.sh/uv/). Azure CLI is required for administrator commands; it is optional on user machines.
+| Task | Guide |
+| --- | --- |
+| Deploy infrastructure, models, and the gateway | [Organization administrator](docs/administrator.md) |
+| Install, sign in, update, or restore Claude settings | [Mac installation](docs/macos.md) |
+| Learn every portal workspace with real screenshots | [Portal guide and gallery](docs/portal-guide.md) |
+| Deploy or develop the portal | [Portal engineering guide](portal/README.md) |
+| Operate, upgrade, recover, and plan a rollout | [Operations guide](docs/operations.md) |
+| Query requests, errors, and token metrics | [Observability](docs/observability.md) |
+| Review identities, data, and trust boundaries | [Security architecture](docs/security.md) |
+| Diagnose errors | [Troubleshooting](docs/troubleshooting.md) |
+| Understand scope and common questions | [FAQ](docs/faq.md) |
+| Make a code or documentation contribution | [Contributing](CONTRIBUTING.md) |
 
-```bash
-uv sync --frozen --extra auth
-uv run --frozen --extra auth pytest -q
-uv run --frozen --extra auth ruff check src scripts tests
-uv run --frozen --extra auth ruff format --check src scripts tests
-az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
-```
+## Support and contribution
 
-`uv.lock` and `requirements-auth.lock` pin the tested Python dependencies. The Mac installer verifies dependency hashes. To refresh the installer lock after a reviewed dependency update:
+For installation and access problems, contact your organization's platform team first. For reproducible project defects or feature proposals, [open an issue](https://github.com/orsharon7/claude-foundry/issues/new/choose) with sanitized details. Use the [security reporting guidance](SECURITY.md) for vulnerabilities.
 
-```bash
-uv export --frozen --extra auth --no-dev --no-emit-project --output-file requirements-auth.lock
-```
+Contributions are welcome through focused pull requests. [CONTRIBUTING.md](CONTRIBUTING.md) covers local setup, validation, architecture, documentation, and the review process. CI validates changes; it does not deploy them.
 
-Live checks make small billable requests. They validate authentication failures, the model catalog, inference, streaming, token counting and rejection of unknown models:
-
-```bash
-uv run --extra auth claude-foundry verify --config .local/client.json --all-models
-```
-
-## Scope and current limits
-
-This release targets Azure public cloud and macOS user onboarding. New infrastructure uses public HTTPS endpoints and Basic v2 or Standard v2 APIM. Existing gateways can be reused. Anthropic token metrics require an APIM v2 tier.
-
-Claude Desktop's third-party deployment has a separate local profile and conversation store. Existing consumer Claude history does not migrate automatically. Windows/Linux onboarding, private networking, organization budget enforcement and the future management web interface are outside this release. No management website is included.
-
-The Azure CLI path has been exercised with native Desktop Chat, Desktop Code and CLI inference, including Opus 5.5 at Max effort. Customer bundle installation, browser sign-in, settings rollback and reinstallation have been tested on macOS. The Bicep foundation has been deployed into a new resource group with Basic v2 APIM, Foundry, inference RBAC and Application Insights. Both Global Standard and Data Zone Standard model deployment have been exercised, with requests, inference traces and per-model token metrics verified in Application Insights. The MSAL path has offline tests; validate tenant consent, Conditional Access and interactive sign-in in the target organization before a broad rollout.
-
-See the [official Foundry Claude Code guide](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/configure-claude-code), [Anthropic Desktop configuration reference](https://claude.com/docs/third-party/claude-desktop/configuration), and [APIM token metric policy](https://learn.microsoft.com/en-us/azure/api-management/llm-emit-token-metric-policy).
+**Project and licensing status:** this repository is independently maintained and does not provide Microsoft or Anthropic product support or certification. No open-source license has been selected yet; public visibility alone is not a redistribution license. Confirm the project's licensing terms before redistributing it to customers. Azure and Anthropic service terms apply separately.
