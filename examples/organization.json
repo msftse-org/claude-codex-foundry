@@ -7,6 +7,7 @@
   "apim_resource_group": "rg-claude",
   "apim_name": "contoso-claude-apim",
   "api_id": "claude-foundry",
+  "api_display_name": "Claude via Azure Foundry",
   "api_path": "claude",
   "gateway_url": "https://contoso-claude-apim.azure-api.net/claude",
   "foundry_resource_group": "rg-claude",

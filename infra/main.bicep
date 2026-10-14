@@ -150,6 +150,7 @@ output organizationConfig object = {
   apim_resource_group: resourceGroup().name
   apim_name: apim.name
   api_id: apiId
+  api_display_name: 'Claude via Azure Foundry'
   api_path: apiPath
   gateway_url: '${apim.properties.gatewayUrl}/${apiPath}'
   foundry_resource_group: resourceGroup().name

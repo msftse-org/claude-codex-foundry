@@ -54,6 +54,8 @@ uv run claude-foundry admin --config .local/organization.json gateway
 uv run claude-foundry admin --config .local/organization.json observability --enable-dimensions
 ```
 
+In APIM's API list, the API appears as **Claude via Azure Foundry**. The organization setting `api_display_name` controls this name independently of the Desktop `profile_name`.
+
 The API exposes `/v1/messages`, `/v1/messages/count_tokens` and an authenticated `/v1/models`. It validates the Entra issuer, tenant, Cognitive Services audience, token signature and expiry. Optional `allowed_object_ids` restricts APIM to listed **user or service-principal object IDs**; these are not group IDs. An empty list permits authenticated tenant callers at APIM while Foundry RBAC still decides inference access.
 
 The observability command reuses the connected Application Insights logger and enables information traces/custom metrics at this API's scope. It preserves existing diagnostic settings, including payload logging choices. Follow the [observability guide](observability.md) to review those choices and enable metric dimensions. For classic APIM tiers, set `telemetry.token_metrics` to `false`.

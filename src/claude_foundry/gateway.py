@@ -156,7 +156,7 @@ def deploy(c, azure):
     base = api_path(c)
     policy = policy_xml(c)  # Validate before changing Azure.
     properties = {
-        "displayName": c.get("profile_name", "Claude on Azure"),
+        "displayName": c.get("api_display_name", "Claude via Azure Foundry"),
         "path": c["api_path"],
         "protocols": ["https"],
         "serviceUrl": c["foundry_url"],
