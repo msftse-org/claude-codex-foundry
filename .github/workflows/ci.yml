@@ -1,0 +1,30 @@
+name: Validate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  python:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.11.13'
+          python-version: ${{ matrix.python }}
+      - run: uv sync --frozen --extra auth
+      - run: uv run --frozen --extra auth ruff check src scripts tests
+      - run: uv run --frozen --extra auth ruff format --check src scripts tests
+      - run: uv run --frozen --extra auth pytest -q
+      - run: bash -n scripts/macos/install.sh Install.command
+      - run: uv build
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
