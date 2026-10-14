@@ -1,0 +1,117 @@
+export type Role = "owner" | "admin" | "billing" | "auditor" | "developer";
+export interface Member {
+    id: string;
+    name: string;
+    email: string;
+    role: Role;
+    status: "active" | "suspended";
+    group_id: string;
+    monthly_tokens: number;
+    extra_models: string[];
+}
+export interface Group {
+    id: string;
+    name: string;
+    description: string;
+    model_ids: string[];
+    default_model: string;
+    monthly_tokens: number;
+    budget_usd: number;
+}
+export interface Model {
+    name: string;
+    labelOverride: string;
+    anthropicFamilyTier: string;
+    isFamilyDefault?: boolean;
+}
+export interface Settings {
+    name: string;
+    monthly_budget_usd: number;
+    monthly_tokens: number;
+    member_tokens_per_minute: number;
+    member_requests_per_minute: number;
+}
+export interface Audit {
+    id: string;
+    at: string;
+    actor_id: string;
+    actor: string;
+    action: string;
+    target: string;
+    before: unknown;
+    after: unknown;
+}
+export interface AccessRequest {
+    id: string;
+    member_id: string;
+    member_name: string;
+    at: string;
+    model: string;
+    reason: string;
+    status: string;
+    note?: string;
+}
+export interface State {
+    revision: number;
+    viewer: Member;
+    members: Member[];
+    groups: Group[];
+    models: Model[];
+    settings: Settings;
+    audit: Audit[];
+    prices: {
+        model: string;
+        input_per_million: number;
+        output_per_million: number;
+        source_url?: string;
+        verified_on?: string;
+        note?: string;
+    }[];
+    requests: AccessRequest[];
+    published_revision: number | null;
+    policy_hash: string;
+    published_hash?: string;
+    publish_status: string;
+    published_at: string | null;
+    gateway_url: string;
+    tenant_id: string;
+}
+export interface Aggregate {
+    key: string;
+    requests: number;
+    errors: number;
+    duration_ms: number;
+}
+export interface Telemetry {
+    status: string;
+    daily: Aggregate[];
+    models: Aggregate[];
+    people: Aggregate[];
+    requests: {
+        timestamp: string;
+        name: string;
+        resultCode: string;
+        duration: number;
+        model: string;
+        principal_id: string;
+    }[];
+    sampled_rows?: number;
+    truncated?: boolean;
+    note?: string;
+    month_tokens?: TokenUsage[];
+}
+export interface TokenUsage {
+    model: string;
+    group_id: string;
+    principal_id: string;
+    input_tokens: number;
+    output_tokens: number;
+    cached_tokens: number;
+}
+export interface Bootstrap {
+    tenantId: string;
+    clientId: string;
+    configured: boolean;
+    local: boolean;
+    name: string;
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "profile_name": "Claude on Azure",
+  "subscription_id": "00000000-0000-0000-0000-000000000001",
+  "tenant_id": "00000000-0000-0000-0000-000000000002",
+  "allowed_object_ids": [],
+  "apim_resource_group": "rg-claude",
+  "apim_name": "contoso-claude-apim",
+  "api_id": "claude-foundry",
+  "api_display_name": "Claude via Azure Foundry",
+  "api_path": "claude",
+  "gateway_url": "https://contoso-claude-apim.azure-api.net/claude",
+  "foundry_resource_group": "rg-claude",
+  "foundry_name": "contoso-claude-foundry",
+  "foundry_url": "https://contoso-claude-foundry.services.ai.azure.com/anthropic",
+  "token_resource": "https://cognitiveservices.azure.com",
+  "model_provider_data": {"organizationName": "Your legal organization name", "countryCode": "US", "industry": "technology"},
+  "telemetry": {"enabled": true, "token_metrics": true},
+  "models": []
+}

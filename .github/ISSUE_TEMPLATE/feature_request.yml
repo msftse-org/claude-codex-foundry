@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose an improvement around a customer or contributor need.
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Who needs this, and what problem are they solving?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user workflow and how success would be measured.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and constraints
+      description: Consider deployment cost, security boundaries, compatibility, and scope.
