@@ -45,6 +45,18 @@ uv run claude-foundry admin --config .local/organization.json sync-models
 
 The report distinguishes retired models, missing quota, purchase restrictions and provisioning failures. The command exits with code 2 if a deployment failed or remains pending; it retains the report and successful deployments. Models listed in the catalog are not necessarily purchasable by the subscription. Organization purchase restrictions must be resolved by the subscription/billing administrator.
 
+Deployment defaults to `GlobalStandard`. Where the regional catalog and subscription support it, explicitly select `--sku DataZoneStandard` to use that deployment type and its separate quota. Use `--model MODEL_NAME` (repeatable) to target particular models. For example, after reviewing the plan:
+
+```bash
+uv run claude-foundry admin --config .local/organization.json models \
+  --model claude-opus-5-5 --sku DataZoneStandard --report .local/datazone-models.json
+uv run claude-foundry admin --config .local/organization.json models \
+  --model claude-opus-5-5 --sku DataZoneStandard --report .local/datazone-models.json \
+  --apply --accept-marketplace-terms
+```
+
+The command never changes an existing deployment's SKU or capacity, and it does not silently fall back between deployment types. Review the selected type's regional availability, data-processing geography and pricing for your organization.
+
 `sync-models` includes successful Anthropic deployments and sets the newest model in each family as the default. Review the list before publishing it. Provisioning success must still be checked with live inference. To intentionally limit the published catalog, remove models from the local configuration after synchronization; the gateway enforces that list for all its users.
 
 ## 3. Publish the dedicated API

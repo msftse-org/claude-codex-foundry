@@ -65,6 +65,17 @@ def test_desktop_model_catalog_encodes_as_json_string(org, tmp_path):
     assert settings["isClaudeCodeForDesktopEnabled"] == "true"
 
 
+def test_desktop_omits_http_catalog_metadata(org, tmp_path):
+    from pathlib import Path
+
+    c = export_client(org)
+    c["models"][0]["created_at"] = "2026-10-14T00:00:00Z"
+    info = install(c, home=tmp_path)
+    models = json.loads(read_json(Path(info["profile"]))["inferenceModels"])
+    assert "created_at" not in models[0]
+    assert c["models"][0]["created_at"] == "2026-10-14T00:00:00Z"
+
+
 def test_invalid_profile_cannot_mutate_settings(org, tmp_path):
     import pytest
 

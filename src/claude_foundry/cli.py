@@ -35,6 +35,18 @@ def parser():
         "models", help="Discover quota, then optionally deploy missing models"
     )
     plan.add_argument("--capacity", type=int, default=10)
+    plan.add_argument(
+        "--sku",
+        choices=["GlobalStandard", "DataZoneStandard"],
+        default="GlobalStandard",
+        help="Deployment type for missing models; existing deployments are preserved",
+    )
+    plan.add_argument(
+        "--model",
+        action="append",
+        dest="model_names",
+        help="Limit discovery/deployment to this catalog model name; repeat for several models",
+    )
     plan.add_argument("--apply", action="store_true")
     plan.add_argument("--accept-marketplace-terms", action="store_true")
     plan.add_argument("--wait-seconds", type=int, default=600)
@@ -92,7 +104,9 @@ def main():
             if args.command == "models":
                 if args.capacity < 1 or args.wait_seconds < 0:
                     raise ValueError("capacity must be positive; wait-seconds must be nonnegative")
-                plan = models.discover(c, azure, args.capacity)
+                plan = models.discover(
+                    c, azure, args.capacity, sku_name=args.sku, model_names=args.model_names
+                )
                 if args.apply:
                     if not args.accept_marketplace_terms:
                         raise ValueError(

@@ -79,7 +79,10 @@ def desktop_settings(c, helper):
         "inferenceCredentialHelper": str(helper),
         "inferenceCredentialHelperTtlSec": "300",
         "inferenceCredentialHelperTimeoutSec": "60",
-        "inferenceModels": json.dumps(c["models"]),
+        # created_at belongs to the HTTP model catalog, not Desktop's schema.
+        "inferenceModels": json.dumps(
+            [{k: v for k, v in m.items() if k != "created_at"} for m in c["models"]]
+        ),
         "modelDiscoveryEnabled": "false",
         "chatTabEnabled": "true",
         "isClaudeCodeForDesktopEnabled": "true",

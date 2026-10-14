@@ -3,7 +3,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from claude_foundry import auth
+from claude_foundry import auth, models
+from claude_foundry.azure import AzureError
 from claude_foundry.config import export_client, write_json
 from claude_foundry.models import plan_models, sync_models
 
@@ -61,6 +62,78 @@ def test_prefers_azure_hosted_default_variant():
         model("m", version="new", capabilities={"hostedOn": "azure"}, isDefaultVersion=True),
     ]
     assert plan_models(catalog, [quota("m")], [])[0]["version"] == "new"
+
+
+def test_explicit_sku_uses_separate_quota_and_filters_models():
+    catalog = [
+        model("other"),
+        model(
+            "opus",
+            skus=[
+                {"name": "GlobalStandard", "usageName": "global"},
+                {"name": "DataZoneStandard", "usageName": "zone"},
+            ],
+        ),
+    ]
+    quotas = [quota("global", used=20), quota("zone", used=17)]
+    assert plan_models(catalog, quotas, [], model_names=["opus"])[0]["action"] == "skip"
+    plan = plan_models(catalog, quotas, [], sku_name="DataZoneStandard", model_names=["opus"])
+    assert len(plan) == 1
+    assert plan[0]["action"] == "deploy"
+    assert plan[0]["capacity"] == 3
+    assert plan[0]["sku"] == "DataZoneStandard"
+    with pytest.raises(ValueError, match="not in the regional catalog"):
+        plan_models(catalog, quotas, [], model_names=["typo"])
+
+
+def test_explicit_sku_does_not_fallback_or_change_existing_deployment():
+    catalog = [model("m")]
+    assert (
+        plan_models(catalog, [quota("m")], [], sku_name="DataZoneStandard")[0]["reason"]
+        == "DataZoneStandard is not supported"
+    )
+    deployed = [
+        {
+            "name": "existing",
+            "sku": {"name": "GlobalStandard", "capacity": 40},
+            "properties": {
+                "model": {"name": "m", "format": "Anthropic", "version": "1"},
+                "provisioningState": "Succeeded",
+            },
+        }
+    ]
+    kept = plan_models(catalog, [quota("m")], deployed, sku_name="DataZoneStandard")[0]
+    assert (kept["action"], kept["sku"], kept["capacity"]) == ("keep", "GlobalStandard", 40)
+
+
+def test_model_deployment_retries_etag_conflict_with_identical_request(org, tmp_path, monkeypatch):
+    azure = Mock()
+    azure.request.side_effect = [
+        AzureError(412, "IfMatchPreconditionFailed"),
+        {"properties": {"provisioningState": "Succeeded"}},
+    ]
+    monkeypatch.setattr(models.time, "sleep", Mock())
+    plan = plan_models([model("m")], [quota("m")], [])
+    report = models.apply(org, azure, plan, tmp_path / "report.json", wait_seconds=0)
+    assert report[0]["state"] == "Succeeded"
+    assert azure.request.call_count == 2
+    assert azure.request.call_args_list[0] == azure.request.call_args_list[1]
+
+
+@pytest.mark.parametrize("status,attempts", [(412, 4), (400, 1)])
+def test_model_deployment_retries_are_bounded(org, tmp_path, monkeypatch, status, attempts):
+    azure = Mock()
+    azure.request.side_effect = AzureError(status, "rejected")
+    monkeypatch.setattr(models.time, "sleep", Mock())
+    report = models.apply(
+        org,
+        azure,
+        plan_models([model("m")], [quota("m")], []),
+        tmp_path / "report.json",
+        wait_seconds=0,
+    )
+    assert report[0]["state"] == "Failed"
+    assert azure.request.call_count == attempts
 
 
 def test_sync_excludes_failed_models_and_preserves_deployment_name(org):

@@ -117,8 +117,8 @@ var noPayloadLogging = {
     headers: []
     dataMasking: {
       headers: [
-        { mode: 'Hide', value: 'Authorization' }
-        { mode: 'Hide', value: 'x-api-key' }
+        { mode: 'Mask', value: 'Authorization' }
+        { mode: 'Mask', value: 'x-api-key' }
       ]
       queryParams: [{ mode: 'Hide', value: '*' }]
     }
