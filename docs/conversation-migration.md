@@ -59,4 +59,8 @@ Terminal Claude Code sessions stay in its existing local store because this inst
 
 ## Validation
 
-Automated coverage checks policy validation/export/packaging, preservation of source restrictions, MDM refusal, settings recovery, and unchanged conversation files. Native import is performed by Claude Desktop, not by these tests. Live workstation results are recorded separately; cloud imports require the source account's access and any required organization export policy.
+Automated coverage checks policy validation/export/packaging, preservation of source restrictions, MDM refusal, settings recovery, and unchanged conversation files. Native import is performed by Claude Desktop, not by these tests.
+
+A live Mac pilot on **14 October 2026**, using **Claude Desktop 2.37337.1**, completed the signed-in Claude.ai chat/project import and local Code/Cowork import into an Azure gateway profile. Desktop's completion screen and import history confirmed the imported batches. Original local session file paths, sizes, and modification times were unchanged, and a fresh Desktop chat received a successful reply through the configured gateway after import. Private source information and screenshots are excluded from this repository.
+
+This pilot does not establish compatibility with every Desktop build or organization policy. Source-organization restrictions have automated coverage; a customer must also pilot them against its own Claude.ai workspace and MDM policy. Cloud imports require the source account's access and any required organization export policy. Resuming each imported conversation remains subject to Claude's trust checks and the availability of its original files and tools.
