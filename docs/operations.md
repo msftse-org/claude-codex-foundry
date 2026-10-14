@@ -62,7 +62,7 @@ For Mac updates, distribute a newly built organization bundle. Users rerun `Inst
 
 | Situation | Recovery approach |
 | --- | --- |
-| Mac configuration problem | Run the installed `claude-foundry restore`, then restart Claude. This restores managed settings, not credentials or history migration. |
+| Mac configuration problem | Run the installed `claude-foundry restore`, then restart Claude. This restores managed settings, not credentials or imported history. Review copied batches separately in Claude's import history UI. |
 | Baseline gateway regression | Reapply the last reviewed baseline configuration/policies to that API and verify allowed/denied requests. |
 | Portal policy publication failure | Retain the draft and follow the publication recovery procedure below. Restore attempts are best effort; do not assume that an error means Azure changed nothing. |
 | Portal code regression | Redeploy the last verified application package after checking state compatibility. |

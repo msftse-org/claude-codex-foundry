@@ -37,7 +37,7 @@ Ask your organization for its installation ZIP. You do **not** need an Azure sub
 3. Complete Microsoft sign-in, then fully quit and reopen Claude Desktop.
 4. Select the organization profile and a published model. Send a small test message.
 
-The installer supplies its own isolated runtime and preserves unrelated settings. An MSAL profile requires no Azure CLI. Existing consumer Claude history stays in its original profile and does not migrate automatically.
+The installer supplies its own isolated runtime and preserves unrelated settings. An MSAL profile requires no Azure CLI. To bring existing work into the Azure profile, use the opt-in [conversation import workflow](docs/conversation-migration.md). Originals stay available.
 
 **[Mac installation, verification, and restore →](docs/macos.md)**
 
@@ -104,7 +104,7 @@ The portal is outside the inference path: its availability does not determine wh
 - **Dollar budgets are planning thresholds.** They do not stop Azure billing. Token quotas and request limits apply after policy publication; streaming estimates and concurrent requests can overshoot.
 - **Cost analysis is an estimate.** Rates are maintained by administrators. Cache pricing, some prompt-length tiers, discounts, tax, and infrastructure costs are not reconciled. See the [pricing reference](portal/PRICING.md).
 - **Scale must be measured.** A 2,000-member import/policy-size check has passed; 2,000 concurrent developers have not been load-tested.
-- **Current onboarding targets macOS and Azure public cloud.** The baseline inference endpoints are public HTTPS. Private portal storage does not make Foundry or APIM private. Windows/Linux installers, SCIM, MDM enrollment, conversation migration, and immutable compliance archives are not included.
+- **Current onboarding targets macOS and Azure public cloud.** The baseline inference endpoints are public HTTPS. Private portal storage does not make Foundry or APIM private. Conversation import uses Claude's native wizard with documented source and attachment limits. Windows/Linux installers, SCIM, MDM enrollment, and immutable compliance archives are not included.
 
 ## Documentation
 
@@ -112,6 +112,7 @@ The portal is outside the inference path: its availability does not determine wh
 | --- | --- |
 | Deploy infrastructure, models, and the gateway | [Organization administrator](docs/administrator.md) |
 | Install, sign in, update, or restore Claude settings | [Mac installation](docs/macos.md) |
+| Bring existing chats, projects, and local sessions | [Conversation migration](docs/conversation-migration.md) |
 | Learn every portal workspace with real screenshots | [Portal guide and gallery](docs/portal-guide.md) |
 | Deploy or develop the portal | [Portal engineering guide](portal/README.md) |
 | Operate, upgrade, recover, and plan a rollout | [Operations guide](docs/operations.md) |

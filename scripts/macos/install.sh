@@ -6,12 +6,14 @@ task_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 task_profile="$task_root/client.json"
 task_install_az=false
 task_login=true
+task_history=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) task_profile="$2"; shift 2 ;;
     --install-azure-cli) task_install_az=true; shift ;;
     --no-login) task_login=false; shift ;;
-    *) echo "Usage: install.sh [--config FILE] [--install-azure-cli] [--no-login]" >&2; exit 2 ;;
+    --enable-history-import) task_history=true; shift ;;
+    *) echo "Usage: install.sh [--config FILE] [--install-azure-cli] [--no-login] [--enable-history-import]" >&2; exit 2 ;;
   esac
 done
 [[ "$(uname -s)" == Darwin ]] || { echo 'This installer supports macOS.' >&2; exit 1; }
@@ -41,5 +43,9 @@ uv pip install --python "$task_runtime/bin/python" --no-deps "$task_root"
 if [[ "$task_login" == true ]]; then
   "$task_runtime/bin/claude-foundry" login --config "$task_profile"
 fi
-"$task_runtime/bin/claude-foundry" install --config "$task_profile"
+task_install_args=(install --config "$task_profile")
+if [[ "$task_history" == true ]]; then
+  task_install_args+=(--enable-history-import)
+fi
+"$task_runtime/bin/claude-foundry" "${task_install_args[@]}"
 echo "Installed. Restart Claude Desktop. Recovery: $task_runtime/bin/claude-foundry restore"

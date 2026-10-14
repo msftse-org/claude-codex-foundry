@@ -3,6 +3,7 @@
 import copy
 import getpass
 import plistlib
+import re
 import shlex
 import sys
 import uuid
@@ -22,6 +23,30 @@ CONFLICTS = (
 )
 
 
+def check_desktop_import_version(info_path=None):
+    """Fail closed on builds that cannot enforce source-organization restrictions."""
+    candidates = (
+        [info_path]
+        if info_path
+        else [
+            Path("/Applications/Claude.app/Contents/Info.plist"),
+            Path.home() / "Applications/Claude.app/Contents/Info.plist",
+        ]
+    )
+    path = next((p for p in candidates if p.is_file()), None)
+    message = "History import requires Claude Desktop 2.26454.0 or later; install an approved build in Applications first."
+    if path is None:
+        raise RuntimeError(message)
+    try:
+        version = plistlib.loads(path.read_bytes())["CFBundleShortVersionString"]
+        if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+            raise ValueError("Unknown version")
+        if tuple(map(int, version.split("."))) < (2, 26454, 0):
+            raise ValueError("Unsupported version")
+    except (KeyError, ValueError, plistlib.InvalidFileException) as error:
+        raise RuntimeError(message) from error
+
+
 def check_managed_preferences():
     """Fail before editing if MDM controls the inference profile."""
     for base in (
@@ -33,7 +58,8 @@ def check_managed_preferences():
             with path.open("rb") as stream:
                 managed = plistlib.load(stream)
             if any(
-                key.startswith("inference") or key in {"bootstrapUrl", "forceLoginOrgUUID"}
+                key.startswith("inference")
+                or key in {"bootstrapUrl", "forceLoginOrgUUID", "claudeAiImport"}
                 for key in managed
             ):
                 raise RuntimeError(
@@ -71,7 +97,7 @@ def merge_cli(current, c, helper_path):
 def desktop_settings(c, helper):
     import json
 
-    return {
+    settings = {
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": c["gateway_url"],
         "inferenceGatewayAuthScheme": "bearer",
@@ -87,10 +113,24 @@ def desktop_settings(c, helper):
         "chatTabEnabled": "true",
         "isClaudeCodeForDesktopEnabled": "true",
     }
+    if "conversation_import" in c:
+        # Use the vendor's importer, never rewrite conversation stores. An
+        # explicit policy disables automatic copying of tasks/plugins and export.
+        settings["claudeAiImport"] = json.dumps(
+            {
+                "automatic3pImport": False,
+                "exportEnabled": False,
+                "bannerBehavior": "detect",
+                **c["conversation_import"],
+            }
+        )
+    return settings
 
 
 def install(c, home=None, executable=None):
     validate_client(c)
+    if home is None and c.get("conversation_import", {}).get("enabled"):
+        check_desktop_import_version()
     home = home or Path.home()
     state = home / ".config/claude-foundry"
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -115,6 +155,27 @@ def install(c, home=None, executable=None):
     current_cli = read_json(cli_path, default={})
     current_mode = read_json(mode_path, default={})
     current_profile = read_json(profile_path, default={})
+    if "conversation_import" in c and "claudeAiImport" in current_profile:
+        import json
+
+        existing = current_profile["claudeAiImport"]
+        if isinstance(existing, str):
+            existing = json.loads(existing)
+        # Never silently widen an existing source restriction or replace a
+        # customer-owned import endpoint with the public Claude.ai service.
+        if not isinstance(existing, dict):
+            raise ValueError(
+                "Existing Claude import policy is invalid; review it in Claude Desktop"
+            )
+        if any(key in existing for key in ("url", "oauthIssuer", "oauthClientId")):
+            raise ValueError(
+                "A custom history import endpoint is configured; manage it in Claude Desktop"
+            )
+        old_ids = existing.get("allowedOrganizationUuids")
+        if old_ids is not None and "allowedOrganizationUuids" not in c["conversation_import"]:
+            c = copy.deepcopy(c)
+            c["conversation_import"]["allowedOrganizationUuids"] = old_ids
+            validate_client(c)
     meta = copy.deepcopy(current_meta)
     if not any(e["id"] == profile_id for e in meta["entries"]):
         meta["entries"].append({"id": profile_id, "name": c.get("profile_name", "Claude on Azure")})
@@ -133,6 +194,14 @@ def install(c, home=None, executable=None):
     }
     write_json(state / "backups" / timestamp / "settings.json", snapshot)
     baseline = copy.deepcopy(old_manifest.get("baseline", snapshot))
+    if "conversation_import" in c and "claudeAiImport" in current_profile:
+        previous = old_manifest.get("installed", {}).get(str(profile_path), {})
+        if current_profile["claudeAiImport"] != previous.get("claudeAiImport"):
+            # Keep a customer-authored policy as the rollback target when this
+            # upgrade starts managing import, including a previous deny list.
+            baseline[str(profile_path)]["value"]["claudeAiImport"] = copy.deepcopy(
+                current_profile["claudeAiImport"]
+            )
     for path, after in desired.items():
         baseline[path]["value"] = update_baseline(
             snapshot[path]["value"],

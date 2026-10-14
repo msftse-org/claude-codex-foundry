@@ -128,6 +128,8 @@ The registration script requires directory read/app registration permissions; co
 
 ## 5. Verify and distribute
 
+To offer existing-history migration, add a reviewed `conversation_import` policy to the organization config before exporting the client profile. The [migration guide](conversation-migration.md#for-platform-administrators) covers source-organization restrictions and managed fleets. Import remains opt-in and uses Claude Desktop's native wizard.
+
 ```bash
 uv run --extra auth claude-foundry login --config .local/client.json
 uv run --extra auth claude-foundry verify --config .local/client.json --all-models
