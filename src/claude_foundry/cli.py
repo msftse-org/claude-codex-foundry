@@ -22,6 +22,11 @@ def parser():
     install = actions.add_parser("install", help="Configure Claude Desktop and Code on macOS")
     install.add_argument("--config", type=Path, required=True)
     install.add_argument("--login", action="store_true")
+    install.add_argument(
+        "--enable-history-import",
+        action="store_true",
+        help="Enable Claude's import wizard; conversations are copied only after user selection",
+    )
     actions.add_parser("restore", help="Restore managed settings while preserving subsequent edits")
     check = actions.add_parser("verify", help="Make small billable gateway inference requests")
     check.add_argument("--config", type=Path)
@@ -84,6 +89,8 @@ def main():
             if sys.platform != "darwin":
                 raise RuntimeError("The settings installer currently supports macOS only")
             c = load_client(args.config)
+            if args.enable_history_import:
+                c.setdefault("conversation_import", {})["enabled"] = True
             client.check_managed_preferences()
             # Validate credentials before replacing a working configuration.
             if args.login:
@@ -91,6 +98,11 @@ def main():
             auth.credential(c)
             print(json.dumps(client.install(c), indent=2))
             print("Restart Claude Desktop to apply the profile.")
+            if c.get("conversation_import", {}).get("enabled"):
+                print(
+                    "Bring existing work: Settings → Import & export → Import… in Claude Desktop."
+                )
+                print("Review the source and import summary. Original conversations stay in place.")
         elif args.action == "restore":
             client.restore()
         elif args.action == "verify":

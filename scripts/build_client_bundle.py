@@ -20,6 +20,7 @@ def build(profile, output, root):
         "auth_mode",
         "client_id",
         "models",
+        "conversation_import",
     }
     if set(config) - allowed:
         raise ValueError("Use admin export-client first; the bundle accepts a client profile only")
@@ -31,6 +32,7 @@ def build(profile, output, root):
             "Install.command",
             "scripts/macos/install.sh",
             "docs/macos.md",
+            "docs/conversation-migration.md",
         )
     ]
     files += sorted((root / "src/claude_foundry").glob("*.py"))
