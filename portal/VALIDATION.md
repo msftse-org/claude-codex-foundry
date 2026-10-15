@@ -65,6 +65,8 @@ The walkthrough's screenshots were captured from the actual hosted preview on 20
 
 ## Remaining customer acceptance work
 
+- **Required spending control is not implemented:** hard organization/group/user dollar limits, shared Claude/Codex accounting, and scoped group-administrator permissions. The existing token-quota tests do not validate these requirements. See the [release-blocking acceptance criteria](../docs/budget-enforcement.md).
+
 - Real administrator, billing, auditor and developer sessions under the customer's Conditional Access, consent and device policies; account disablement/expired-token journeys.
 - Complete the hosted browser CSV upload once extension file access is available, and a fresh Mac installation from the exported portal profile. Verify MSAL mode with a separate desktop registration if Azure CLI-free onboarding is required.
 - Process termination during publication, live two-session administrator conflicts, rollback failures, and a real Blob-version restore from an authorized private-network operator. Offline failure/concurrency tests do not replace these operational drills.
