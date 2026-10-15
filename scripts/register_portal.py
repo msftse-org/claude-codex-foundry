@@ -77,10 +77,10 @@ def register(config, name, redirects, app_id=None):
                         "value": "access_as_user",
                         "type": "User",
                         "isEnabled": True,
-                        "adminConsentDisplayName": "Use Claude Foundry Admin",
-                        "adminConsentDescription": "Access this organization's Claude administration portal as the signed-in user. The portal enforces each member's assigned role.",
-                        "userConsentDisplayName": "Use Claude Foundry Admin",
-                        "userConsentDescription": "Use your organization's Claude administration portal with your assigned permissions.",
+                        "adminConsentDisplayName": "Use Claude & Codex Admin",
+                        "adminConsentDescription": "Access this organization's Claude & Codex administration portal as the signed-in user. The portal enforces each member's assigned role.",
+                        "userConsentDisplayName": "Use Claude & Codex Admin",
+                        "userConsentDescription": "Use your organization's Claude & Codex administration portal with your assigned permissions.",
                     }
                 ],
             },
@@ -109,7 +109,7 @@ def register(config, name, redirects, app_id=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--organization", required=True)
-    parser.add_argument("--name", default="Claude Foundry Admin Preview")
+    parser.add_argument("--name", default="Claude & Codex Admin Preview")
     parser.add_argument("--redirect-uri", action="append", required=True)
     parser.add_argument(
         "--app-id", help="Update this dedicated application; omit only on first creation"

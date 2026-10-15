@@ -21,7 +21,7 @@ def prepare(config, api_id, api_route, azure):
         api_id=api_id,
         api_path=api_route,
         api_display_name="Claude via Azure Foundry — Portal Preview",
-        profile_name="Claude Foundry Preview",
+        profile_name="Claude & Codex Preview",
         gateway_url=config["gateway_url"].rsplit("/", 1)[0] + "/" + api_route,
     )
     initialized = False

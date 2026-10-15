@@ -1,4 +1,4 @@
-# Operating Claude Foundry
+# Operating Claude & Codex on Azure
 
 [← README](../README.md) · [Deployment](administrator.md) · [Troubleshooting](troubleshooting.md)
 
