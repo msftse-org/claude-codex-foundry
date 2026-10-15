@@ -1,5 +1,7 @@
 # Identity, permissions, and request flow
 
+For Codex Desktop/CLI, see [Codex identity and routing](codex.md#identity-security-and-logging). The feature preview uses the baseline user-token/RBAC path through a separate `codex-foundry` API; portal roles and grants currently apply to Claude only. Users may choose the same Azure CLI or lightweight MSAL sign-in mechanism.
+
 [← README](../README.md) · [Security boundaries](security.md) · [Portal guide](portal-guide.md) · [Validation evidence](../portal/VALIDATION.md)
 
 Claude Foundry separates three kinds of authority: permission to use a model, permission to administer the portal, and permission to administer Azure. A portal role does not grant an Azure role or an Entra directory role.

@@ -16,6 +16,12 @@ The baseline gateway requires the developer or a group to have Foundry inference
 
 Yes, through Claude Desktop's native import wizard. Claude Foundry supports enabling it during onboarding with `--enable-history-import` or an organization import policy. It copies eligible history into the Azure-connected profile and preserves originals. Source permissions and file-content limitations apply; see [conversation migration](conversation-migration.md). Restoring installation settings does not undo an import.
 
+## Can Codex Desktop and CLI use the same Azure foundation?
+
+Yes, on the `feat/codex-azure` feature branch. A separate **Codex via Azure Foundry** API exposes stateless OpenAI Responses with Entra authentication. The Mac installer preserves existing Codex settings and sessions. The current portal's policy and pricing workflows remain Claude-only. See [Codex setup](codex.md) and the [model/client validation record](codex-validation.md).
+
+Existing OpenAI-backed Codex conversations can contain encrypted state Azure cannot decrypt. The included read-only history exporter supports a reviewed visible-text handoff into a new Azure conversation. It preserves the original but does not transfer attachments, tool payloads or hidden reasoning. Ordinary ChatGPT cloud history is outside this integration.
+
 ## Does this need the new Azure AI Gateway product?
 
 The repository uses standard Azure API Management. The new foundation supports Basic v2 or Standard v2; Anthropic token metrics require a v2 tier. The API's display name is **Claude via Azure Foundry**.

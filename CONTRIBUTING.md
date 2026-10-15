@@ -103,6 +103,8 @@ For UI changes, update the [portal walkthrough](docs/portal-guide.md) when behav
 
 ## Submit a pull request
 
+Codex work stays on `feat/codex-azure` until reviewed. Changes to its provider configuration, catalogs, history handling or APIM policy need protocol tests plus an actual local-file tool and follow-up test with the approved CLI/Desktop engine versions. Keep real session exports and Azure reports in ignored `.local/`. Never rewrite original histories to make a test pass. Update [Codex validation](docs/codex-validation.md) with exact versions, limits and failed checks; a bundled-engine test is not a visual desktop UI test.
+
 1. Rebase or merge the current `main` into your working branch and resolve conflicts deliberately.
 2. Run checks relevant to your changes; record both passing checks and anything not exercised.
 3. Inspect `git diff --check`, the complete diff, and all new files for private data.
