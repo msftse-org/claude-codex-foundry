@@ -4,7 +4,7 @@
 
 Give developers a familiar Claude experience with Microsoft Entra sign-in. Deploy the infrastructure in your Azure subscription, distribute a Mac installer, and manage access and usage through a customer-owned administration portal. No shared inference API key or separate AI Gateway resource is required.
 
-**Team repository:** this private repository is the team collaboration space. The [public repository](https://github.com/orsharon7/claude-foundry) remains available for external reference. The two repositories are not automatically synchronized; review and publish changes deliberately.
+**Team repository:** use this repository for source code, documentation, issues, and pull requests. Access is managed by the GitHub organization.
 
 [Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
 
