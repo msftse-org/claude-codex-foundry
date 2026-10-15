@@ -79,4 +79,4 @@ To update the installation, run the new organization's bundle. The helper uses t
 
 ## Get help
 
-Ask your platform team for a new bundle when the organization changes its model catalog. For expired sign-in, run `login` above; for an incorrect endpoint or MDM conflict, use the [online troubleshooting guide](https://github.com/orsharon7/claude-foundry/blob/main/docs/troubleshooting.md). Share the error code, time, app version, and whether the CLI or Desktop is affected. Remove tokens, tenant identifiers, prompts, and customer content from screenshots and logs.
+Ask your platform team for a new bundle when the organization changes its model catalog. For expired sign-in, run `login` above; for an incorrect endpoint or MDM conflict, use the [online troubleshooting guide](https://github.com/orsharon7/claude-codex-foundry/blob/main/docs/troubleshooting.md). Share the error code, time, app version, and whether the CLI or Desktop is affected. Remove tokens, tenant identifiers, prompts, and customer content from screenshots and logs.

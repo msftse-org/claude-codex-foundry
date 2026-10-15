@@ -270,7 +270,7 @@ export function Drawer({
                     >
                         <header className="drawer-header">
                             <span className="eyebrow">
-                                Claude Foundry / Workspace
+                                Claude & Codex / Workspace
                             </span>
                             <Dialog.Title asChild>
                                 <h2>{title}</h2>

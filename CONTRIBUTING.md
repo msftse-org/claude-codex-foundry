@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Claude Foundry. Useful contributions include clearer installation instructions, reproducible bug reports, accessibility improvements, authentication fixes, and tested gateway or portal changes.
+Thanks for helping improve Claude & Codex on Azure. Useful contributions include clearer installation instructions, reproducible bug reports, accessibility improvements, authentication fixes, and tested gateway or portal changes.
 
 Start with the [README](README.md) for the product and the [security model](docs/security.md) and [identity/permission reference](docs/identity-and-permissions.md) before changing authentication or enforcement. The portal is a preview in `main`; remaining rollout work is tracked in [portal/VALIDATION.md](portal/VALIDATION.md).
 
@@ -15,8 +15,8 @@ There is currently no repository license. Ask the maintainer to clarify contribu
 Prerequisites: Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 or newer (uv can supply Python). Portal work also requires Node.js 24 and npm, matching CI. Azure CLI with Bicep is needed for infrastructure compilation and live Azure work; offline Python and frontend tests need no Azure sign-in.
 
 ```bash
-git clone https://github.com/orsharon7/claude-foundry.git
-cd claude-foundry
+git clone https://github.com/orsharon7/claude-codex-foundry.git
+cd claude-codex-foundry
 git switch -c feat/describe-your-change
 uv sync --frozen --extra auth --extra portal
 npm --prefix portal/web ci --ignore-scripts

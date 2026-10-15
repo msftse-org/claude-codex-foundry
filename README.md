@@ -1,10 +1,12 @@
-# Claude Foundry
+# Claude & Codex on Azure
 
-**Claude Desktop Chat, Desktop Code, and the Claude Code CLI—connected to your organization's Azure Foundry models through standard Azure API Management.**
+**Claude Chat, Claude Code, and Codex Desktop/CLI through Azure Foundry and standard Azure API Management.**
 
 Give developers a familiar Claude experience with Microsoft Entra sign-in. Deploy the infrastructure in your Azure subscription, distribute a Mac installer, and manage access and usage through a customer-owned administration portal. No shared inference API key or separate AI Gateway resource is required.
 
 [Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
+
+> **Codex and content-log preview:** these additions remain on the dedicated [`feat/codex-azure` branch](https://github.com/orsharon7/claude-codex-foundry/tree/feat/codex-azure), outside `main`. See its [setup guide](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex.md), [validation evidence](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex-validation.md), and [restricted prompt/response logs](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/content-logs.md). The ordinary ChatGPT app is not a gateway client.
 
 > **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
 
@@ -44,8 +46,8 @@ The installer supplies its own isolated runtime and preserves unrelated settings
 An Azure administrator deploys the shared foundation once. An Entra administrator may also be needed for app registration and consent. Start with a small pilot and your own reviewed configuration.
 
 ```bash
-git clone https://github.com/orsharon7/claude-foundry.git
-cd claude-foundry
+git clone https://github.com/orsharon7/claude-codex-foundry.git
+cd claude-codex-foundry
 uv sync --frozen --extra auth
 mkdir -p .local
 cp infra/parameters.example.json .local/parameters.json
@@ -123,7 +125,7 @@ The portal is outside the inference path: its availability does not determine wh
 
 ## Support and contribution
 
-For installation and access problems, contact your organization's platform team first. For reproducible project defects or feature proposals, [open an issue](https://github.com/orsharon7/claude-foundry/issues/new/choose) with sanitized details. Use the [security reporting guidance](SECURITY.md) for vulnerabilities.
+For installation and access problems, contact your organization's platform team first. For reproducible project defects or feature proposals, [open an issue](https://github.com/orsharon7/claude-codex-foundry/issues/new/choose) with sanitized details. Use the [security reporting guidance](SECURITY.md) for vulnerabilities.
 
 Contributions are welcome through focused pull requests. [CONTRIBUTING.md](CONTRIBUTING.md) covers local setup, validation, architecture, documentation, and the review process. CI validates changes; it does not deploy them.
 

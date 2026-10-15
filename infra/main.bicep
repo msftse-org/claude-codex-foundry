@@ -1,15 +1,16 @@
 targetScope = 'resourceGroup'
 
-@description('Use a region supporting the required Claude deployments.')
+@description('Use a region supporting the required Anthropic and OpenAI deployments.')
 param location string = resourceGroup().location
 param apimLocation string = location
 param foundryName string
-param projectName string = 'claude'
+param projectName string = 'developers'
 param apimName string
 param publisherName string
 param publisherEmail string
 param applicationInsightsName string
 param logAnalyticsName string
+param loggerName string = 'ccf-application-insights'
 @allowed(['BasicV2', 'StandardV2'])
 param apimSku string = 'BasicV2'
 @description('Entra groups or users permitted to invoke Foundry. An RBAC administrator must deploy these assignments.')
@@ -19,7 +20,7 @@ param allowedObjectIds array = []
 param apiId string = 'claude-foundry'
 param apiPath string = 'claude'
 param tags object = {
-  solution: 'claude-foundry'
+  solution: 'claude-codex-foundry'
 }
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2025-10-01-preview' = {
@@ -102,7 +103,7 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
 
 resource logger 'Microsoft.ApiManagement/service/loggers@2024-05-01' = {
   parent: apim
-  name: 'claude-application-insights'
+  name: loggerName
   properties: {
     loggerType: 'applicationInsights'
     resourceId: insights.id

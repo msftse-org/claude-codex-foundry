@@ -69,7 +69,7 @@ The administrator needs permissions to create resources and scoped role assignme
    ```bash
    uv run python scripts/register_portal.py \
      --organization .local/portal/organization.json \
-     --name 'Claude Foundry Admin Preview' \
+     --name 'Claude & Codex Admin Preview' \
      --redirect-uri 'https://<portal-name>.azurewebsites.net/'
    ```
 
