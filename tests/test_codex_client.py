@@ -52,6 +52,7 @@ def test_install_restore_preserves_history_credentials_trust_and_comments(codex,
     doc = tomlkit.parse(config.read_text())
     assert doc["approval_policy"] == "on-request"
     assert doc["model_provider"] == "azure-foundry"
+    assert "model_reasoning_effort" not in doc
     assert "token --config" in Path(first["helper"]).read_text()
     doc["model"] = "later-choice"
     doc["projects"]["/another"] = {"trust_level": "untrusted"}

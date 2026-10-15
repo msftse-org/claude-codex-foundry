@@ -199,14 +199,12 @@ def install(c, home=None, executable=None, catalog=None):
         model=c["default_model"],
         model_provider=PROVIDER,
         model_catalog_json=str(state / "models.json"),
-        model_reasoning_effort=next(
-            m["default_reasoning_level"]
-            for m in model_catalog["models"]
-            if m["slug"] == c["default_model"]
-        ),
         model_reasoning_summary="none",
         web_search="disabled",
     )
+    # A global effort overrides every model's metadata (for example, "low"
+    # breaks Pro models). Let the selected model supply its supported default.
+    installed.pop("model_reasoning_effort", None)
     installed.setdefault("model_providers", {})[PROVIDER] = {
         "name": "Azure Foundry",
         "base_url": c["gateway_url"],

@@ -48,6 +48,8 @@ The installer manages these files:
 
 Existing sessions, sign-in credentials, project trust, approvals, sandbox settings, MCP configuration and unrelated TOML comments are preserved. Managed provider/authentication settings, an existing custom catalog, or a separately edited managed provider require administrator review instead of silent replacement. The installer currently expects the default `~/.codex` location.
 
+Reasoning effort defaults come from each model's catalog entry. The installer backs up and clears a global effort override so switching to a Pro model does not retain an unsupported `low` setting. Explicit CLI/profile overrides still take precedence; choose an effort supported by the selected model.
+
 Restore previous routing with:
 
 ```bash
