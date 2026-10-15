@@ -19,6 +19,8 @@ Portal roles do not grant Azure subscription or Entra administrator permissions.
 
 ## Pilot acceptance checklist
 
+**Spending-control gate:** a customer requiring enforced dollar limits must not treat the current preview as satisfying that requirement. Complete the [budget enforcement and delegated-administration acceptance checks](budget-enforcement.md) before such a rollout. Current token quotas and dollar planning thresholds do not establish hard monetary enforcement.
+
 - Deploy with the customer's own parameters and review Azure `what-if` output.
 - Verify representative models, streaming, token counting, rejected credentials, and denied model access.
 - Complete Microsoft sign-in under the customer's actual Conditional Access policy.

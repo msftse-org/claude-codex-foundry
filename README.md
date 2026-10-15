@@ -101,7 +101,7 @@ The portal is outside the inference path: its availability does not determine wh
 ## Costs and practical limits
 
 - **Azure charges apply.** APIM has an ongoing service charge; inference and monitoring are metered. The portal uses Functions Flex Consumption with no always-ready instances, but storage, private endpoints, DNS, and logs can still incur charges.
-- **Dollar budgets are planning thresholds.** They do not stop Azure billing. Token quotas and request limits apply after policy publication; streaming estimates and concurrent requests can overshoot.
+- **Hard dollar enforcement is a release blocker.** Current dollar budgets are planning thresholds, with no individual dollar cap or group-administrator role. Token quotas and request limits apply after policy publication; streaming estimates and concurrent requests can overshoot. See the [required budget hierarchy and enforcement checks](docs/budget-enforcement.md).
 - **Cost analysis is an estimate.** Rates are maintained by administrators. Cache pricing, some prompt-length tiers, discounts, tax, and infrastructure costs are not reconciled. See the [pricing reference](portal/PRICING.md).
 - **Scale must be measured.** A 2,000-member import/policy-size check has passed; 2,000 concurrent developers have not been load-tested.
 - **Current onboarding targets macOS and Azure public cloud.** The baseline inference endpoints are public HTTPS. Private portal storage does not make Foundry or APIM private. Conversation import uses Claude's native wizard with documented source and attachment limits. Windows/Linux installers, SCIM, MDM enrollment, and immutable compliance archives are not included.
