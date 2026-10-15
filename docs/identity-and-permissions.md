@@ -4,7 +4,7 @@ For Codex Desktop/CLI, see [Codex identity and routing](codex.md#identity-securi
 
 [← README](../README.md) · [Security boundaries](security.md) · [Portal guide](portal-guide.md) · [Validation evidence](../portal/VALIDATION.md)
 
-Claude Foundry separates three kinds of authority: permission to use a model, permission to administer the portal, and permission to administer Azure. A portal role does not grant an Azure role or an Entra directory role.
+Claude & Codex on Azure separates three kinds of authority: permission to use a model, permission to administer the portal, and permission to administer Azure. A portal role does not grant an Azure role or an Entra directory role.
 
 ## How the pieces work together
 
@@ -59,7 +59,7 @@ Billing and auditors can read organization identities and administrative history
 
 | Identity | Permission | Scope and purpose |
 | --- | --- | --- |
-| Portal user-assigned managed identity | Custom Claude Foundry policy editor | One configured APIM API. Allows API-policy and operation-policy read/write. The code updates the API policy and `models` operation; the role can edit **all operation policies within that API**. |
+| Portal user-assigned managed identity | Custom Claude & Codex policy editor | One configured APIM API. Allows API-policy and operation-policy read/write. The code updates the API policy and `models` operation; the role can edit **all operation policies within that API**. |
 | Portal managed identity | Monitoring Reader | Selected Application Insights component, for usage and cost queries. This can read the component's other telemetry too; API filtering in application queries does not narrow Azure RBAC. Use a dedicated component when stronger isolation is required. |
 | Portal managed identity | Monitoring Metrics Publisher | Same Insights component, for authenticated portal telemetry ingestion. |
 | Portal managed identity | Storage Blob Data Owner | Dedicated portal storage account, containing Functions host/deployment data and portal state. This includes write/delete authority over those blobs. |

@@ -1,6 +1,6 @@
 # Security reporting
 
-Report suspected vulnerabilities through [the public project's private vulnerability reporting](https://github.com/orsharon7/claude-foundry/security/advisories/new). Private reporting is enabled on that public repository; reports are confidential. This team repository is private, but its issues are visible to everyone with repository access and are not a confidential security reporting channel. Do not disclose exploit details, tokens, customer identities, or affected infrastructure in a public issue.
+Report suspected vulnerabilities through [the public project's private vulnerability reporting](https://github.com/orsharon7/claude-codex-foundry/security/advisories/new). Private reporting is enabled on that public repository; reports are confidential. This team repository is private, but its issues are visible to everyone with repository access and are not a confidential security reporting channel. Do not disclose exploit details, tokens, customer identities, or affected infrastructure in a public issue.
 
 Include the affected commit/version, component, expected security boundary, reproduction steps using a test environment, and likely impact. Redact credentials and customer data; a minimal proof of concept is more useful than a complete production log dump. Do not test against an organization without authorization.
 

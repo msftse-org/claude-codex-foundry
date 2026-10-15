@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability privately
-    url: https://github.com/orsharon7/claude-foundry/security/advisories/new
+    url: https://github.com/orsharon7/claude-codex-foundry/security/advisories/new
     about: Report confidentially through the public project instead of posting vulnerability details in a team issue.
   - name: Installation and troubleshooting
-    url: https://github.com/msftse-org/claude-foundry/blob/main/docs/troubleshooting.md
+    url: https://github.com/msftse-org/claude-codex-foundry/blob/main/docs/troubleshooting.md
     about: For organization access and installation bundles, contact your platform team first.

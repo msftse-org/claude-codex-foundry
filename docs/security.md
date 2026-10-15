@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Identity and permission reference](identity-and-permissions.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
 
-Claude Foundry has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow prepares a separate preview API so this can be evaluated without replacing the baseline API.
+Claude & Codex on Azure has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow prepares a separate preview API so this can be evaluated without replacing the baseline API.
 
 ![Hosted preview showing Entra sign-in, published gateway policy, connected reporting, and no portal conversation storage](images/portal-security-status.jpg)
 

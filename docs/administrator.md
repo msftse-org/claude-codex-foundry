@@ -11,8 +11,8 @@ For the Codex Desktop/CLI feature preview, deploy the shared foundation using th
 Install Git, [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), and [uv](https://docs.astral.sh/uv/). Clone the repository and run every command below from its root:
 
 ```bash
-git clone https://github.com/msftse-org/claude-foundry.git
-cd claude-foundry
+git clone https://github.com/msftse-org/claude-codex-foundry.git
+cd claude-codex-foundry
 uv sync --frozen --extra auth
 ```
 
@@ -136,7 +136,7 @@ To offer existing-history migration, add a reviewed `conversation_import` policy
 uv run --extra auth claude-foundry login --config .local/client.json
 uv run --extra auth claude-foundry verify --config .local/client.json --all-models
 uv run python scripts/build_client_bundle.py --profile .local/client.json \
-  --output dist/claude-foundry-macos.zip
+  --output dist/claude-codex-foundry-macos.zip
 ```
 
 Distribute the bundle through an approved internal channel. Its file allowlist excludes `.local`, deployment reports, cloud administrator configuration, Git metadata and caches. `client.json` contains tenant ID, gateway URL, public client ID when applicable, and the model list; it contains no secret. Users follow [the Mac guide](macos.md).
@@ -152,3 +152,9 @@ You should now have a dedicated **Claude via Azure Foundry** API, successfully v
 Before an organization change, retain the local config and export the current API policy/operations through Azure's normal backup process. Reapply the last reviewed configuration to revert a gateway change. Model deletion and foundation teardown are deliberately separate from installation. Do not delete a shared resource group to remove this solution. User settings have a separate restore command described in the Mac guide.
 
 To retain a deployment for diagnosis while excluding it from future synchronization, add its exact deployment name to an `excluded_deployments` array in the organization configuration. This list is applied by `sync-models` and is not exported to users. Redeploy the gateway and export a new client profile after changing it.
+
+## Resource naming and existing installations
+
+The product is **Claude & Codex on Azure** and both repositories are named `claude-codex-foundry`. Use `ccf-` for new shared resources: `ccf-foundry-<suffix>`, `ccf-apim-<suffix>`, `ccf-insights`, `ccf-logs`, and `ccf-admin-<suffix>`. Use the `developers` Foundry project. Client-specific API IDs and paths still identify Claude or Codex. The ordinary ChatGPT cloud app is not a supported gateway client.
+
+Existing Azure resource IDs, URLs, state, and client installations do not need migration. For a redeployment, retain the original parameter values, including `projectName`, `loggerName`, and the portal `storageAccountName`; adopting new names creates new resources. The `claude-foundry` CLI, Python package, local configuration directories and existing ZIP layouts remain compatible, intentionally. A GitHub repository rename does not rename your local checkout; update its remote URL to your own organization's new repository.

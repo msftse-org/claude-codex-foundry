@@ -2,7 +2,7 @@
 
 [← Mac setup](macos.md) · [Administrator setup](administrator.md) · [Security](security.md)
 
-Claude Desktop has a native importer for Claude.ai chats/projects and eligible local Desktop sessions. Claude Foundry can enable it during onboarding. Import creates local copies; originals stay available. Continuing imported work uses the configured Azure gateway. See [Anthropic's import guide](https://claude.com/docs/third-party/claude-desktop/import) for the complete workflow and current compatibility.
+Claude Desktop has a native importer for Claude.ai chats/projects and eligible local Desktop sessions. Claude & Codex on Azure can enable it during onboarding. Import creates local copies; originals stay available. Continuing imported work uses the configured Azure gateway. See [Anthropic's import guide](https://claude.com/docs/third-party/claude-desktop/import) for the complete workflow and current compatibility.
 
 ## For users
 
