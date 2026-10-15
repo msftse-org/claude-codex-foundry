@@ -78,9 +78,9 @@ def register(config, name, redirects, app_id=None):
                         "type": "User",
                         "isEnabled": True,
                         "adminConsentDisplayName": "Use Claude & Codex Admin",
-                        "adminConsentDescription": "Access this organization's Claude administration portal as the signed-in user. The portal enforces each member's assigned role.",
+                        "adminConsentDescription": "Access this organization's Claude & Codex administration portal as the signed-in user. The portal enforces each member's assigned role.",
                         "userConsentDisplayName": "Use Claude & Codex Admin",
-                        "userConsentDescription": "Use your organization's Claude administration portal with your assigned permissions.",
+                        "userConsentDescription": "Use your organization's Claude & Codex administration portal with your assigned permissions.",
                     }
                 ],
             },
