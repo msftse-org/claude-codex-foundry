@@ -44,7 +44,7 @@ The portal multiplies reported input/output tokens by the currently configured p
 
 ## Can administrators read developers' prompts or chats?
 
-The portal does not offer conversation viewing or retention controls. New gateway diagnostics are configured for operational metadata with zero body bytes; existing APIM diagnostics are preserved and must be reviewed separately. Provider handling and local Claude storage follow their own configuration and terms.
+Yes, when an organization explicitly enables [prompt and response logging](content-logs.md). Portal owners and administrators can inspect newly captured Claude/Codex gateway messages after recording an access reason. Billing, auditor and developer roles cannot view them. Capture is off by default, with seven-day configured retention. Earlier uncaptured chats cannot be recovered, and full local conversation history is not imported.
 
 ## Does portal membership synchronize with Entra or send invitations?
 

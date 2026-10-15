@@ -14,7 +14,7 @@ This record describes the feature-branch pilot, not a production certification. 
 - Source and packaging checks: **130 Python tests passed**, Ruff checks/formatting, shell syntax, wheel build and client bundle inspection (see PR checks for final results).
 - Dependency audit of the resolved authentication and portal runtime packages: **no known vulnerabilities reported** by `pip-audit` on the validation date. This does not rule out undisclosed vulnerabilities.
 
-**Desktop UI boundary:** automation of Codex's own UI was blocked by the application's safety controls. Bundled-engine results are real engine tests, not a claim of completed visual UI acceptance. A user must verify the new local chat/model picker and a file-read prompt after the app loads the profile.
+**Desktop UI boundary:** automation of Codex's own UI was blocked by the application's safety controls. Bundled-engine results are real engine tests, not a claim of completed visual UI acceptance. The user reported three successful README file reads. The routing audit below shows that these turns used OpenAI, so Azure desktop UI acceptance remains outstanding.
 
 ## Models
 
@@ -80,7 +80,7 @@ Live checks passed for:
 - Stored `previous_response_id`, `conversation`, and background jobs: **400**.
 - Stored-response retrieval route: **404**.
 - A request containing `store=true`: response confirmed **store=false**.
-- API frontend/backend request/response diagnostics: **zero body bytes and no captured headers**.
+- Conventional API frontend/backend request/response diagnostics: **zero body bytes and no captured headers**. A later opt-in [native content-log verification](../portal/VALIDATION.md#verification-on-2026-10-15-restricted-content-logs) enabled message capture in a separate workspace.
 
 Application Insights queries confirmed Codex API request records and token metrics, including prompt, cached-prompt, completion and reasoning categories. Failed compatibility probes and intentional authentication/security tests appear as expected failures in the logs. Metrics are not billing reconciliation.
 
@@ -89,3 +89,11 @@ Offline tests cover tenant/object-ID/audience policy generation, stateless guard
 ## Repeat before rollout
 
 Follow [Codex onboarding](codex.md), retain the deployment and qualification reports privately, then verify native client tool use and subsequent turns. Check the actual APIM API/request logs, not just the selected model label. Re-run after client, model-version, catalog or policy changes. Continue portal governance work separately; its current policies and costs remain Claude-only.
+
+## User README tests and routing audit — October 15, 2026
+
+The user ran the read-only README summary prompt three times in the existing chat, at **08:31:22, 09:52:38, and 10:11:27 UTC** (11:31, 12:52, and 13:11 Israel time). All three local turn records identify `gpt-6-astra` with the built-in OpenAI provider. The current station configuration had also been restored to OpenAI. Application Insights contained **no Codex APIM request records at those test times**. These successful file reads are not evidence of Azure routing or cross-provider conversation migration.
+
+A separate synthetic Azure control at **10:35:14 UTC** returned HTTP **200** and the expected marker. Application Insights recorded `POST /codex/v1/responses` with an approximately **2.39-second** duration. This confirms that the gateway and its logging path were working; it does not retroactively validate the earlier README tests. Request identifiers and raw evidence remain private. Prompt/response capture was disabled during those earlier tests.
+
+For a desktop acceptance test, load the Azure configuration, restart the app, and create a new local chat. Correlate its time and request ID with APIM before marking acceptance complete. An existing chat or a model label alone does not establish the provider.

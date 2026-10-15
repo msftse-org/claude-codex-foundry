@@ -730,3 +730,138 @@ def test_chunked_oversized_body_is_stopped_before_application():
     assert not called
     assert sent[0]["status"] == 413
     assert (b"cache-control", b"no-store") in sent[0]["headers"]
+
+
+@pytest.fixture
+def logs_app(app, org, monkeypatch):
+    monkeypatch.setenv(
+        "PORTAL_CONTENT_LOGS_JSON",
+        json.dumps(
+            {
+                "workspace_id": CLIENT,
+                "resource_id": f"/subscriptions/{CLIENT}/resourceGroups/test/providers/Microsoft.ApiManagement/service/test",
+                "api_ids": ["claude-preview", "codex-foundry"],
+                "capture_enabled": True,
+            }
+        ),
+    )
+    return create_app(org, store=app.state.store, credential=object(), local=False)
+
+
+@pytest.mark.parametrize("role", ["owner", "admin", "billing", "auditor", "developer"])
+def test_content_logs_role_boundary(logs_app, org, key, monkeypatch, role):
+    data, etag = logs_app.state.store.read()
+    member = add_member(data, role)
+    logs_app.state.store.save(data, etag)
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.list_logs", lambda *a: {"items": [], "has_more": False}
+    )
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.read_log",
+        lambda *a: {"chunks": [{"response": "PRIVATE_TEST_CONTENT"}]},
+    )
+    with TestClient(logs_app) as client:
+        auth = headers(org, key, member["id"])
+        expected = 200 if role in {"owner", "admin"} else 403
+        assert client.get("/api/content-logs/config", headers=auth).status_code == expected
+        assert (
+            client.post(
+                "/api/content-logs/search",
+                headers=auth,
+                json={"start": "2026-10-14T00:00:00Z", "end": "2026-10-15T00:00:00Z"},
+            ).status_code
+            == expected
+        )
+        response = client.post(
+            "/api/content-logs/read",
+            headers=auth,
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert response.status_code == expected
+        assert ("PRIVATE_TEST_CONTENT" in response.text) == (expected == 200)
+        assert response.headers["cache-control"] == "no-store"
+    stored, _ = logs_app.state.store.read()
+    if expected == 200:
+        event = stored["audit"][-1]
+        assert event["action"] == "content.view_requested"
+        assert event["actor_id"] == member["id"]
+        assert event["target"] == CLIENT
+    assert "PRIVATE_TEST_CONTENT" not in json.dumps(stored)
+
+
+def test_content_read_requires_durable_audit(logs_app, org, key, monkeypatch):
+    calls = []
+    monkeypatch.setattr("claude_foundry.portal.app.read_log", lambda *a: calls.append(a))
+
+    def broken_save(*args):
+        raise OSError("private storage not available")
+
+    monkeypatch.setattr(logs_app.state.store, "save", broken_save)
+    with TestClient(logs_app) as client:
+        r = client.post(
+            "/api/content-logs/read",
+            headers=headers(org, key),
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert r.status_code == 503
+        assert "private storage" not in r.text
+        assert calls == []
+
+
+def test_content_api_rejects_bad_inputs_and_unauthenticated(logs_app, org, key):
+    with TestClient(logs_app) as client:
+        assert client.get("/api/content-logs/config").status_code == 401
+        for value in [
+            {"correlation_id": "bad-id", "reason": "Support"},
+            {"correlation_id": CLIENT, "reason": "      "},
+            {"correlation_id": CLIENT, "reason": "Support", "workspace_id": OWNER},
+        ]:
+            assert (
+                client.post(
+                    "/api/content-logs/read", headers=headers(org, key), json=value
+                ).status_code
+                == 422
+            )
+        r = client.post(
+            "/api/content-logs/search",
+            headers=headers(org, key),
+            json={
+                "start": "2026-10-14T00:00:00Z",
+                "end": "2026-10-15T00:00:00Z",
+                "api_id": "unrelated-customer",
+            },
+        )
+        assert r.status_code == 422
+
+
+def test_content_revocation_during_query_denies_response(logs_app, org, key, monkeypatch):
+    def revoked(*args):
+        state, etag = logs_app.state.store.read()
+        state["members"][0]["status"] = "suspended"
+        state["revision"] += 1
+        logs_app.state.store.save(state, etag)
+        return {"chunks": [{"response": "PRIVATE_TEST_CONTENT"}]}
+
+    monkeypatch.setattr("claude_foundry.portal.app.read_log", revoked)
+    with TestClient(logs_app) as client:
+        r = client.post(
+            "/api/content-logs/read",
+            headers=headers(org, key),
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert r.status_code == 403
+        assert "PRIVATE_TEST_CONTENT" not in r.text
+
+
+def test_content_disabled_without_configuration(app, org, key):
+    with TestClient(app) as client:
+        r = client.get("/api/content-logs/config", headers=headers(org, key))
+        assert r.json()["configured"] is False
+        assert (
+            client.post(
+                "/api/content-logs/read",
+                headers=headers(org, key),
+                json={"correlation_id": CLIENT, "reason": "Support investigation"},
+            ).status_code
+            == 409
+        )

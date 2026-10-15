@@ -197,3 +197,7 @@ Use **Search or jump to…** (`⌘K` on Mac) to find pages and people. The theme
 For an expired session, sign in through your normal work browser. For a sign-in error, retain the correlation ID and timestamp for your identity administrator; repeatedly approving MFA is not a fix for a blocked authentication method. For missing usage, check the selected period, filters, ingestion delay, and monitoring permissions. For conflicting edits, refresh and review the latest revision before retrying.
 
 See [troubleshooting](troubleshooting.md), [operations](operations.md), and the [portal engineering guide](../portal/README.md) for diagnostics, recovery, and deployment details.
+
+## Prompt and response logs
+
+Owners and administrators can use **Prompt & response logs** when the platform team has enabled capture. Filter by date/time, API, developer object ID, model, or request ID, then inspect a record in a drawer. An access reason is audited before its captured prompt and response are displayed. Billing, auditors, and developers cannot open this workspace. Capture is off by default and cannot recover earlier chats. See [setup, retention and permission boundaries](content-logs.md).

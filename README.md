@@ -26,7 +26,7 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 | **Finance and operations** | Explore usage by model, group, and developer; combine filters; compare periods; export CSVs; maintain sourced planning rates and dollar thresholds. |
 | **Security reviewers** | Inspect Entra authentication, API-enforced roles, managed identities, private portal storage, policy publication, and administrative audit records. |
 
-The portal manages gateway access and operational metadata. Entra remains responsible for directory accounts and sign-in policy; Azure Cost Management remains responsible for billed spend. Conversations are not displayed or managed in the portal.
+The portal manages gateway access and operational metadata. Entra remains responsible for directory accounts and sign-in policy; Azure Cost Management remains responsible for billed spend. Optional [prompt and response logs](docs/content-logs.md) let owners and administrators inspect newly captured gateway messages with audited access. Capture is off by default; this is not a full conversation archive.
 
 ## Choose your starting point
 
@@ -120,6 +120,7 @@ The portal is outside the inference path: its availability does not determine wh
 | Deploy or develop the portal | [Portal engineering guide](portal/README.md) |
 | Operate, upgrade, recover, and plan a rollout | [Operations guide](docs/operations.md) |
 | Query requests, errors, and token metrics | [Observability](docs/observability.md) |
+| Enable and inspect restricted prompt/response capture | [Content logs](docs/content-logs.md) |
 | Review identities, data, and trust boundaries | [Security architecture](docs/security.md) |
 | Understand sign-in, roles, Azure RBAC, and publication | [Identity and permissions](docs/identity-and-permissions.md) |
 | Diagnose errors | [Troubleshooting](docs/troubleshooting.md) |
