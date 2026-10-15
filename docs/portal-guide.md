@@ -1,5 +1,7 @@
 # Management portal guide
 
+> **Budget hierarchy branch:** the additional `group_admin` role, owner-controlled USD ceilings, shared ledger and request-time team content scope are documented in [Enforced USD limits](budget-enforcement.md). These require the dedicated budget runtime and remain subject to its release checks. The legacy token/planning controls below still describe the existing gateway.
+
 [← README](../README.md) · [Deploy the Azure preview](../portal/README.md#isolated-azure-preview) · [Operations](operations.md)
 
 The portal gives your organization one place to manage developer access through its Claude gateway and understand usage. It runs in your Azure subscription and uses your Microsoft Entra tenant. It is currently a **preview**; review the [validation record](../portal/VALIDATION.md) before a production rollout.

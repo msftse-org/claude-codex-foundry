@@ -36,7 +36,7 @@ It is a working preview. Offline import and generated-policy-size checks cover 2
 
 ## Does a dollar budget stop spending?
 
-No. Dollar budgets are planning thresholds. Published token quotas and rate limits can restrict gateway traffic, but streaming estimates and concurrency can overshoot and gateway regions do not share an atomic global counter. Configure Azure billing alerts separately.
+Legacy planning amounts do not stop requests. The unreleased [budget gateway](budget-enforcement.md) adds atomic organization/group/user reservations across Claude and Codex. It applies only after that service and its dedicated routes are deployed and a reviewed policy is published. All limits apply to owners too. A zero spending allowance blocks new requests; an unset personal allowance inherits the group limit. Existing endpoints retain their previous behavior. Configure Azure billing alerts separately for infrastructure and other charges.
 
 ## Why does estimated cost differ from Azure billing?
 
