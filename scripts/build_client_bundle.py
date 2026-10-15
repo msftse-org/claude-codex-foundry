@@ -21,6 +21,8 @@ def build(profile, output, root):
         "client_id",
         "models",
         "conversation_import",
+        "client_type",
+        "default_model",
     }
     if set(config) - allowed:
         raise ValueError("Use admin export-client first; the bundle accepts a client profile only")
@@ -33,6 +35,8 @@ def build(profile, output, root):
             "scripts/macos/install.sh",
             "docs/macos.md",
             "docs/conversation-migration.md",
+            "docs/codex.md",
+            "docs/codex-validation.md",
         )
     ]
     files += sorted((root / "src/claude_foundry").glob("*.py"))
@@ -42,7 +46,13 @@ def build(profile, output, root):
             if path.is_symlink():
                 raise ValueError(f"Symlinks are not accepted: {path}")
             bundle.write(path, "claude-foundry/" + str(path.relative_to(root)))
-        bundle.write(root / "docs/macos.md", "claude-foundry/README.md")
+        if config.get("client_type") == "codex":
+            bundle.writestr(
+                "claude-foundry/README.md",
+                "# Codex on Azure\n\nInstall your organization's approved Codex Desktop or CLI, then open `Install.command` and complete Microsoft sign-in. Reopen the desktop app after saving active work.\n\nSee [Codex setup, verification, existing conversations and restore](docs/codex.md). Administrator cross-references require the full organization repository.\n",
+            )
+        else:
+            bundle.write(root / "docs/macos.md", "claude-foundry/README.md")
         bundle.writestr("claude-foundry/client.json", json.dumps(config, indent=2) + "\n")
     return output
 

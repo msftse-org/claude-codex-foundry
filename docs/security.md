@@ -66,4 +66,6 @@ The portal does not read Claude conversations or control local history/retention
 
 ## Evidence and remaining review
 
+The Codex feature preview has its own [identity and security boundary](codex.md#identity-security-and-logging) and [validation record](codex-validation.md). It uses user-token passthrough with Foundry inference RBAC, a dedicated model allowlist, stateless Responses, and API-scoped payload-free diagnostics. It does not inherit the portal's membership, token quotas or budget publication. Direct Foundry access remains possible for users with inference RBAC. Visible-history exports are private local files that require review before a provider handoff; the exporter does not upload or modify the source conversation.
+
 See [portal/VALIDATION.md](../portal/VALIDATION.md) for what was actually verified and what remains, including customer Conditional Access, hosted roles, recovery, and scale. This document describes the design and its boundaries; it is not a compliance certification or penetration-test report.
