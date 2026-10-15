@@ -1,5 +1,7 @@
 # Identity, permissions, and request flow
 
+> **Budget hierarchy branch:** the additional `group_admin` role, owner-controlled USD ceilings, shared ledger and request-time team content scope are documented in [Enforced USD limits](budget-enforcement.md). These require the dedicated budget runtime and remain subject to its release checks. The legacy token/planning controls below still describe the existing gateway.
+
 For Codex Desktop/CLI, see [Codex identity and routing](codex.md#identity-security-and-logging). The feature preview uses the baseline user-token/RBAC path through a separate `codex-foundry` API; portal roles and grants currently apply to Claude only. Users may choose the same Azure CLI or lightweight MSAL sign-in mechanism.
 
 [← README](../README.md) · [Security boundaries](security.md) · [Portal guide](portal-guide.md) · [Validation evidence](../portal/VALIDATION.md)

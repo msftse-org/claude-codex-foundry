@@ -1,50 +1,109 @@
-# Dollar enforcement and delegated administration
+# Enforced USD limits and delegated administration
 
-**Release blocker — design requirements, not implemented functionality.** Do not use the current portal's dollar fields as a spending stop. The current implementation has organization/group planning thresholds, no individual dollar limit, and no group-administrator role. Its Claude token quotas are not a concurrent dollar-spend ledger. Codex does not inherit those portal quota policies.
+**Feature branch: `codex/budget-hierarchy`. Unreleased until the live acceptance checks below pass.** The existing demo and baseline gateway routes do not gain spending enforcement by updating source code. Legacy `budget_usd` and `monthly_budget_usd` values remain planning amounts.
 
-## Required hierarchy
+The agreed hierarchy is **organization → group → developer**, in **USD per UTC calendar month**. Every model request must fit all three limits, including requests made by an organization owner. Child limits are ceilings, not prepaid allocations: their sum can exceed the parent, but aggregate admitted usage cannot.
 
-The following is the proposed policy. The owner’s delegation ceiling and owner inference exemptions still require a product decision; the conservative defaults below grant no spending exemption.
-
-| Role | Required authority |
+| Role | Authority |
 | --- | --- |
-| Organization owner | Manage the organization, administrators, group ceilings, model allowances, member limits, and content-access policy. All changes are audited. Administrative authority does not silently exempt inference requests from spending limits. |
-| Group administrator | Manage developers within the assigned group, allocate individual budgets, adjust the group operating budget within the owner's ceiling, and grant models from the owner's delegated allowance. Inspect only that group's captured requests, with an audited reason. Cannot appoint organization administrators, move other groups' members, or increase their own delegation ceiling. |
-| Developer | Use assigned models within all applicable limits; see their own remaining allowance and usage; manage their client setup and request additional access. No access to other developers' prompts or administration. |
+| Organization owner | Set the organization limit, each group's maximum and delegated model allowance; appoint administrators; review enforcement prices; publish organization policy; view captured content with an audited reason. No inference exemption. |
+| Group administrator | Manage developers in their assigned group, allowed models within the owner's allowance, the group operating limit, and personal limits. Publish only those team edits. See their group's costs, audit events and attributed prompt/response logs. Cannot raise the group's maximum, promote administrators, move existing members between teams, publish owner-controlled changes, or access another team. |
+| Developer | Use assigned models, see personal allowance and held reservations, download setup and request access. No access to other users' data. |
+| Existing global administrator | Retains organization-wide administration and content access. Can draft operating/user limits, but cannot change owner-controlled ceilings, enforcement prices or organization enforcement mode. Organization budget activation requires the owner. |
+| Billing / auditor | Retain their existing planning/read permissions. Neither can view prompt/response content or change enforced dollar limits. |
 
-Existing global administrator, billing and auditor roles require an explicit migration/compatibility policy. Do not silently turn an existing global administrator into a group administrator or grant content access to billing/auditor roles.
+Existing global administrators are not silently converted to group administrators. A group is a portal assignment, not an automatically synchronized Entra group.
 
-Group-scoped authorization must cover state, imports, member changes, access decisions, model catalogs, exports, telemetry, cost queries, audit records, and content searches/direct-ID reads. Frontend hiding is insufficient. Log scope uses the group recorded at request time; moving a member later must not expose the previous group's history. Records without trustworthy group attribution are unavailable to group administrators. Recheck authorization after a content query.
+## How a request is admitted
 
-## Required spending semantics
+```mermaid
+sequenceDiagram
+  participant Client as Claude / Codex
+  participant APIM as Standard APIM
+  participant Budget as Streaming budget service
+  participant Ledger as Private Azure Table
+  participant Foundry as Azure Foundry
+  Client->>APIM: Entra user access token
+  APIM->>APIM: Validate tenant and audience; overwrite identity headers
+  APIM->>Budget: APIM managed identity token + caller object ID
+  Budget->>Budget: Verify APIM identity, membership, model, price and capacity
+  Budget->>Ledger: Atomic organization + group + user reservation
+  alt Insufficient allowance or unavailable ledger
+    Ledger-->>Budget: Reject
+    Budget-->>Client: Budget refusal; no inference dispatch
+  else All three limits pass
+    Ledger-->>Budget: Committed reservation
+    Budget->>Foundry: One bounded model request using managed identity
+    Foundry-->>Client: Response streamed through budget service and APIM
+    Budget->>Ledger: Settle once from authoritative terminal usage
+  end
+```
 
-Proposed default: USD, UTC calendar months. Each request consumes the **same** organization, group, and user allowance across Claude and Codex. All applicable limits must pass. For example, a developer with $100 left is blocked when their group has exhausted its allowance.
+The budget service is a separate Python Functions Flex Consumption app using native HTTP streaming. It is an availability dependency for governed inference. The admin portal remains separate. [Azure's HTTP-streaming requirements](https://learn.microsoft.com/en-us/azure/azure-functions/functions-bindings-http-webhook-trigger) require `PYTHON_ENABLE_INIT_INDEXING=1`; do not replace the streaming host with `AsgiFunctionApp`.
 
-Distinguish a zero allowance (blocked) from an unset child limit (inherits its parents). Child limits are ceilings, not necessarily prepaid allocations; their sum may exceed the parent, but aggregate admitted spend cannot exceed it. Group administrators may allocate within a ceiling delegated by the owner. Budget reductions must account for both spent funds and outstanding reservations; moving a user must not reset that user's monthly spend or reassign past charges.
+The ledger uses integer micro-USD (one millionth of a dollar). Organization, group, user and reservation rows share one organization partition and commit in one conditional Azure Table transaction. Admissions also update the active-policy ETag, so a concurrent policy change cannot authorize against a stale snapshot. This relies on [Azure Table atomic transactions](https://learn.microsoft.com/en-us/python/api/azure-data-tables/azure.data.tables.tableclient#azure-data-tables-tableclient-submit-transaction), not delayed monitoring data or APIM's estimated token counters.
 
-These limits cover priced, metered model inference through the governed gateway. They are not a cap on APIM, Functions, storage, logging, provisioned capacity, taxes, or the entire Azure invoice. Customer rates/discounts and currency must be explicit.
+Both Anthropic Messages and OpenAI Responses debit the same counters. A group move does not reset the user's monthly spend. Settlement stays in the month/group recorded at admission, even when a stream crosses midnight or membership changes afterward. A limit reduction below spent plus reserved is rejected.
 
-## Required enforcement architecture
+## Monetary semantics and conservative reservations
 
-1. Authenticate the caller and resolve current membership, model permission, pricing version, and all budget scopes on the server. Never accept a group, price, or remaining balance supplied by the client.
-2. Before any billable backend dispatch, atomically reserve a defensible maximum cost against all applicable limits in a durable, shared ledger. Include in-flight requests in admission decisions. Use integer monetary units and idempotent request identifiers.
-3. Bound the actual provider request consistently with the reservation. Account for input, output/reasoning, cache reads/writes, long-context tiers, service tiers and any paid server tools. Unknown pricing or unbounded billable features must be rejected, not treated as free. Token estimates alone are not a hard cost bound.
-4. Settle against authoritative provider usage, including streamed completion usage. Settle once and return only the proven unused reservation. After a disconnect, timeout, process crash, ambiguous dispatch, missing usage, or settlement failure, retain the conservative reservation until reconciliation establishes the charge. Do not automatically refund uncertain requests on a timer.
-5. If the ledger, authorization, or required pricing check is unavailable, reject inference. Do not fall back to an unmetered path. The administration website can remain separate, but this enforcement service becomes part of the inference availability boundary.
-6. Scope and audit rate changes, budget changes, ownership changes, refunds and recovery. Do not recalculate previous charges with today's rates. A new calendar month must not clear unresolved liability or cause cross-month requests to be charged twice.
+- `settings.spend_limit_usd`: finite organization ceiling when enforcement is enabled.
+- `group.spend_ceiling_usd`: owner-controlled group maximum. Required before publication.
+- `group.spend_limit_usd`: operating allowance; blank inherits the ceiling, otherwise it cannot exceed the ceiling.
+- `member.spend_limit_usd`: personal allowance; blank inherits the group allowance.
+- **Zero means blocked**, unlike the legacy token fields where zero means no extra token quota. Suspending a member also blocks new requests after publication.
 
-Application Insights is for reporting, not the admission ledger. APIM token policies do not supply atomic monetary accounting; Microsoft also documents concurrency/streaming limits in the [token-limit policy](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy). A direct Foundry endpoint, baseline API, alternative credential or legacy client route must not bypass required customer enforcement. Existing demo access should not be revoked without a reviewed migration plan.
+Each request reserves **the verified model input capacity plus its enforced output maximum**, priced at reviewed upper-bound token rates. Token-count estimates are deliberately not used to authorize a smaller reservation. As a result, a request may be refused while some money remains: the remaining allowance must cover the maximum request liability, including other active requests.
+
+After complete provider usage arrives, the ledger charges at the same reviewed conservative rates and releases the difference. Anthropic cache reads/writes are included; OpenAI cached input and reasoning are already included in its input/output totals and are not double counted. Cached input may therefore consume more budget allowance than the eventual discounted invoice. The UI separates this ledger from planning estimates.
+
+The owner must verify model version, input/output capacity, deployment SKU/geography and rates, including cache-write and long-context premiums. Verification expires after at most 31 days; missing or expired verification blocks new inference. Deployment upgrades require renewed verification and runtime configuration. Pin deployments and do not enable automatic upgrades for governed models.
+
+Only synchronous, replayed conversation input and client-executed tools are supported in this preview. Unknown request fields, premium tiers, server tools, background jobs, opaque conversation references and server-managed compaction are rejected. Client function/custom tools may be grouped in an OpenAI namespace; nested server tools are still rejected. Claude Code’s exact thinking-preservation setting (`clear_thinking_20251015`, `keep: all`) is supported with the documented [context-management header](https://platform.claude.com/docs/en/build-with-claude/context-editing); it does not enable compaction. The gateway forces standard service tiers. Anthropic's [free token-counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting) requires active model access but does not debit an inference reservation. Its count is not a spending guarantee.
+
+Limits cover supported model inference through the budget routes at the configured ceilings. They do **not** cap APIM, Functions, storage, Private Link, logging, taxes, exchange-rate changes, provisioned capacity or the entire Azure bill. Incorrect owner-entered rates/capacities invalidate the monetary bound; this is why review and pinned deployments are release prerequisites.
+
+## Failure and recovery
+
+No ledger, no valid price, no active membership, or no remaining allowance means no model dispatch. There is no fallback to a baseline API. Each gateway request ID is admitted once; uncertain dispatches are not automatically retried by the service.
+
+A disconnect, missing terminal usage, process failure, provider error or settlement outage leaves the reservation held. **There is no timer-based refund.** Settlements are idempotent; a conflicting second charge is rejected. If reported usage exceeds the verified bound, admission pauses rather than silently treating the request as within budget. Publishing a new policy cannot clear that pause.
+
+Owners can close an uncertain reservation at its **full reserved amount**, after an audited reason. This safely converts reserved allowance to spent allowance; it never refunds money. Releasing a held reservation for less than its maximum requires a future verified reconciliation workflow. Do not edit counters manually or restore an old ledger backup over a live ledger: both can erase liabilities. An overrun incident requires investigation before any operator-controlled recovery.
+
+The current pending-reservation API returns at most 50 rows and signals additional rows. It is an operational preview, not a complete reconciliation product.
+
+## Identity, permissions and bypass prevention
+
+APIM validates the user's cognitive-services token, generates the request ID, and overwrites caller headers. The budget service accepts only an application token for its dedicated audience from the configured APIM managed identity, with the correct tenant and issuer. Direct user tokens and forged caller headers cannot invoke it. Only the runtime managed identity invokes Foundry.
+
+Policy snapshots are content-addressed JSON Blobs. Their hash is checked on read; the Table holds the active digest. Neither prices, group identity nor balances come from browser request headers. Portal role changes are checked server-side; group publication starts from the active snapshot and preserves owner ceilings, delegation, administrative roles, prices and all other teams.
+
+Raw log scope uses the trusted **request-time group ID** emitted by the budget gateway, not current membership. Moving a user cannot expose their previous team's history. Unattributed older records are excluded from group-admin queries. Every content detail read requires a reason, an audit write before querying, and a role/group recheck afterward. Seven-day opt-in content retention remains a separate deployment.
+
+Azure operators with write access to runtime settings, deployment code, role assignments or ledger storage are inside the trust boundary. The portal audit is versioned organizational state, not an immutable compliance certification.
+
+For a customer rollout, remove users' direct Foundry inference roles and do not distribute baseline API routes or alternate model credentials. Keep Foundry local keys disabled. Azure control-plane administrators can deliberately change these controls; a portal budget cannot constrain a subscription owner. The existing demonstration environment deliberately retains baseline access until its migration is reviewed.
+
+## Deploy an isolated evaluation
+
+See [the budget runtime deployment guide](../budget/README.md). It adds two APIs with distinct paths; the baseline and existing portal APIs are preserved. The hosted admin preview does not automatically activate these resources. When a portal is connected to the budget ledger, its legacy APIM publication endpoint is disabled so it cannot replace the budget route with a token-only policy.
 
 ## Release acceptance
 
-None of the following is satisfied by the existing token-quota tests:
+Read the [dated validation record](budget-validation.md) for completed Azure checks and their limits.
 
-- Prove organization, group and user exhaustion independently, for Claude and Codex, with both JSON and streaming responses. A refused request must not reach the billable backend.
-- Race concurrent requests against a tiny remaining balance across multiple service instances; total committed spend plus reservations must remain within every applicable limit.
-- Test duplicate delivery, provider retries, failed/ambiguous dispatch, missing usage, cancelled streams, settlement retries, process restart, ledger outage and month rollover without double charging or unsafe refunds.
-- Test price changes, cache/long-context/reasoning categories, unsupported paid features, lowered ceilings and member moves. Reject unknown or incomplete pricing.
-- Use two real groups and verify all group-admin routes, imports, grants, promotion attempts, exports, dashboards and direct request-ID reads cannot cross scope. Test owner-controlled delegation ceilings and access revocation during a query.
-- Verify approved clients have no alternate ungoverned inference route. Measure latency and throughput under the intended load before claiming support for 2,000 developers.
-- Present enforced spend, active reservations, remaining allowance, reset time and denied-request reason separately from estimated Azure invoice costs.
+Local verification covers atomic concurrency, all three limits including owner requests, duplicate admission/settlement, ambiguous commits, month rollover, user moves, lower-limit rejection, price expiry, unsupported paid features, terminal stream usage, gateway identity validation and group authorization.
 
-The feature branch remains a preview until an implementation and live evidence satisfy these checks. This document does not enable a hard cap or change anyone's permissions.
+Before customer release, record live evidence for:
+
+- Both providers, JSON and streaming; independent organization/group/user exhaustion; no model dependency after refusal.
+- Multiple runtime instances racing against a tiny balance, with Azure Table state proving no overdraw.
+- Disconnects, restart, ambiguous provider outcomes and ledger outage without unsafe refunds.
+- Current native Claude and Codex clients, including long-context/tool sessions and unsupported-feature messages.
+- Two real group-admin accounts across every portal route, especially direct content IDs and revocation during reads.
+- Every offered model's actual price categories, capacity, pinned version and deployment configuration.
+- Removal of alternate inference paths in the customer's installation.
+- Latency, contention, throughput and failure recovery under the intended organization load. A 2,000-member policy check is **not** a 2,000-concurrent-user capacity claim.
+
+Until those checks are recorded, this remains an unreleased implementation rather than a customer-ready spending guarantee.

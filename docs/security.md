@@ -1,5 +1,7 @@
 # Security architecture
 
+> **Budget hierarchy branch:** the additional `group_admin` role, owner-controlled USD ceilings, shared ledger and request-time team content scope are documented in [Enforced USD limits](budget-enforcement.md). These require the dedicated budget runtime and remain subject to its release checks. The legacy token/planning controls below still describe the existing gateway.
+
 [← README](../README.md) · [Identity and permission reference](identity-and-permissions.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
 
 Claude & Codex on Azure has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow prepares a separate preview API so this can be evaluated without replacing the baseline API.
