@@ -13,6 +13,8 @@ param entraClientId string
 param desktopClientId string = ''
 param insightsName string
 param insightsResourceGroup string
+@description('Optional output from content-logs.bicep. Empty keeps content access unavailable.')
+param contentLogsConfig object = {}
 @description('Use private Blob networking. Keep enabled where organizational policy requires private storage.')
 param privateStorage bool = true
 param vnetAddressPrefix string = '10.91.0.0/24'
@@ -169,6 +171,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'PORTAL_CLIENT_ID', value: entraClientId }
         { name: 'PORTAL_DESKTOP_CLIENT_ID', value: desktopClientId }
         { name: 'PORTAL_INSIGHTS_APP_ID', value: insights.properties.AppId }
+        { name: 'PORTAL_CONTENT_LOGS_JSON', value: empty(contentLogsConfig) ? '' : string(contentLogsConfig) }
         { name: 'PORTAL_STATIC_DIR', value: '/home/site/wwwroot/static' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }

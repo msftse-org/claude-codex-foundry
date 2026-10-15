@@ -99,6 +99,6 @@ union
     result["daily"].sort(key=lambda row: row["key"])
     result["requests"].sort(key=lambda row: row["timestamp"], reverse=True)
     result["note"] = (
-        "Application Insights ingestion is delayed. Counts include the selected period and honor telemetry sampling weights; recent request details show up to 250 entries. Token metrics cover the current UTC calendar month. Streaming tokens are estimates. No prompts or responses are collected."
+        "Application Insights ingestion is delayed. Counts include the selected period and honor telemetry sampling weights; recent request details show up to 250 entries. Token metrics cover the current UTC calendar month. Streaming tokens are estimates. This usage endpoint contains no prompts or responses; optional content capture is accessed separately through the restricted content-log API."
     )
     return result

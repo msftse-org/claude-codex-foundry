@@ -11,3 +11,5 @@ Images were cropped at capture time to exclude operator identities, email addres
 `portal-publication-review.jpg` intentionally includes only the impact section; `portal-audit.jpg` includes the action/target columns. Drawer images show their visible scroll region. The nine-model catalog is environment-specific and does not imply availability in another subscription.
 
 When updating screenshots, follow [CONTRIBUTING.md](../../CONTRIBUTING.md#documentation-and-screenshot-standards). Save private originals outside Git, check the actual saved files, and update the capture date/build provenance. The [portal guide](../portal-guide.md) supplies captions, feature context, and limitations for each image.
+
+`portal-content-response.jpg` was captured on **2026-10-15** from the deployed `feat/codex-azure` content-log preview. It shows a real synthetic Claude streaming response retrieved through the portal managed identity. Access was audited. The capture-time crop excludes both pointers, request/developer identifiers, and browser chrome; message values have not been edited.

@@ -1,6 +1,7 @@
 import { Command } from "./Command";
 import { MemberImport } from "./MemberImport";
 import { CostAnalysis } from "./CostAnalysis";
+import { ContentLogs } from "./ContentLogs";
 import { Spend } from "./Spend";
 import { UsageChart } from "./UsageChart";
 import {
@@ -95,6 +96,12 @@ const pages = [
         section: "Governance",
     },
     { id: "audit", name: "Audit log", icon: Clock, section: "" },
+    {
+        id: "content-logs",
+        name: "Prompt & response logs",
+        icon: Tray,
+        section: "",
+    },
     {
         id: "onboarding",
         name: "Developer onboarding",
@@ -355,7 +362,9 @@ function App() {
     const developer = state.viewer.role === "developer";
     const dirty = state.policy_hash !== state.published_hash;
     const filteredPages = pages.filter(
-        (p) => !developer || ["requests", "onboarding"].includes(p.id),
+        (p) =>
+            (!developer || ["requests", "onboarding"].includes(p.id)) &&
+            (p.id !== "content-logs" || admin),
     );
     const currentPage =
         developer && !["requests", "onboarding"].includes(page)
@@ -391,6 +400,19 @@ function App() {
     const total = usage.daily.reduce((n, r) => n + r.requests, 0);
     const failures = usage.daily.reduce((n, r) => n + r.errors, 0);
     const content = () => {
+        if (currentPage === "content-logs")
+            return admin ? (
+                <ContentLogs
+                    members={state.members}
+                    onAudit={() => {
+                        void load();
+                    }}
+                />
+            ) : (
+                <Notice>
+                    Only owners and administrators can view content logs.
+                </Notice>
+            );
         if (currentPage === "overview")
             return (
                 <>
@@ -703,9 +725,10 @@ function App() {
                                     </div>
                                 </dl>
                                 <p className="footnote">
-                                    This portal does not store conversation
-                                    content. Review Azure diagnostic capture
-                                    settings separately.
+                                    Portal state does not store message content.
+                                    Optional prompt and response logs use a
+                                    separate Azure workspace with restricted
+                                    access.
                                 </p>
                             </section>
                         </div>
@@ -1128,6 +1151,7 @@ function App() {
                                 ["Edit token limits", 1, 1, 0, 0, 0],
                                 ["Edit dollar budget", 1, 1, 1, 0, 0],
                                 ["Read usage & audit", 1, 1, 1, 1, 0],
+                                ["Inspect captured content", 1, 1, 0, 0, 0],
                                 ["Request model access", 1, 1, 1, 1, 1],
                                 ["Download own setup", 1, 1, 1, 1, 1],
                             ].map(([label, ...values]) => (
@@ -1229,7 +1253,8 @@ function App() {
                                 <div className="health">
                                     <dt>Data captured</dt>
                                     <dd>
-                                        Usage metadata and administrator changes
+                                        Usage metadata, administrator changes, and
+                                        optionally captured inference messages
                                     </dd>
                                 </div>
                             </dl>
@@ -1321,7 +1346,7 @@ function App() {
                 <>
                     <PageHead
                         title="Usage & analytics"
-                        description="Operational activity from Application Insights. Prompt and response content is never shown."
+                        description="Operational activity from Application Insights. Captured content has a separate, restricted workspace."
                     >
                         <select
                             aria-label="Usage period"

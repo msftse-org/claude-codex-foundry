@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,7 @@ from pydantic import ValidationError
 from ..config import export_client, load_org
 from .auth import Authenticator
 from .boundary import RequestBoundary
+from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
@@ -45,6 +47,11 @@ def create_app(config=None, store=None, credential=None, local=None):
     app.state.store = store
     app.state.telemetry_cache = None
     app.state.cost_cache = {}
+    content_source = (
+        LogSource.model_validate_json(os.environ["PORTAL_CONTENT_LOGS_JSON"])
+        if os.getenv("PORTAL_CONTENT_LOGS_JSON")
+        else None
+    )
 
     def storage():
         if app.state.store is None:
@@ -80,6 +87,97 @@ def create_app(config=None, store=None, credential=None, local=None):
             raise HTTPException(403, "An administration role is required.")
 
     actor_dependency = Depends(actor)
+
+    def content_access(member):
+        if member["role"] not in {"owner", "admin"}:
+            raise HTTPException(
+                403, "Only portal owners and administrators can access content logs."
+            )
+
+    def still_authorized(member):
+        latest, _ = storage().read()
+        active = next(
+            (m for m in latest["members"] if m["id"] == member["id"] and m["status"] == "active"),
+            None,
+        )
+        if not active:
+            raise HTTPException(403, "Your portal access has changed.")
+        content_access(active)
+
+    @app.get("/api/content-logs/config")
+    def content_config(access=actor_dependency):
+        _, _, member = access
+        content_access(member)
+        return {
+            "configured": content_source is not None,
+            "capture_enabled": bool(content_source and content_source.capture_enabled),
+            "api_ids": content_source.api_ids if content_source else [],
+            "retention_days": content_source.retention_days if content_source else 7,
+            "max_message_bytes": content_source.max_message_bytes if content_source else 262144,
+        }
+
+    @app.post("/api/content-logs/search")
+    def content_search(body: LogQuery, access=actor_dependency):
+        _, _, member = access
+        content_access(member)
+        if not content_source:
+            raise HTTPException(409, "Content logging has not been configured for this portal.")
+        if body.api_id and body.api_id not in content_source.api_ids:
+            raise HTTPException(422, "Choose a configured API.")
+        try:
+            result = list_logs(content_source, credential, body)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Content log search failed (%s).", type(exc).__name__
+            )
+            raise HTTPException(
+                502,
+                "Content logs could not be loaded. Check log ingestion and the portal identity's workspace access.",
+            ) from None
+        still_authorized(member)
+        return result
+
+    @app.post("/api/content-logs/read")
+    def content_read(body: LogRead, access=actor_dependency):
+        data, etag, member = access
+        content_access(member)
+        if not content_source:
+            raise HTTPException(409, "Content logging has not been configured for this portal.")
+        if data["publish_status"] == "publishing":
+            raise HTTPException(409, "Wait for gateway publication to finish, then retry.")
+        # Persist the access intent BEFORE querying content. An audit failure denies the read.
+        audit(
+            data,
+            member,
+            "content.view_requested",
+            str(body.correlation_id),
+            None,
+            {"reason": body.reason},
+        )
+        data["revision"] += 1
+        try:
+            storage().save(data, etag)
+        except Conflict:
+            raise HTTPException(
+                409, "Portal state changed. Reload before opening content."
+            ) from None
+        except Exception:
+            raise HTTPException(
+                503, "The access audit could not be saved. Content was not opened."
+            ) from None
+        try:
+            result = read_log(content_source, credential, body.correlation_id)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Content log read failed (%s).", type(exc).__name__)
+            raise HTTPException(
+                502, "Captured content could not be loaded. Retry after checking log ingestion."
+            ) from None
+        still_authorized(member)
+        if result is None:
+            raise HTTPException(
+                404, "No captured content was found within the permitted APIs and retention window."
+            )
+        return result
 
     @app.get("/api/bootstrap")
     def bootstrap():

@@ -14,6 +14,7 @@ This is a customer-owned control plane for the existing standard APIM gateway. I
 - Model access requests, decisions, versioned drafts, publication review, and audit records.
 - Organization, group, and developer token quotas; individual request and token rate limits.
 - Application Insights request analytics and current-month token metrics without conversation content.
+- Optional [prompt/response logs](../docs/content-logs.md) for Claude and Codex, with role checks, audited content opens, filters and a detail drawer.
 - Cost analysis with custom UTC ranges (up to 93 days), previous-period comparisons, combined model/group/developer filters, drill-downs, daily charts/tables, and CSV exports. Totals are aggregated in Application Insights; breakdowns are capped at 2,500 dimensions across both periods and explicitly marked when truncated.
 - Forms in responsive drawers with persistent actions and unsaved-change protection.
 - Model planning rates with source/date/notes and dollar estimates, with missing-rate and threshold notices. Dollar budgets do not stop inference or reconcile Azure invoices.
