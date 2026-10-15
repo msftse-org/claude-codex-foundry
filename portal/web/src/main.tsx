@@ -284,7 +284,7 @@ function App() {
             <div className="signinscreen">
                 <div className="signincard">
                     <Seal />
-                    <h1>Claude Foundry Admin</h1>
+                    <h1>Claude & Codex Admin</h1>
                     {error ? (
                         <Notice tone="error">{error}</Notice>
                     ) : (
@@ -1804,7 +1804,7 @@ function App() {
                                     }
                                 </pre>
                                 <a
-                                    href="https://github.com/orsharon7/claude-foundry/blob/main/docs/macos.md"
+                                    href="https://github.com/orsharon7/claude-codex-foundry/blob/main/docs/macos.md"
                                     target="_blank"
                                     rel="noreferrer"
                                 >
@@ -1856,7 +1856,7 @@ function App() {
                         <Seal />
                         <div>
                             <strong>{state.settings.name}</strong>
-                            <small>Claude Foundry Admin</small>
+                            <small>Claude & Codex Admin</small>
                         </div>
                     </div>
                     <nav>
@@ -1888,7 +1888,7 @@ function App() {
                     </nav>
                     <div className="sidebarfooter">
                         <a
-                            href="https://github.com/orsharon7/claude-foundry"
+                            href="https://github.com/orsharon7/claude-codex-foundry"
                             target="_blank"
                             rel="noreferrer"
                         >

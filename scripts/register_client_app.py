@@ -17,7 +17,7 @@ def az(*args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--name", default="Claude Foundry Desktop Sign-in")
+    parser.add_argument("--name", default="Claude & Codex Desktop Sign-in")
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--grant-admin-consent", action="store_true")
     args = parser.parse_args()

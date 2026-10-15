@@ -3,12 +3,12 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {"value": "eastus2"},
-    "foundryName": {"value": "replace-with-globally-unique-foundry-name"},
-    "apimName": {"value": "replace-with-globally-unique-apim-name"},
+    "foundryName": {"value": "ccf-foundry-<unique-suffix>"},
+    "apimName": {"value": "ccf-apim-<unique-suffix>"},
     "publisherName": {"value": "Your organization"},
     "publisherEmail": {"value": "platform-team@example.com"},
-    "applicationInsightsName": {"value": "claude-insights"},
-    "logAnalyticsName": {"value": "claude-logs"},
+    "applicationInsightsName": {"value": "ccf-insights"},
+    "logAnalyticsName": {"value": "ccf-logs"},
     "inferencePrincipals": {"value": [{"id": "00000000-0000-0000-0000-000000000001", "type": "Group"}]},
     "allowedObjectIds": {"value": []}
   }
