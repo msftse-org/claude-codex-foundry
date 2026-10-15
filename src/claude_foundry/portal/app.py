@@ -41,7 +41,7 @@ def create_app(config=None, store=None, credential=None, local=None):
         else ManagedIdentityCredential(client_id=os.getenv("AZURE_CLIENT_ID"))
     )
     azure = ManagedAzure(config["subscription_id"], credential)
-    app = FastAPI(title="Claude Foundry Admin", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Claude & Codex Admin", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
     app.state.telemetry_cache = None
     app.state.cost_cache = {}
@@ -88,7 +88,7 @@ def create_app(config=None, store=None, credential=None, local=None):
             "clientId": client_id,
             "local": local,
             "configured": bool(client_id) or local,
-            "name": "Claude Foundry Admin",
+            "name": "Claude & Codex Admin",
         }
 
     @app.get("/api/state")

@@ -25,8 +25,10 @@ param memoryMB int = 512
 @maxValue(1000)
 param maximumInstances int = 40
 
-var tags = { solution: 'claude-foundry', component: 'admin-portal', release: 'preview' }
-var storageName = 'cfadmin${uniqueString(resourceGroup().id, portalName)}'
+var tags = { solution: 'claude-codex-foundry', component: 'admin-portal', release: 'preview' }
+@description('Set explicitly to the existing account when redeploying a pre-rename installation.')
+param storageAccountName string = 'ccfadmin${uniqueString(resourceGroup().id, portalName)}'
+var storageName = storageAccountName
 var blobOwnerRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
