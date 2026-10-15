@@ -8,7 +8,7 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 
 [Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
 
-> **Codex feature preview:** the `feat/codex-azure` branch adds Codex Desktop/CLI routing to Azure OpenAI models through a separate standard APIM API. It includes Entra sign-in, model qualification, Mac onboarding, restore, and a readable-history handoff for existing conversations. [Setup and limitations](docs/codex.md) · [Validation record](docs/codex-validation.md). The management portal's current policy and pricing features remain Claude-only.
+> **Codex and content-log preview:** the `feat/codex-azure` branch adds Codex Desktop/CLI routing to Azure OpenAI models through a separate standard APIM API. It includes Entra sign-in, model qualification, Mac onboarding, restore, and a readable-history handoff for existing conversations. [Setup and limitations](docs/codex.md) · [Validation record](docs/codex-validation.md). The management portal's current policy and pricing features remain Claude-only; optional [content logs](docs/content-logs.md) support both clients. These additions remain outside `main`.
 
 > **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
 
