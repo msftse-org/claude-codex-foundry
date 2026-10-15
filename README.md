@@ -8,6 +8,8 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 
 [Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
 
+> **Codex and content-log preview:** these additions remain on the dedicated [`feat/codex-azure` branch](https://github.com/orsharon7/claude-codex-foundry/tree/feat/codex-azure), outside `main`. See its [setup guide](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex.md), [validation evidence](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex-validation.md), and [restricted prompt/response logs](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/content-logs.md). The ordinary ChatGPT app is not a gateway client.
+
 > **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
 
 ![Cost analysis in the hosted Azure portal: date controls, estimated model spend, token consumption, and rate coverage](docs/images/portal-cost-analysis.jpg)
