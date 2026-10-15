@@ -9,8 +9,8 @@ This guide takes an Azure administrator from an empty resource group (or existin
 Install Git, [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), and [uv](https://docs.astral.sh/uv/). Clone the repository and run every command below from its root:
 
 ```bash
-git clone https://github.com/orsharon7/claude-foundry.git
-cd claude-foundry
+git clone https://github.com/orsharon7/claude-codex-foundry.git
+cd claude-codex-foundry
 uv sync --frozen --extra auth
 ```
 
@@ -150,3 +150,9 @@ You should now have a dedicated **Claude via Azure Foundry** API, successfully v
 Before an organization change, retain the local config and export the current API policy/operations through Azure's normal backup process. Reapply the last reviewed configuration to revert a gateway change. Model deletion and foundation teardown are deliberately separate from installation. Do not delete a shared resource group to remove this solution. User settings have a separate restore command described in the Mac guide.
 
 To retain a deployment for diagnosis while excluding it from future synchronization, add its exact deployment name to an `excluded_deployments` array in the organization configuration. This list is applied by `sync-models` and is not exported to users. Redeploy the gateway and export a new client profile after changing it.
+
+## Resource naming and existing installations
+
+The product is **Claude & Codex on Azure** and both repositories are named `claude-codex-foundry`. Use `ccf-` for new shared resources: `ccf-foundry-<suffix>`, `ccf-apim-<suffix>`, `ccf-insights`, `ccf-logs`, and `ccf-admin-<suffix>`. Use the `developers` Foundry project. Client-specific API IDs and paths still identify Claude or Codex. The ordinary ChatGPT cloud app is not a supported gateway client.
+
+Existing Azure resource IDs, URLs, state, and client installations do not need migration. For a redeployment, retain the original parameter values, including `projectName`, `loggerName`, and the portal `storageAccountName`; adopting new names creates new resources. The `claude-foundry` CLI, Python package, local configuration directories and existing ZIP layouts remain compatible, intentionally. A GitHub repository rename does not rename your local checkout; update its remote URL to your own organization's new repository.

@@ -14,7 +14,7 @@ The baseline gateway requires the developer or a group to have Foundry inference
 
 ## Will existing conversations move to the Azure profile?
 
-Yes, through Claude Desktop's native import wizard. Claude Foundry supports enabling it during onboarding with `--enable-history-import` or an organization import policy. It copies eligible history into the Azure-connected profile and preserves originals. Source permissions and file-content limitations apply; see [conversation migration](conversation-migration.md). Restoring installation settings does not undo an import.
+Yes, through Claude Desktop's native import wizard. Claude & Codex on Azure supports enabling it during onboarding with `--enable-history-import` or an organization import policy. It copies eligible history into the Azure-connected profile and preserves originals. Source permissions and file-content limitations apply; see [conversation migration](conversation-migration.md). Restoring installation settings does not undo an import.
 
 ## Does this need the new Azure AI Gateway product?
 

@@ -1,4 +1,4 @@
-# Claude Foundry Admin
+# Claude & Codex Admin
 
 The console manages a customer's existing Azure gateway. It uses the supplied Watermark direction: warm paper, blue-green ink, a serif voice, legible operational type, thin rules, and restrained motion. A quiet organization seal belongs only in the overview and organization mark. Tables and settings remain flat; floating dialogs alone have shadows.
 
