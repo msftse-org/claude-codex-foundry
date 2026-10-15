@@ -63,6 +63,7 @@ import {
     Seal,
     Status,
 } from "./components";
+import { BudgetPanel } from "./budgets";
 import "./style.css";
 
 const pages = [
@@ -194,7 +195,10 @@ function App() {
                 }
                 if (config.configured) {
                     const data = await load();
-                    if (data.viewer.role !== "developer") await loadUsage();
+                    if (
+                        !["developer", "group_admin"].includes(data.viewer.role)
+                    )
+                        await loadUsage();
                 }
             })
             .catch((e) => setError(e.message));
@@ -358,18 +362,25 @@ function App() {
             </div>
         );
     const admin = ["owner", "admin"].includes(state.viewer.role);
+    const groupAdmin = state.viewer.role === "group_admin";
+    const manager = admin || groupAdmin;
     const finance = admin || state.viewer.role === "billing";
     const developer = state.viewer.role === "developer";
     const dirty = state.policy_hash !== state.published_hash;
     const filteredPages = pages.filter(
         (p) =>
-            (!developer || ["requests", "onboarding"].includes(p.id)) &&
-            (p.id !== "content-logs" || admin),
+            (!developer ||
+                ["requests", "onboarding", "budgets"].includes(p.id)) &&
+            (!groupAdmin ||
+                !["overview", "analytics", "settings"].includes(p.id)) &&
+            (p.id !== "content-logs" || manager),
     );
     const currentPage =
-        developer && !["requests", "onboarding"].includes(page)
+        developer && !["requests", "onboarding", "budgets"].includes(page)
             ? "onboarding"
-            : page;
+            : groupAdmin && ["overview", "analytics", "settings"].includes(page)
+              ? "members"
+              : page;
     const memberById = (id: string) => state.members.find((m) => m.id === id);
     const groupById = (id: string) => state.groups.find((g) => g.id === id);
     const modelLabel = (id: string) =>
@@ -401,7 +412,7 @@ function App() {
     const failures = usage.daily.reduce((n, r) => n + r.errors, 0);
     const content = () => {
         if (currentPage === "content-logs")
-            return admin ? (
+            return manager ? (
                 <ContentLogs
                     members={state.members}
                     onAudit={() => {
@@ -630,7 +641,11 @@ function App() {
                                             className="iconbutton"
                                             aria-label="Review draft"
                                             onClick={() =>
-                                                setPanel({ kind: "publish" })
+                                                state.budget_configured
+                                                    ? nav("budgets")
+                                                    : setPanel({
+                                                          kind: "publish",
+                                                      })
                                             }
                                         >
                                             <ArrowRight />
@@ -760,7 +775,7 @@ function App() {
                             <DownloadSimple />
                             Export
                         </button>
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button"
                                 onClick={() =>
@@ -770,7 +785,7 @@ function App() {
                                 Import CSV
                             </button>
                         )}
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button primary"
                                 onClick={() => setPanel({ kind: "member" })}
@@ -986,10 +1001,14 @@ function App() {
                         title="Model access"
                         description="Model entitlements come from a developer’s primary group and any approved personal grants."
                     >
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button primary"
-                                onClick={() => setPanel({ kind: "publish" })}
+                                onClick={() =>
+                                    groupAdmin || state.budget_configured
+                                        ? nav("budgets")
+                                        : setPanel({ kind: "publish" })
+                                }
                             >
                                 Review & publish
                                 <ArrowRight />
@@ -1130,11 +1149,18 @@ function App() {
                         description="Administration roles apply to this console. Model access is governed separately by groups."
                     />
                     <div className="sheet tablewrap">
-                        <div className="rolegrid">
+                        <div
+                            className="rolegrid"
+                            style={{
+                                gridTemplateColumns:
+                                    "minmax(200px, 2fr) repeat(6, minmax(90px, 1fr))",
+                            }}
+                        >
                             <div className="heading">Permission</div>
                             {[
                                 "Owner",
                                 "Administrator",
+                                "Group admin",
                                 "Billing",
                                 "Auditor",
                                 "Developer",
@@ -1144,16 +1170,24 @@ function App() {
                                 </div>
                             ))}
                             {[
-                                ["View organization", 1, 1, 1, 1, 0],
-                                ["Manage members", 1, 1, 0, 0, 0],
-                                ["Manage ownership", 1, 0, 0, 0, 0],
-                                ["Publish policy", 1, 1, 0, 0, 0],
-                                ["Edit token limits", 1, 1, 0, 0, 0],
-                                ["Edit dollar budget", 1, 1, 1, 0, 0],
-                                ["Read usage & audit", 1, 1, 1, 1, 0],
-                                ["Inspect captured content", 1, 1, 0, 0, 0],
-                                ["Request model access", 1, 1, 1, 1, 1],
-                                ["Download own setup", 1, 1, 1, 1, 1],
+                                ["View organization", 1, 1, 0, 1, 1, 0],
+                                ["Manage team developers", 1, 1, 1, 0, 0, 0],
+                                ["Manage ownership", 1, 0, 0, 0, 0, 0],
+                                [
+                                    "Set organization / group ceilings",
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                ],
+                                ["Set team / user limits", 1, 1, 1, 0, 0, 0],
+                                ["Edit planning rates", 1, 1, 0, 1, 0, 0],
+                                ["Read usage & audit", 1, 1, 1, 1, 1, 0],
+                                ["Inspect captured content", 1, 1, 1, 0, 0, 0],
+                                ["Request model access", 1, 1, 1, 1, 1, 1],
+                                ["Download own setup", 1, 1, 1, 1, 1, 1],
                             ].map(([label, ...values]) => (
                                 <div
                                     key={String(label)}
@@ -1180,9 +1214,12 @@ function App() {
                         </div>
                     </div>
                     <Notice>
-                        These permissions are enforced by the API. Only an owner
-                        can appoint another owner; no one can suspend themselves
-                        or remove the last active owner.
+                        Group administrators are restricted to their own team,
+                        including content logs. All model requests, including
+                        owners’, remain subject to organization, group and user
+                        limits. These permissions are enforced by the API. Only
+                        an owner can appoint another owner; no one can suspend
+                        themselves or remove the last active owner.
                     </Notice>
                 </>
             );
@@ -1197,27 +1234,36 @@ function App() {
                         }
                         description={
                             currentPage === "budgets"
-                                ? "Set token boundaries at the gateway and a dollar budget for planning."
+                                ? "Review monthly USD limits, reserved requests, and planning estimates."
                                 : "Your customer-owned control plane, connected to Microsoft Entra and Azure."
                         }
                     />
-                    {currentPage === "budgets" && (
+                    {currentPage === "budgets" && !state.budget_configured && (
                         <Notice>
                             Token quotas apply after publishing. APIM estimates
                             streamed tokens and concurrent requests can
-                            overshoot. Dollar budgets are planning thresholds,
-                            not hard Azure billing caps.
+                            overshoot. Legacy planning amounts do not stop
+                            requests. Enforced USD limits require the dedicated
+                            budget gateway shown below.
                         </Notice>
                     )}
-                    <SettingsForm
-                        key={state.revision}
-                        settings={state.settings}
-                        admin={admin}
-                        finance={finance}
-                        busy={busy}
-                        save={(v) => save("settings", v)}
-                        organization={currentPage === "settings"}
-                    />
+                    {currentPage === "budgets" && (
+                        <BudgetPanel state={state} busy={busy} save={save} />
+                    )}
+                    {!groupAdmin &&
+                        !developer &&
+                        (!state.budget_configured ||
+                            currentPage === "settings") && (
+                            <SettingsForm
+                                key={state.revision}
+                                settings={state.settings}
+                                admin={admin}
+                                finance={finance}
+                                busy={busy}
+                                save={(v) => save("settings", v)}
+                                organization={currentPage === "settings"}
+                            />
+                        )}
                     {currentPage === "settings" && (
                         <div className="settings" style={{ marginTop: 32 }}>
                             <h2>Connected services</h2>
@@ -1253,8 +1299,9 @@ function App() {
                                 <div className="health">
                                     <dt>Data captured</dt>
                                     <dd>
-                                        Usage metadata, administrator changes, and
-                                        optionally captured inference messages
+                                        Usage metadata, administrator changes,
+                                        and optionally captured inference
+                                        messages
                                     </dd>
                                 </div>
                             </dl>
@@ -1262,8 +1309,9 @@ function App() {
                                 Conversation retention, tool restrictions,
                                 device compliance, and invoices are managed in
                                 Claude, your device management platform, and
-                                Azure. This portal does not collect chat content
-                                or issue compliance certifications.
+                                Azure. Optional captured messages remain in the
+                                protected Log Analytics workspace and are read
+                                through audited, role-scoped requests.
                             </Notice>
                         </div>
                     )}
@@ -1279,10 +1327,14 @@ function App() {
                                         <tr>
                                             <th>Group</th>
                                             <th className="numeric">
-                                                Planning budget / month
+                                                {state.budget_configured
+                                                    ? "Owner ceiling / month"
+                                                    : "Planning budget / month"}
                                             </th>
                                             <th className="numeric">
-                                                Token quota / month
+                                                {state.budget_configured
+                                                    ? "Operating limit / month"
+                                                    : "Token quota / month"}
                                             </th>
                                             <th></th>
                                         </tr>
@@ -1292,17 +1344,29 @@ function App() {
                                             <tr key={g.id}>
                                                 <td>{g.name}</td>
                                                 <td className="numeric">
-                                                    {g.budget_usd
-                                                        ? `$${fmt(g.budget_usd)}`
-                                                        : "Not set"}
+                                                    {state.budget_configured
+                                                        ? g.spend_ceiling_usd ==
+                                                          null
+                                                            ? "Not set"
+                                                            : `$${g.spend_ceiling_usd}`
+                                                        : g.budget_usd
+                                                          ? `$${fmt(g.budget_usd)}`
+                                                          : "Not set"}
                                                 </td>
                                                 <td className="numeric">
-                                                    {g.monthly_tokens
-                                                        ? fmt(g.monthly_tokens)
-                                                        : "Not set"}
+                                                    {state.budget_configured
+                                                        ? g.spend_limit_usd ==
+                                                          null
+                                                            ? "Inherits owner ceiling"
+                                                            : `$${g.spend_limit_usd}`
+                                                        : g.monthly_tokens
+                                                          ? fmt(
+                                                                g.monthly_tokens,
+                                                            )
+                                                          : "Not set"}
                                                 </td>
                                                 <td>
-                                                    {admin && (
+                                                    {manager && (
                                                         <button
                                                             className="button text"
                                                             onClick={() =>
@@ -1328,7 +1392,7 @@ function App() {
                             </p>
                         </section>
                     )}
-                    {currentPage === "budgets" && (
+                    {currentPage === "budgets" && !developer && !groupAdmin && (
                         <Spend
                             state={state}
                             usage={usage}
@@ -1689,7 +1753,7 @@ function App() {
                                         </small>
                                     </div>
                                     <div className="actions">
-                                        {r.status === "open" && admin ? (
+                                        {r.status === "open" && manager ? (
                                             <>
                                                 <button
                                                     className="button"
@@ -1766,7 +1830,7 @@ function App() {
                                     their primary group, and publish the
                                     reviewed gateway policy.
                                 </p>
-                                {admin && (
+                                {manager && (
                                     <button
                                         className="button"
                                         onClick={() => nav("members")}
@@ -2006,7 +2070,7 @@ function App() {
                                 permissions before retrying.
                             </Notice>
                         )}
-                        {!admin && !developer && (
+                        {!manager && !developer && (
                             <Notice>
                                 {state.viewer.role === "billing"
                                     ? "You can edit the dollar planning budget and view operational data. Access and token controls require an owner or administrator."
@@ -2021,7 +2085,12 @@ function App() {
                 <MemberEditor
                     state={state}
                     member={panel.value}
-                    editable={admin}
+                    editable={
+                        manager &&
+                        (!groupAdmin ||
+                            !panel.value ||
+                            panel.value.role === "developer")
+                    }
                     busy={busy}
                     close={() => setPanel(undefined)}
                     save={async (v) => {
@@ -2041,7 +2110,7 @@ function App() {
                 <GroupEditor
                     state={state}
                     group={panel.value}
-                    editable={admin}
+                    editable={manager}
                     busy={busy}
                     close={() => setPanel(undefined)}
                     save={async (v) => {
@@ -2049,10 +2118,10 @@ function App() {
                     }}
                 />
             )}
-            {panel?.kind === "publish" && (
+            {panel?.kind === "publish" && !state.budget_configured && (
                 <PublishDialog
                     state={state}
-                    editable={admin}
+                    editable={manager}
                     close={() => setPanel(undefined)}
                     completed={async () => {
                         await load();

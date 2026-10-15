@@ -75,3 +75,17 @@ def test_cursor_ties_and_invalid_periods(monkeypatch):
     ]:
         with pytest.raises(ValueError):
             LogQuery(**kwargs)
+
+
+def test_group_logs_require_trusted_request_time_group():
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from claude_foundry.portal.content_logs import scoped_query
+
+    group = str(uuid4())
+    end = datetime.now(UTC)
+    query = scoped_query(source(), end - timedelta(days=1), end, group)
+    assert 'trace.source) == "budget-governance"' in query
+    assert f'| where group_id == "{group}"' in query
+    assert query.index(f'| where group_id == "{group}"') < query.index("let messages")

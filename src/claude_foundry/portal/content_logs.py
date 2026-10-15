@@ -80,28 +80,30 @@ def run_query(source, credential, query):
     return [dict(zip(columns, row, strict=True)) for row in table["rows"]]
 
 
-def scoped_query(source, start, end):
+def scoped_query(source, start, end, group_id=None):
     # Clamp every read, including direct IDs, to the configured retention window.
     start = max(start, datetime.now(UTC) - timedelta(days=source.retention_days))
     scope = json.dumps(source.resource_id.lower())
     apis = ",".join(json.dumps(a) for a in source.api_ids)
     period = f"TimeGenerated between (datetime({start.isoformat()}) .. datetime({end.isoformat()}))"
+    group_filter = f'| where group_id == "{UUID(group_id)}"' if group_id else ""
     return f"""let gateway = ApiManagementGatewayLogs
 | where {period} and tolower(_ResourceId) == {scope}
 | where ApiId in ({apis})
 | mv-apply trace=parse_json(tostring(TraceRecords)) on (
-    summarize principal_id=take_anyif(tostring(trace.metadata.principal_id), tostring(trace.source) in ("claude-foundry", "codex-foundry")))
-| summarize arg_max(TimeGenerated, ApiId, ResponseCode, principal_id) by CorrelationId;
+    summarize principal_id=take_anyif(tostring(trace.metadata.principal_id), tostring(trace.source) in ("claude-foundry", "codex-foundry")), group_id=take_anyif(tostring(trace.metadata.group_id), tostring(trace.source) == "budget-governance"))
+| summarize arg_max(TimeGenerated, ApiId, ResponseCode, principal_id, group_id) by CorrelationId
+{group_filter};
 let messages = ApiManagementGatewayLlmLog
 | where {period} and tolower(_ResourceId) == {scope}
 | join kind=inner gateway on CorrelationId;
 """
 
 
-def list_logs(source, credential, filters):
+def list_logs(source, credential, filters, group_id=None):
     if filters.api_id and filters.api_id not in source.api_ids:
         raise ValueError("Choose a configured API.")
-    query = scoped_query(source, filters.start, filters.end)
+    query = scoped_query(source, filters.start, filters.end, group_id)
     query += "messages\n"
     if filters.api_id:
         query += f"| where ApiId == {json.dumps(filters.api_id)}\n"
@@ -124,9 +126,9 @@ chunks=count(), principal_id=take_any(principal_id) by correlation_id=Correlatio
     return {"items": rows[:50], "has_more": len(rows) > 50}
 
 
-def read_log(source, credential, correlation_id):
+def read_log(source, credential, correlation_id, group_id=None):
     end = datetime.now(UTC)
-    query = scoped_query(source, end - timedelta(days=source.retention_days), end)
+    query = scoped_query(source, end - timedelta(days=source.retention_days), end, group_id)
     query += f"""messages | where CorrelationId == "{correlation_id}"
 | project timestamp=TimeGenerated, api_id=ApiId, model=DeploymentName, model_name=ModelName,
 status=ResponseCode, principal_id, sequence=SequenceNumber, request_id=RequestId,
