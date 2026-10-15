@@ -134,7 +134,7 @@ To offer existing-history migration, add a reviewed `conversation_import` policy
 uv run --extra auth claude-foundry login --config .local/client.json
 uv run --extra auth claude-foundry verify --config .local/client.json --all-models
 uv run python scripts/build_client_bundle.py --profile .local/client.json \
-  --output dist/claude-codex-foundry-macos.zip
+  --output dist/claude-foundry-macos.zip
 ```
 
 Distribute the bundle through an approved internal channel. Its file allowlist excludes `.local`, deployment reports, cloud administrator configuration, Git metadata and caches. `client.json` contains tenant ID, gateway URL, public client ID when applicable, and the model list; it contains no secret. Users follow [the Mac guide](macos.md).

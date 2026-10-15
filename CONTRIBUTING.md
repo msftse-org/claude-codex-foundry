@@ -58,8 +58,8 @@ npm --prefix portal/web test
 Compile infrastructure changes with the same checks used by CI:
 
 ```bash
-az bicep build --file infra/main.bicep --outfile /tmp/claude-codex-foundry.arm.json
-az bicep build --file infra/portal.bicep --outfile /tmp/claude-codex-foundry-portal.arm.json
+az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
+az bicep build --file infra/portal.bicep --outfile /tmp/claude-foundry-portal.arm.json
 ```
 
 CI runs Python checks on Linux/macOS with Python 3.11 and 3.13, plus frontend and Bicep validation. For documentation-only changes, check links, commands against CLI help, image paths, and screenshot privacy; do not invoke live inference just to validate prose.
@@ -121,8 +121,8 @@ Audit the pinned runtime dependencies when changing packages:
 
 ```bash
 uv export --frozen --extra portal --no-dev --no-hashes --no-emit-project \
-  --format requirements-txt --output /tmp/claude-codex-foundry-runtime.txt
-uvx pip-audit --no-deps --disable-pip --requirement /tmp/claude-codex-foundry-runtime.txt
+  --format requirements-txt --output /tmp/claude-foundry-runtime.txt
+uvx pip-audit --no-deps --disable-pip --requirement /tmp/claude-foundry-runtime.txt
 npm --prefix portal/web audit --omit=dev
 ```
 
