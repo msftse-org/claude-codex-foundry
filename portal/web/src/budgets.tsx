@@ -34,6 +34,7 @@ export function BudgetPanel({
     save: (kind: string, value: unknown) => Promise<boolean>;
 }) {
     const [balance, setBalance] = useState<Balance>();
+    const [loading, setLoading] = useState(true);
     const [message, setMessage] = useState("");
     const [editing, setEditing] = useState<
         "organization" | "price" | "publish" | null
@@ -43,13 +44,18 @@ export function BudgetPanel({
     const [refreshCount, setRefreshCount] = useState(0);
     const owner = state.viewer.role === "owner";
     const publisher = owner || state.viewer.role === "group_admin";
-    const refresh = () =>
-        api<Balance>("/api/budgets/balance")
+    const refresh = () => {
+        setLoading(true);
+        setBalance(undefined);
+        setMessage("");
+        return api<Balance>("/api/budgets/balance")
             .then((value) => {
                 setBalance(value);
                 setRefreshCount((count) => count + 1);
             })
-            .catch((e) => setMessage(String(e.message || e)));
+            .catch((e) => setMessage(String(e.message || e)))
+            .finally(() => setLoading(false));
+    };
     useEffect(() => {
         void refresh();
     }, [state.revision]);
@@ -57,7 +63,11 @@ export function BudgetPanel({
         <section className="section" style={{ marginBottom: 32 }}>
             <h2>Enforced spending limits</h2>
             <Notice>
-                {balance?.active
+                {loading
+                    ? "Loading the active budget policy and balances…"
+                    : !balance
+                      ? "Budget status could not be verified. Refresh to retry."
+                      : balance.active
                     ? `Budget policy active · ${balance.month} · UTC calendar month`
                     : balance?.configured
                       ? balance.note || "No active budget policy"

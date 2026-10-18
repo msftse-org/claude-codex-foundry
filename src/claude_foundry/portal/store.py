@@ -43,6 +43,14 @@ class BlobStore:
             credential=credential,
         )
         try:
+            self.blob.get_blob_properties()
+            return
+        except ResourceNotFoundError:
+            pass
+        # Resolve an optional bootstrap only for an empty store. Existing drafts
+        # and audit history must never be replaced during a deployment/restart.
+        initial = initial() if callable(initial) else initial
+        try:
             self.blob.upload_blob(
                 json.dumps(initial),
                 overwrite=False,

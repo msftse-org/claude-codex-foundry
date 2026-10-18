@@ -1,6 +1,6 @@
-# Budget hierarchy validation — October 15, 2026
+# Budget hierarchy validation
 
-**Unreleased feature branch: `codex/budget-hierarchy`.** This record covers an isolated budget runtime and new standard APIM APIs. The existing demo portal, baseline endpoints and workstation profiles have not been migrated to these controls.
+**Unreleased feature branch: `codex/budget-hierarchy`.** This record covers an isolated budget runtime, a separate budget-connected portal and new standard APIM APIs. The existing demo portal, baseline endpoints and workstation profiles have not been migrated to these controls.
 
 ## Live Azure evidence
 
@@ -39,14 +39,24 @@ Automated checks cover:
 - Owner-only full-reservation closure, durable audit before closure/publication, and exclusion of unrelated owner/team drafts from group publication.
 - Backend token signature/issuer/tenant/audience/caller checks, and rejection of legacy gateway publication from a budget-connected portal.
 
-All 177 Python tests pass under Python 3.11 and 3.13 on macOS. All 14 frontend tests pass; frontend type checking/build, lint/format checks and budget Bicep compilation also pass. CI repeats the Python suite on macOS/Linux and Python 3.11/3.13.
+All 179 Python tests pass under Python 3.11 and 3.13 on macOS. The two new tests cover importing the active policy into an empty portal without resetting liabilities, rejecting an unrelated configured owner, and preserving existing state during competing initializations. All 14 frontend tests pass; frontend type checking/build, lint/format checks and both budget Bicep templates compile. CI repeats the Python suite on macOS/Linux and Python 3.11/3.13.
 
 After both native file-read sessions, all three original evaluation counters showed 6,537 micro-USD spent and zero reserved, consistent with the reported token usage and per-request upward rounding.
 
 The native tests used temporary configurations and the reviewed two-model catalog, with no changes to normal workstation profiles or existing conversations. Codex used the documented [custom Responses provider](https://learn.chatgpt.com/docs/config-file/config-reference) and HTTP streaming. These short checks do not qualify long sessions or desktop UI behavior.
 
+## Hosted portal follow-up — October 18, 2026
+
+A separate budget-connected portal was deployed with private storage, a dedicated managed identity, and no APIM policy-write or Foundry inference role. Its package uses a separate deployment container. Anonymous state and balance requests returned 401; health and non-sensitive sign-in configuration returned 200 with `Cache-Control: no-store`.
+
+The actual owner completed Entra sign-in using the existing browser session. The empty portal imported the active ledger policy. The owner created two independent test groups, assigned two directory-verified guest identities as group administrators, and published the reviewed budget policy through the hosted UI. Each test administrator has a $1 personal limit; each group has a $1 operating limit and $2 owner-controlled ceiling. Only the two reviewed models are delegated. The organization remains capped at $10. No Azure roles or directory invitations were granted to the testers.
+
+Hosted reads after publication preserved the owner's original group/account limits and all three counters at 6,537 micro-USD spent with zero reserved. The audit recorded both group changes, both member changes and the publication request; all five events survived a code redeployment. Account names, directory IDs and screenshots containing them remain private.
+
+**The two group administrators have not yet completed their independent sign-ins or cross-team tests.** Configuring their roles is not evidence of successful isolation. Follow the [hosted permission test](budget-permission-test.md), including negative direct-ID requests and revocation during content reads.
+
 ## Remaining release checks
 
-The hosted portal is not connected to this ledger yet. Two real group-admin identities, full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model.
+Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
 
 See the complete [release checklist and trust boundary](budget-enforcement.md#release-acceptance). Do not distribute the evaluation endpoint as a customer spending guarantee or merge this branch into a release before those checks and bypass removal are complete.

@@ -81,6 +81,8 @@ Policy snapshots are content-addressed JSON Blobs. Their hash is checked on read
 
 Raw log scope uses the trusted **request-time group ID** emitted by the budget gateway, not current membership. Moving a user cannot expose their previous team's history. Unattributed older records are excluded from group-admin queries. Every content detail read requires a reason, an audit write before querying, and a role/group recheck afterward. Seven-day opt-in content retention remains a separate deployment.
 
+The isolated budget portal template uses a dedicated managed identity with storage and monitoring permissions; it grants no APIM policy-write or Foundry inference role. On an empty portal store it imports the active ledger's policy only if its configured owner is already an active owner there. Existing drafts and audit history survive redeployment. Portal membership, role and suspension changes take effect on the next portal request; inference access and limits require budget publication.
+
 Azure operators with write access to runtime settings, deployment code, role assignments or ledger storage are inside the trust boundary. The portal audit is versioned organizational state, not an immutable compliance certification.
 
 For a customer rollout, remove users' direct Foundry inference roles and do not distribute baseline API routes or alternate model credentials. Keep Foundry local keys disabled. Azure control-plane administrators can deliberately change these controls; a portal budget cannot constrain a subscription owner. The existing demonstration environment deliberately retains baseline access until its migration is reviewed.
@@ -101,7 +103,7 @@ Before customer release, record live evidence for:
 - Multiple runtime instances racing against a tiny balance, with Azure Table state proving no overdraw.
 - Disconnects, restart, ambiguous provider outcomes and ledger outage without unsafe refunds.
 - Current native Claude and Codex clients, including long-context/tool sessions and unsupported-feature messages.
-- Two real group-admin accounts across every portal route, especially direct content IDs and revocation during reads.
+- Two real group-admin accounts across every portal route, especially direct content IDs and revocation during reads. Use the [hosted permission-test procedure](budget-permission-test.md).
 - Every offered model's actual price categories, capacity, pinned version and deployment configuration.
 - Removal of alternate inference paths in the customer's installation.
 - Latency, contention, throughput and failure recovery under the intended organization load. A 2,000-member policy check is **not** a 2,000-concurrent-user capacity claim.
