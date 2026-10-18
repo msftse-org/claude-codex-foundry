@@ -2,6 +2,8 @@
 
 This unreleased add-on implements the [approved spending hierarchy](../docs/budget-enforcement.md). It uses standard APIM, a separate streaming Functions Flex Consumption app, Azure Table transactions and immutable policy snapshots. The portal and baseline gateways remain separate.
 
+Before deploying, read the [Azure architecture and full request-flow diagram](../docs/budget-architecture.md): which service checks identity and allowance, where data is stored, how publication works, and what happens when a dependency fails.
+
 Do not distribute its client profile before the release acceptance tests pass. The template is an evaluation deployment, not an automatic customer migration.
 
 ## Prerequisites
