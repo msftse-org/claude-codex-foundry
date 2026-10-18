@@ -10,6 +10,25 @@ from .budget_pricing import BudgetPrice
 from .domain import Group, Member, Settings
 
 
+def portal_seed(initial, ledger, snapshots, owner_id):
+    """Initialize a new portal from its existing ledger, without changing that ledger."""
+    meta, _ = ledger.rows.read("policy")
+    if not meta.get("digest"):
+        return initial
+    policy = snapshots.get(meta["digest"])
+    if not any(
+        m["id"] == owner_id and m["role"] == "owner" and m["status"] == "active"
+        for m in policy["members"]
+    ):
+        raise ValueError("The configured portal owner is not an active owner of this ledger")
+    # Preserve identities, ceilings and reviewed rates even if the ledger is
+    # paused or rates expired. Owners need the portal to review those incidents.
+    return {
+        **initial,
+        **{key: policy[key] for key in ("settings", "groups", "members", "budget_prices")},
+    }
+
+
 def snapshot(state):
     result = {
         "schema": 1,

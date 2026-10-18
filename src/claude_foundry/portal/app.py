@@ -18,7 +18,7 @@ from ..config import export_client, load_org
 from .auth import Authenticator
 from .boundary import RequestBoundary
 from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
-from .budget_policy import Snapshots, group_publication, snapshot
+from .budget_policy import Snapshots, group_publication, portal_seed, snapshot
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
@@ -76,7 +76,11 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             app.state.store = (
                 LocalStore(os.getenv("PORTAL_LOCAL_PATH", ".local/portal/state.json"), initial)
                 if local
-                else BlobStore(os.environ["PORTAL_STORAGE_ACCOUNT"], credential, initial)
+                else BlobStore(
+                    os.environ["PORTAL_STORAGE_ACCOUNT"],
+                    credential,
+                    lambda: portal_seed(initial, *budget, owner_id) if budget else initial,
+                )
             )
         return app.state.store
 

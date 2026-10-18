@@ -480,3 +480,23 @@ def test_proxy_unknown_outcomes_never_release_reserved_allowance(policy, ledger,
         s["reserved_micro_usd"] == 4500 and s["spent_micro_usd"] == 0
         for s in ledger.balances(policy, policy["members"][0]["id"])["scopes"]
     )
+
+
+def test_portal_initialization_preserves_active_policy_and_ledger(org, ledger, policy):
+    from claude_foundry.portal.budget_policy import portal_seed
+
+    owner = policy["members"][0]["id"]
+    initial = seed(org, owner)
+    snapshots = SimpleNamespace(get=lambda digest: copy.deepcopy(policy))
+    held = admit(ledger, policy)
+    before = ledger.balances(policy, owner)
+    restored = portal_seed(initial, ledger, snapshots, owner)
+    assert restored["groups"] == policy["groups"]
+    assert restored["members"] == policy["members"]
+    assert restored["budget_prices"] == policy["budget_prices"]
+    assert restored["audit"] == []
+    assert ledger.balances(policy, owner) == before
+    assert ledger.rows.read("request-" + held["request_id"])[0]["state"] == "reserved"
+    with pytest.raises(ValueError, match="active owner"):
+        portal_seed(initial, ledger, snapshots, str(uuid4()))
+    assert portal_seed(initial, Ledger(MemoryRows()), snapshots, owner) == initial

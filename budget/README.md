@@ -44,6 +44,24 @@ Private networking must exist when the Flex app initializes. If subscription pol
 
 ## Configure and publish policy
 
+For a separate hosted evaluation portal, use [infra/budget-portal.bicep](../infra/budget-portal.bicep) in the budget resource group. It reuses the budget account's private Blob/Table endpoints and the existing Functions subnet, creates a separate deployment container and portal-state container, and runs on a 512 MB Flex Consumption plan with no always-ready instances. It does not modify the existing portal or baseline gateway.
+
+Prepare a private parameter file with the template's organization configuration, stable ledger organization ID, owner identity, Entra SPA client ID, approved redirect URI, gateway URL, model metadata and monitoring resources. Use a dedicated Entra registration for customer environments. An evaluation may reuse an existing portal registration only after adding the new SPA redirect while preserving its existing redirects and scope. `additionalModels` uses the portal catalog fields `name`, `labelOverride` and `anthropicFamilyTier` (use `openai` for OpenAI entries).
+
+```bash
+az deployment group what-if -g PORTAL_RESOURCE_GROUP \
+  --template-file infra/budget-portal.bicep --parameters @.local/budget-portal.parameters.json
+az deployment group create -g PORTAL_RESOURCE_GROUP --name budget-admin-preview \
+  --template-file infra/budget-portal.bicep --parameters @.local/budget-portal.parameters.json
+uv run --extra portal python scripts/build_portal.py
+az functionapp deployment source config-zip -g PORTAL_RESOURCE_GROUP \
+  -n BUDGET_PORTAL_NAME --src dist/claude-foundry-admin-preview.zip --build-remote true
+```
+
+The new portal identity receives Blob Data Owner and Table Data Contributor on budget storage, Monitoring Reader/Metrics Publisher on the specified Application Insights resource, and optional Log Analytics Reader on the dedicated content workspace. It receives no APIM policy-write or Foundry inference role. Azure data operators remain inside the trust boundary.
+
+On first authenticated access to an empty portal store, the portal imports identities, groups, ceilings and reviewed rates from the existing ledger's immutable active policy. The configured owner must already be an active owner in that policy. This does not activate policy, reset spend, release reservations or clear a paused ledger. Redeployments preserve existing drafts and audit history. An unavailable ledger or invalid policy prevents initialization; it is not replaced with permissive defaults. If the ledger has never been initialized, the owner starts with an unpublished draft and must configure and publish finite limits.
+
 Deploy the portal from the same branch. Set these app settings through ARM or Azure CLI using a private JSON file (do not put values or credentials into Git):
 
 | Setting | Purpose |

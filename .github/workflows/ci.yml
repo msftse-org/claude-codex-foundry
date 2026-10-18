@@ -31,6 +31,7 @@ jobs:
       - run: az bicep build --file infra/portal.bicep --outfile /tmp/claude-foundry-portal.arm.json
       - run: az bicep build --file infra/content-logs.bicep --outfile /tmp/ccf-content-logs.arm.json
       - run: az bicep build --file infra/budget.bicep --outfile /tmp/ccf-budget.arm.json
+      - run: az bicep build --file infra/budget-portal.bicep --outfile /tmp/ccf-budget-portal.arm.json
   portal:
     runs-on: ubuntu-latest
     defaults:

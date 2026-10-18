@@ -31,7 +31,7 @@ export function MemberEditor({
         <Drawer
             busy={busy}
             title={m ? m.name : "Add a member"}
-            description="Use the object ID from this organization’s Entra directory. Saving creates a draft gateway entitlement; it does not send an invitation or create a directory account."
+            description="Use the object ID from this organization’s Entra directory. Saving changes portal permissions immediately. Gateway access and budgets require publication. No invitation is sent."
             onClose={close}
         >
             <form
@@ -197,9 +197,9 @@ export function MemberEditor({
                         ))}
                     </fieldset>
                     <div className="impact">
-                        Changes affect this member’s next gateway requests after
-                        publication. Suspending access does not delete their
-                        local conversations.
+                        Portal roles and suspension apply as soon as you save.
+                        Gateway access and budgets apply after publication.
+                        Suspending access does not delete local conversations.
                     </div>
                 </fieldset>
                 <div className="dialogfooter">
@@ -243,7 +243,7 @@ export function GroupEditor({
         <Drawer
             busy={busy}
             title={group ? group.name : "Create a group"}
-            description="Groups give developers a clear set of models and one shared monthly token limit."
+            description="Give the team allowed models and a shared monthly allowance. Group administrators work within the ceiling and models delegated by the owner."
             onClose={close}
         >
             <form

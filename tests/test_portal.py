@@ -1230,3 +1230,44 @@ def test_budget_portal_cannot_overwrite_gateway_with_legacy_policy(budget_app, o
             json={"revision": data["revision"], "organization": data["settings"]["name"]},
         )
     assert response.status_code == 409 and "Legacy gateway publication is disabled" in response.text
+
+
+def test_blob_bootstrap_is_lazy_and_never_overwrites_existing_state(monkeypatch, state):
+    from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+
+    from claude_foundry.portal.store import BlobStore
+
+    class Blob:
+        exists = True
+        uploaded = None
+
+        def get_blob_properties(self):
+            if not self.exists:
+                raise ResourceNotFoundError("Missing")
+
+        def upload_blob(self, value, **options):
+            assert options["overwrite"] is False
+            if self.exists:
+                raise ResourceExistsError("A different instance initialized first")
+            self.uploaded = json.loads(value)
+
+    blob = Blob()
+    monkeypatch.setattr("claude_foundry.portal.store.BlobClient", lambda *a, **k: blob)
+    calls = []
+
+    def initial():
+        calls.append(True)
+        return state
+
+    BlobStore("example", object(), initial)
+    assert calls == [] and blob.uploaded is None
+    blob.exists = False
+    BlobStore("example", object(), initial)
+    assert calls == [True] and blob.uploaded == state
+
+    def racing_initial():
+        blob.exists = True
+        return {**state, "revision": 99}
+
+    BlobStore("example", object(), racing_initial)
+    assert blob.uploaded == state  # Another instance won; its state is preserved.
