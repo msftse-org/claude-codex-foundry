@@ -2,6 +2,8 @@
 
 **Feature branch: `codex/budget-hierarchy`. Unreleased until the live acceptance checks below pass.** The existing demo and baseline gateway routes do not gain spending enforcement by updating source code. Legacy `budget_usd` and `monthly_budget_usd` values remain planning amounts.
 
+Start with [How a budgeted request travels through Azure](budget-architecture.md) for the service diagram, identity checks, storage map and request-by-request walkthrough. This page specifies the hierarchy, monetary semantics and release requirements.
+
 The agreed hierarchy is **organization → group → developer**, in **USD per UTC calendar month**. Every model request must fit all three limits, including requests made by an organization owner. Child limits are ceilings, not prepaid allocations: their sum can exceed the parent, but aggregate admitted usage cannot.
 
 | Role | Authority |
