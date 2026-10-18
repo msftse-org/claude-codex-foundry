@@ -814,7 +814,11 @@ function App() {
                                     <th>Role</th>
                                     <th>Primary group</th>
                                     <th>Status</th>
-                                    <th className="numeric">Monthly tokens</th>
+                                    <th className="numeric">
+                                        {state.budget_configured
+                                            ? "Monthly USD limit (draft)"
+                                            : "Monthly tokens"}
+                                    </th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -862,9 +866,13 @@ function App() {
                                                 </Status>
                                             </td>
                                             <td className="numeric">
-                                                {m.monthly_tokens
-                                                    ? fmt(m.monthly_tokens)
-                                                    : "No personal limit"}
+                                                {state.budget_configured
+                                                    ? m.spend_limit_usd == null
+                                                        ? "Inherits group"
+                                                        : `$${m.spend_limit_usd}`
+                                                    : m.monthly_tokens
+                                                      ? fmt(m.monthly_tokens)
+                                                      : "No personal token limit"}
                                             </td>
                                             <td>
                                                 <button
@@ -928,7 +936,11 @@ function App() {
                                     <th className="numeric">Members</th>
                                     <th>Default model</th>
                                     <th>Models</th>
-                                    <th className="numeric">Monthly tokens</th>
+                                    <th className="numeric">
+                                        {state.budget_configured
+                                            ? "Monthly USD limit (draft)"
+                                            : "Monthly tokens"}
+                                    </th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -964,9 +976,16 @@ function App() {
                                         </td>
                                         <td>{g.model_ids.length} allowed</td>
                                         <td className="numeric">
-                                            {g.monthly_tokens
-                                                ? fmt(g.monthly_tokens)
-                                                : "Not set"}
+                                            {state.budget_configured
+                                                ? g.spend_limit_usd != null
+                                                    ? `$${g.spend_limit_usd}`
+                                                    : g.spend_ceiling_usd !=
+                                                        null
+                                                      ? `$${g.spend_ceiling_usd} (ceiling)`
+                                                      : "Not set"
+                                                : g.monthly_tokens
+                                                  ? fmt(g.monthly_tokens)
+                                                  : "Not set"}
                                         </td>
                                         <td>
                                             <button
