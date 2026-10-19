@@ -55,6 +55,18 @@ Hosted reads after publication preserved the owner's original group/account limi
 
 **The two group administrators have not yet completed their independent sign-ins or cross-team tests.** Configuring their roles is not evidence of successful isolation. Follow the [hosted permission test](budget-permission-test.md), including negative direct-ID requests and revocation during content reads.
 
+## Live $1 personal-budget test — October 19, 2026
+
+The runtime and isolated portal were rebuilt and redeployed from `748dd2e`; both deployments succeeded. The deployed APIM budget policies matched that source. Through the signed-in hosted portal, the owner saved and published a $1 monthly personal limit. The organization remained at $10 and the owner's group at $5. Existing spend of 6,537 micro-USD was preserved, with no outstanding reservations.
+
+- GPT-4.1 nano JSON and streaming requests both returned 200, each reporting 14 input and 2 output tokens. Together they charged six micro-USD.
+- Three simultaneous Haiku 4.5 streaming requests each requested a 64,000-token output maximum but asked for a short, harmless response. Each required a 720,000-micro-USD reservation. One returned 200; two returned 403 `budget_denied`, explicitly identifying insufficient **user** allowance.
+- A balance read during the successful stream showed exactly one pending reservation: 720,000 micro-USD held in all three scopes. The personal remaining allowance was 273,457 micro-USD, while the organization and group had ample allowance.
+- Terminal usage for the admitted request was 36 input and 301 output tokens. It settled at 1,577 micro-USD. Final spend was 8,120 micro-USD, reserved allowance was zero, and the personal balance was $0.991880. The full test added $0.001583 in conservative ledger charges.
+- The hosted portal displayed the same final balances. Anonymous portal state/balance, runtime and APIM reads remained rejected with 401 after redeployment.
+
+The test demonstrates personal-limit enforcement against concurrent reservations on the existing owner's account. It did not spend the full dollar, qualify multi-instance load, or complete the independent group-admin tests. The $1 policy remains active on the dedicated budget routes; normal workstation profiles and baseline routes were not changed. Screenshots, account identifiers and request correlation IDs remain private.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
