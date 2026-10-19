@@ -67,6 +67,20 @@ The runtime and isolated portal were rebuilt and redeployed from `748dd2e`; both
 
 The test demonstrates personal-limit enforcement against concurrent reservations on the existing owner's account. It did not spend the full dollar, qualify multi-instance load, or complete the independent group-admin tests. The $1 policy remains active on the dedicated budget routes; normal workstation profiles and baseline routes were not changed. Screenshots, account identifiers and request correlation IDs remain private.
 
+### Cumulative spending and captured logs
+
+A follow-up used synthetic padding and short responses to consume the same account's allowance through real inference. The $1 personal, $5 group and $10 organization limits stayed unchanged. No ledger resets, artificial charges or manual reservation closures were used.
+
+- Six Haiku 4.5 requests returned 200, each reporting 55,000 input and nine output tokens. Each settled at 110,045 micro-USD. At $0.668390 cumulative spend, the next Haiku request was refused with 403 `budget_denied` and no outstanding reservation.
+- Two GPT-4.1 nano requests returned 200, each reporting 900,059 input and eight output tokens, charged at 90,010 micro-USD each. The client was interrupted during a third request. A fresh authenticated balance read afterward showed another 90,010 micro-USD spent and zero reserved; the interrupted request was not retried.
+- Final cumulative spend was **$0.938420**, reserved allowance **$0**, and personal remaining allowance **$0.061580**. This follow-up added $0.930300 in conservative ledger charges. Ordinary short requests with a 64-token output maximum were then sent to both reviewed models: both returned 403 `budget_denied`, explicitly identifying the monthly **user** budget. Before/after balances were identical.
+- The remaining allowance cannot cover either model's conservative reservation. In this implementation, reservation uses the reviewed input-capacity ceiling plus the requested output maximum, even for a short prompt. GPT-4.1 nano required $0.104784 for the final probe. Refusal before exactly $1 is expected; the remaining allowance was not charged. These values are budget-ledger accounting, not Azure invoice reconciliation.
+- Nano's throughput allocation was temporarily increased to accommodate the large synthetic inputs, then restored to its original Global Standard capacity of 10. Azure reported successful provisioning and the original 10,000-token/minute and 10-request/minute limits; model version and upgrade policy were preserved.
+
+Native APIM logs contained prompt and response fragments for the six completed Haiku calls and the two completed nano calls. The signed-in owner opened a synthetic test's prompt and response through **Prompt & response logs → Inspect → Record access & open content**; the audit recorded the content-view request. The interrupted third nano call had a prompt-only record with gateway status `0`, not a confirmed HTTP success or captured response. This demonstrates why content logs must not be used as the spending ledger.
+
+Capture remains opt-in with seven-day retention and a 256 KiB limit per direction. Large prompts may be truncated; interrupted requests can lack response fragments. Capture is not a complete conversation archive. The $1 policy remains active on the dedicated budget routes, and the remaining release checks below still apply.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
