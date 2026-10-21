@@ -107,6 +107,20 @@ In Edge, a fresh tab with no portal session required one click on **Continue wit
 
 All 39 frontend tests, type checking and the production build pass. The tests cover initialization/redirect coordination, safe page restoration, interactive-request guarding, account selection, the loading/error states and bounded GET-only refresh.
 
+## Shared APIM cache follow-up — October 21, 2026
+
+The optional shared layer was deployed on the existing Basic v2 APIM service using its built-in cache. No Redis resource was added. The operation policy was read back from Azure: it validates the configured runtime managed identity before `cache-lookup-value`, uses `caching-type="internal"`, and stores successful snapshot responses for one hour. The separate portal origin accepts only the APIM managed identity. The runtime uses the existing dedicated budget audience; no storage network boundary or user access was broadened.
+
+- The initial runtime read reported one shared miss and zero shared failures, loading a verified 3,220-byte policy document through the portal origin.
+- A subsequent fresh runtime reported **one local miss, one shared hit, zero shared misses and zero shared failures**. Its independent owner/admin diagnostic probe also returned `shared_probe: "hit"`. This proves both normal cold-L1 loading from APIM and direct shared-cache verification; it is not a throughput or latency benchmark.
+- Anonymous and delegated user-token calls to both the APIM snapshot operation and portal origin returned 401. The owner diagnostic returned 200. Automated role tests reject group administrators, developers, billing users and auditors before executing a shared probe.
+- Both provider catalog routes returned 200. Both short inference probes still returned 403 `budget_denied` for insufficient monthly personal allowance. Forged identity headers could not change the account, and anonymous APIM/direct-runtime calls remained rejected.
+- The original inference API policy bodies were unchanged; the shared cache is an additional operation policy. Semantic prompt/response caching remains disabled. The authoritative balances remained $0.938420 spent, $0 reserved and $0.061580 available under the $1 personal limit, with $5 group and $10 organization limits.
+
+The deployed runtime package corresponds to `bc090cd`. All 252 Python tests pass locally on Python 3.11 and 3.13; both repositories' CI passed the Python matrix, portal checks and Bicep compilation. The added cases cover shared-cache authentication, redirects, document bounds/integrity, exact-version Blob fallback, live revocation and monetary checks despite warm caches, and diagnostics authorization. The portal's 39 tests remain green.
+
+During verification, ordinary restart and brief stop/start requests retained the previous warm worker. A stop lasting over 60 seconds followed by start produced a fresh worker serving the new package and the verified APIM hit. The evaluation runtime had no outstanding reservations; baseline routes were unaffected. Operators must verify active behavior after deployment rather than treating control-plane success alone as proof. Private deployment logs, account details and screenshots remain outside Git.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
