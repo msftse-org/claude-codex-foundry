@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Budget rules and recovery](budget-enforcement.md) · [Deployment](../budget/README.md) · [Validation status](budget-validation.md)
 
-> **Unreleased preview — `codex/budget-hierarchy`.** This describes the dedicated budget routes for Claude and Codex. Deploying the baseline gateway or entering a planning budget does not enable this flow. Complete the [release checks](budget-enforcement.md#release-acceptance) and remove alternate inference paths before customer rollout.
+> **Budget gateway preview, included in `main`.** This describes the dedicated budget routes for Claude and Codex. Deploying the baseline gateway or entering a planning budget does not enable this flow. Complete the [release checks](budget-enforcement.md#release-acceptance) and remove alternate inference paths before customer rollout.
 
 ## What is the budget service?
 

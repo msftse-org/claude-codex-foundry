@@ -1,6 +1,6 @@
 # Enforced USD limits and delegated administration
 
-**Feature branch: `codex/budget-hierarchy`. Unreleased until the live acceptance checks below pass.** The existing demo and baseline gateway routes do not gain spending enforcement by updating source code. Legacy `budget_usd` and `monthly_budget_usd` values remain planning amounts.
+**Evaluation feature, included in `main`. Customer release requires the live acceptance checks below.** The existing demo and baseline gateway routes do not gain spending enforcement by updating source code. Legacy `budget_usd` and `monthly_budget_usd` values remain planning amounts.
 
 Start with [How a budgeted request travels through Azure](budget-architecture.md) for the service diagram, identity checks, storage map and request-by-request walkthrough. This page specifies the hierarchy, monetary semantics and release requirements.
 
@@ -110,4 +110,4 @@ Before customer release, record live evidence for:
 - Removal of alternate inference paths in the customer's installation.
 - Latency, contention, throughput and failure recovery under the intended organization load. A 2,000-member policy check is **not** a 2,000-concurrent-user capacity claim.
 
-Until those checks are recorded, this remains an unreleased implementation rather than a customer-ready spending guarantee.
+Until those checks are recorded, this remains an evaluation implementation rather than a customer-ready spending guarantee.

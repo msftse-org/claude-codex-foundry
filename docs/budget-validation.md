@@ -1,6 +1,6 @@
 # Budget hierarchy validation
 
-**Unreleased feature branch: `codex/budget-hierarchy`.** This record covers an isolated budget runtime, a separate budget-connected portal and new standard APIM APIs. The existing demo portal, baseline endpoints and workstation profiles have not been migrated to these controls.
+**Budget gateway evaluation, included in `main`.** This record covers an isolated budget runtime, a separate budget-connected portal and new standard APIM APIs. Source integration is not customer release qualification. The existing demo portal, baseline endpoints and workstation profiles have not been migrated to these controls.
 
 ## Live Azure evidence
 
@@ -133,4 +133,4 @@ In the hosted Edge portal, the deployed JS/CSS asset names matched the tested pa
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
 
-See the complete [release checklist and trust boundary](budget-enforcement.md#release-acceptance). Do not distribute the evaluation endpoint as a customer spending guarantee or merge this branch into a release before those checks and bypass removal are complete.
+See the complete [release checklist and trust boundary](budget-enforcement.md#release-acceptance). Do not distribute the evaluation endpoint as a customer spending guarantee before those checks and bypass removal are complete. Inclusion in `main` does not complete this qualification or deploy the budget service.
