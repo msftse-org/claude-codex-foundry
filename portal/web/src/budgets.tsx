@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowClockwise } from "@phosphor-icons/react";
 import { api } from "./api";
 import { Drawer, DrawerClose, Field, Notice } from "./components";
 import type { BudgetPrice, State } from "./types";
@@ -33,8 +34,16 @@ export function BudgetPanel({
     busy: boolean;
     save: (kind: string, value: unknown) => Promise<boolean>;
 }) {
-    const [balance, setBalance] = useState<Balance>();
+    const viewerKey = `${state.viewer.id}:${state.viewer.role}:${state.viewer.group_id}`;
+    const [loaded, setLoaded] = useState<{
+        viewer: string;
+        balance: Balance;
+    }>();
+    const balance = loaded?.viewer === viewerKey ? loaded.balance : undefined;
     const [loading, setLoading] = useState(true);
+    const [balanceError, setBalanceError] = useState("");
+    const [updatedAt, setUpdatedAt] = useState<Date>();
+    const requestId = useRef(0);
     const [message, setMessage] = useState("");
     const [editing, setEditing] = useState<
         "organization" | "price" | "publish" | null
@@ -44,34 +53,71 @@ export function BudgetPanel({
     const [refreshCount, setRefreshCount] = useState(0);
     const owner = state.viewer.role === "owner";
     const publisher = owner || state.viewer.role === "group_admin";
-    const refresh = () => {
+    const refresh = useCallback(async () => {
+        const request = ++requestId.current;
         setLoading(true);
-        setBalance(undefined);
-        setMessage("");
-        return api<Balance>("/api/budgets/balance")
-            .then((value) => {
-                setBalance(value);
+        setBalanceError("");
+        try {
+            const value = await api<Balance>("/api/budgets/balance");
+            if (request === requestId.current) {
+                setLoaded({ viewer: viewerKey, balance: value });
+                setUpdatedAt(new Date());
                 setRefreshCount((count) => count + 1);
-            })
-            .catch((e) => setMessage(String(e.message || e)))
-            .finally(() => setLoading(false));
-    };
+            }
+        } catch (error) {
+            if (request === requestId.current)
+                setBalanceError(
+                    error instanceof Error ? error.message : String(error),
+                );
+        } finally {
+            if (request === requestId.current) setLoading(false);
+        }
+    }, [viewerKey]);
     useEffect(() => {
         void refresh();
-    }, [state.revision]);
+        return () => {
+            ++requestId.current;
+        };
+    }, [refresh, state.revision]);
+    const placeholderScopes =
+        state.viewer.role === "developer"
+            ? ["Your account"]
+            : state.viewer.role === "group_admin"
+              ? ["Your group", "Your account"]
+              : ["Organization", "Your group", "Your account"];
     return (
-        <section className="section" style={{ marginBottom: 32 }}>
-            <h2>Enforced spending limits</h2>
+        <section
+            className="section budget-panel"
+            aria-labelledby="budget-panel-title"
+        >
+            <div className="sectionhead budget-panel-heading">
+                <h2 id="budget-panel-title">Enforced spending limits</h2>
+                <button
+                    className="button"
+                    onClick={() => void refresh()}
+                    disabled={loading}
+                    aria-busy={loading}
+                >
+                    <ArrowClockwise
+                        size={16}
+                        aria-hidden="true"
+                        className={
+                            loading ? "budget-refresh-spinner" : undefined
+                        }
+                    />
+                    Refresh balance
+                </button>
+            </div>
             <Notice>
-                {loading
-                    ? "Loading the active budget policy and balances…"
-                    : !balance
-                      ? "Budget status could not be verified. Refresh to retry."
-                      : balance.active
-                    ? `Budget policy active · ${balance.month} · UTC calendar month`
-                    : balance?.configured
-                      ? balance.note || "No active budget policy"
-                      : "Budget gateway is not configured. These draft limits do not currently stop inference."}
+                {!balance
+                    ? loading
+                        ? "Loading the active budget policy and balances…"
+                        : "Budget status could not be verified. Refresh to retry."
+                    : balance.active
+                      ? `Budget policy active · ${balance.month} · UTC calendar month`
+                      : balance?.configured
+                        ? balance.note || "No active budget policy"
+                        : "Budget gateway is not configured. These draft limits do not currently stop inference."}
             </Notice>
             <p>
                 Every admitted request reserves allowance against the
@@ -80,74 +126,139 @@ export function BudgetPanel({
                 for reconciliation. Values use reviewed conservative rates;
                 Azure invoices remain separate.
             </p>
-            {message && <Notice tone="error">{message}</Notice>}
-            {!!balance?.scopes.length && (
-                <div className="sheet tablewrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Scope</th>
-                                <th>Limit</th>
-                                <th>Spent</th>
-                                <th>Reserved</th>
-                                <th>Available</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {balance.scopes.map((s) => (
-                                <tr key={s.scope}>
-                                    <td>
-                                        {s.scope === "org"
-                                            ? "Organization"
-                                            : s.scope.startsWith("group-")
-                                              ? "Your group"
-                                              : "Your account"}
-                                    </td>
-                                    <td>{dollars(s.limit_micro_usd)}</td>
-                                    <td>{dollars(s.spent_micro_usd)}</td>
-                                    <td>{dollars(s.reserved_micro_usd)}</td>
-                                    <td>{dollars(s.remaining_micro_usd)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+            {(owner || publisher) && (
+                <div
+                    className="budget-policy-actions"
+                    role="group"
+                    aria-label="Budget policy actions"
+                >
+                    {owner && (
+                        <div className="actions">
+                            <button
+                                className="button"
+                                onClick={() => setEditing("organization")}
+                            >
+                                Organization limit
+                            </button>
+                            <button
+                                className="button"
+                                onClick={() => {
+                                    setPrice(undefined);
+                                    setEditing("price");
+                                }}
+                            >
+                                Add verified model rate
+                            </button>
+                        </div>
+                    )}
+                    {publisher && (
+                        <button
+                            className="button primary"
+                            disabled={
+                                !balance?.configured ||
+                                busy ||
+                                loading ||
+                                !!balanceError
+                            }
+                            onClick={() => setEditing("publish")}
+                        >
+                            {owner
+                                ? "Publish budget policy"
+                                : "Publish team budget & access"}
+                        </button>
+                    )}
                 </div>
             )}
-            <div className="actions">
-                <button className="button" onClick={() => void refresh()}>
-                    Refresh balance
-                </button>
-                {owner && (
-                    <button
-                        className="button"
-                        onClick={() => setEditing("organization")}
-                    >
-                        Organization limit
-                    </button>
-                )}
-                {owner && (
-                    <button
-                        className="button"
-                        onClick={() => {
-                            setPrice(undefined);
-                            setEditing("price");
-                        }}
-                    >
-                        Add verified model rate
-                    </button>
-                )}
-                {publisher && (
-                    <button
-                        className="button primary"
-                        disabled={!balance?.configured || busy}
-                        onClick={() => setEditing("publish")}
-                    >
-                        {owner
-                            ? "Publish budget policy"
-                            : "Publish team budget & access"}
-                    </button>
-                )}
+            {balanceError && (
+                <Notice tone="error">
+                    {balance
+                        ? "Refresh failed. Showing the last loaded balances; refresh again to verify current allowance. "
+                        : "Balances could not be loaded. "}
+                    {balanceError}
+                </Notice>
+            )}
+            {message && <Notice tone="error">{message}</Notice>}
+            <div
+                className="sheet tablewrap"
+                role="region"
+                aria-label="Monthly spending balances"
+                aria-busy={loading}
+                tabIndex={0}
+            >
+                <table
+                    className="budget-balance-table"
+                    aria-label="Monthly spending limits"
+                >
+                    <thead>
+                        <tr>
+                            <th>Scope</th>
+                            <th>Limit</th>
+                            <th>Spent</th>
+                            <th>Reserved</th>
+                            <th>Available</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {balance?.scopes.map((s) => (
+                            <tr key={s.scope}>
+                                <td>
+                                    {s.scope === "org"
+                                        ? "Organization"
+                                        : s.scope.startsWith("group-")
+                                          ? "Your group"
+                                          : "Your account"}
+                                </td>
+                                <td>{dollars(s.limit_micro_usd)}</td>
+                                <td>{dollars(s.spent_micro_usd)}</td>
+                                <td>{dollars(s.reserved_micro_usd)}</td>
+                                <td>{dollars(s.remaining_micro_usd)}</td>
+                            </tr>
+                        ))}
+                        {!balance &&
+                            loading &&
+                            placeholderScopes.map((scope) => (
+                                <tr key={scope}>
+                                    <td>{scope}</td>
+                                    {[0, 1, 2, 3].map((column) => (
+                                        <td key={column}>
+                                            <span
+                                                className="budget-placeholder"
+                                                aria-hidden="true"
+                                            />
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        {!loading && !balance?.scopes.length && (
+                            <tr>
+                                <td colSpan={5} className="budget-empty-state">
+                                    {balance
+                                        ? "No active budget balances to display."
+                                        : "Refresh balance to try loading your spending limits again."}
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
             </div>
+            <p
+                className="budget-refresh-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+            >
+                {loading
+                    ? balance
+                        ? "Refreshing balances…"
+                        : "Loading balances…"
+                    : balanceError
+                      ? balance
+                          ? "Balances may be out of date."
+                          : "Balance refresh failed."
+                      : balance && updatedAt
+                        ? `Last refreshed at ${updatedAt.toLocaleTimeString()}`
+                        : "No balance data available."}
+            </p>
             <p className="footnote">
                 A blank personal limit inherits its group allowance; zero blocks
                 new requests. Group admins cannot raise the owner-assigned

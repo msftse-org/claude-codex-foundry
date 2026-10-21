@@ -530,6 +530,59 @@ textarea {
 .tablewrap {
     overflow: auto;
 }
+.budget-panel-heading {
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+.budget-policy-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 24px;
+    margin: 24px 0 20px;
+}
+.budget-policy-actions > .primary {
+    margin-left: auto;
+}
+.budget-balance-table {
+    table-layout: fixed;
+    min-width: 560px;
+}
+.budget-balance-table th:not(:first-child),
+.budget-balance-table td:not(:first-child) {
+    text-align: right;
+}
+.budget-balance-table .budget-empty-state {
+    height: 148px;
+    text-align: center;
+    white-space: normal;
+    color: var(--ink-3);
+}
+.budget-refresh-status {
+    min-height: 24px;
+    margin: 8px 0 20px;
+    color: var(--ink-3);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.budget-refresh-spinner {
+    animation: spin 0.8s linear infinite;
+}
+.budget-placeholder {
+    display: inline-block;
+    width: 64px;
+    height: 12px;
+    border-radius: 4px;
+    background: var(--rule);
+}
+@media (max-width: 640px) {
+    .budget-policy-actions > .primary {
+        margin-left: 0;
+    }
+    .budget-policy-actions .actions {
+        gap: 12px;
+    }
+}
 table {
     width: 100%;
     border-collapse: collapse;
