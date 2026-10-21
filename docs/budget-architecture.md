@@ -18,7 +18,10 @@ flowchart TD
     C -->|Request and user token| A["Standard Azure API Management"]
     A -->|APIM managed identity and verified user ID| B["Budget service: Azure Functions"]
     B <-->|Snapshot selected by live digest| K["Local verified policy cache"]
-    K -->|Miss: download and verify hash| P["Private Blob Storage"]
+    K -->|Miss: optional machine-only lookup| S["APIM shared snapshot cache"]
+    S -->|Miss: APIM managed identity| O["Portal snapshot origin"]
+    O -->|Private managed-identity read| P["Private Blob Storage"]
+    K -.->|Cache unavailable: verify exact Blob version| P
     B <-->|Fresh policy reference; atomic reserve and settle| T["Azure Table Storage: BudgetLedger"]
     B -->|Only after reservation succeeds| F["Azure Foundry model"]
     F -->|Response stream and token usage| B
@@ -118,11 +121,11 @@ The active digest is the authority after an uncertain publication result. A `bud
 
 ## How APIM caching and Azure Table work together
 
-APIM and the budget service have different responsibilities. APIM validates identity and forwards every governed request to the budget service. The service caches immutable configuration while Azure Table remains the authority for activation and money. There is no cached APIM "allow" decision and no parallel fast path directly to Foundry.
+APIM and the budget service have different responsibilities. APIM validates identity and forwards every governed inference request to the budget service. The service uses a local L1 snapshot cache and can use APIM's shared L2 value cache on a local miss. Azure Table remains the authority for activation and money. There is no cached APIM "allow" decision and no parallel fast path directly to Foundry.
 
 | Layer | What can be reused | What stays authoritative and fresh |
 | --- | --- | --- |
-| APIM | Native managed-identity token caching and token-validation signing-key metadata. No custom governance-value cache is installed. | Validate each incoming token and forward each request through the budget service. |
+| APIM | Native authentication caches plus optional `cache-lookup-value` / `cache-store-value` for immutable snapshot JSON. | Authenticate machine readers before any snapshot lookup; forward every inference request through the budget service. |
 | Budget Function memory | Hash-verified immutable policy bytes, including published membership, model grants, limits and rates. | Select the digest from the live Table row; check membership, model access, price expiry and request bounds for each request. |
 | Azure Table `BudgetLedger` | No application cache for active policy, pause state, spend, reservations or admission results. | Conditional transactions check the active version and reserve organization, group and personal allowance together. |
 | Blob Storage | Durable, content-addressed policy documents. | A cache miss must download and verify the requested document; publication checks an existing durable object even when the local cache is warm. |
@@ -133,6 +136,8 @@ sequenceDiagram
     participant Budget as Budget Function
     participant Table as Azure Table
     participant Cache as Local policy cache
+    participant Shared as APIM shared snapshot cache
+    participant Origin as Portal machine-only origin
     participant Blob as Private Blob Storage
     participant Model as Foundry
     APIM->>Budget: Verified caller through APIM managed identity
@@ -140,8 +145,16 @@ sequenceDiagram
     Table-->>Budget: Current digest
     Budget->>Cache: Get immutable snapshot by digest
     alt Cold or evicted snapshot
-        Cache->>Blob: Download that digest
-        Blob-->>Cache: JSON document
+        Cache->>Shared: Runtime identity; exact digest
+        alt Shared cache miss
+            Shared->>Origin: APIM managed identity; exact digest
+            Origin->>Blob: Read verified immutable document
+            Blob-->>Origin: JSON document
+            Origin-->>Shared: Snapshot; no prompts or usage counters
+            Shared->>Shared: Request asynchronous value-cache storage
+        end
+        Shared-->>Cache: Snapshot and hit/miss diagnostic
+        Note over Cache,Blob: If L2 fails or is corrupt, read the exact Blob version directly
         Cache->>Cache: Verify hash before retaining bytes
     end
     Cache-->>Budget: Independent policy document
@@ -154,19 +167,31 @@ sequenceDiagram
     end
 ```
 
-Each `Snapshots` client has an LRU cache of at most **eight documents and 8 MiB of serialized bytes**. Runtime and portal processes have independent caches; they do not share state across storage clients, workers or instances. There is no Redis resource or new network permission. Concurrent misses for the same digest share one download; a slow download does not hold the cache lock for another digest. Each caller receives a fresh JSON parse, so modifying a returned dictionary cannot alter cached grants.
+Each `Snapshots` client has an LRU cache of at most **eight documents and 8 MiB of serialized bytes**. Local entries are independent across storage clients, workers and instances. Optional APIM L2 entries are shared by those runtime instances. There is no new Redis resource or storage network permission. Concurrent local misses for the same digest share one load; a slow load does not hold the cache lock for another digest. Each caller receives a fresh JSON parse, so modifying a returned dictionary cannot alter cached grants.
 
-Only successful, hash-verified reads are retained. Oversized documents remain usable but are not retained. Failed or corrupt reads are not cached, and the reader never substitutes another version. Cache eviction, process restart or scaling only causes a fresh download. The byte limit covers retained document payloads, not total process memory or temporary request objects. `Snapshots.cache_info()` exposes process-local counters for diagnostics and tests; it is not a public HTTP endpoint.
+Only successful, hash-verified reads are retained locally. Oversized documents remain usable but are not retained locally. Shared documents are limited to 1 MiB, below APIM v2's buffered-response ceiling; larger policies use the direct Blob path. L2 storage is requested only for successful origin responses. The runtime verifies every L2 response against the digest selected from Table; a corrupt or unavailable L2 causes a direct, hash-verified Blob read, never a substitute version. The byte limit covers retained document payloads, not total process memory or temporary request objects.
+
+The shared cache key includes tenant, organization, APIM service/API and policy hash. Its one-hour retention is an eviction setting, not a permission-staleness window. Publication changes the authoritative digest immediately, selecting a different cache entry. APIM storage is asynchronous, so simultaneous cold callers may miss more than once; correctness never depends on cache-fill completion. A per-runtime-identity rate limit protects the origin on cache loss. Shared-cache errors, timeouts, throttling or integrity failures fall back to the exact private Blob version. The extra cold-path lookup can add latency, so measure real warm/scale-out behavior before claiming an organization-scale performance target.
+
+The machine-only `policy-snapshot` operation permits only explicitly configured runtime identity object IDs with the dedicated application audience; delegated user tokens are rejected even on a hit. It forwards misses using the APIM identity to a separate origin handler on the budget portal. That handler verifies the exact APIM identity and always uses its direct Blob-backed client, preventing recursion into APIM or starvation of the inference app's own HTTP workers. Published snapshots contain organization membership and grants; treat cache access as privileged. Ordinary users, including portal owners using user tokens, cannot download these documents through the machine endpoint.
+
+`GET /claude-budget-preview/v1/policy-cache/status` is an authenticated owner/organization-administrator diagnostic. It reports **current-worker** local hits/misses, shared hit/miss responses and shared failures, with no documents, tokens or identities. Reading it performs normal live authorization and therefore itself touches the local cache. It is not a fleet-wide metric; counters reset on process replacement. APIM traces from source `budget-policy-cache` report shared hits or requested fills without recording the document. Prompts, model responses, active-policy pointers, monetary counters and admission decisions are never placed in this cache.
 
 There is no freshness TTL for immutable documents. **Publication changes the live digest**, so a warm previous version cannot authorize a new admission. Admission also checks the policy row's ETag in the transaction: publication between the initial read and reservation causes contention or rejection rather than dispatch under a stale policy. A reservation committed before publication remains valid and settles normally. Rate expiry is checked on every inference even when its document is cached. Portal drafts and portal administration roles are not cached by this feature.
 
-A warm snapshot can be used during a Blob outage only when the live Table policy and admission checks still succeed. A missing or corrupt newly active snapshot blocks admission even if an older snapshot is warm. A Table outage or pause blocks admission regardless of cache contents. Deleting a Blob is not a revocation mechanism: publish a policy change or use the authoritative pause mechanism. Storage/code administrators remain inside the trust boundary.
+A verified local/shared snapshot can be used during a Blob outage only when the live Table policy and admission checks still succeed. A missing or corrupt newly active snapshot in all available sources blocks admission even if an older snapshot is warm. A Table outage or pause blocks admission regardless of cache contents. Deleting a Blob is not a revocation mechanism: publish a policy change or use the authoritative pause mechanism. Storage/code/APIM administrators remain inside the trust boundary.
 
 This is a constrained use of [Azure's cache-aside pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside): the cached document is immutable, and the security-sensitive active reference is always read from the primary store. APIM's [built-in value cache is volatile](https://learn.microsoft.com/en-us/azure/api-management/cache-lookup-value-policy) and cannot replace the Table transaction. APIM [managed-identity tokens are cached until expiry](https://learn.microsoft.com/en-us/azure/api-management/authentication-managed-identity-policy); this does not cache a person's budget approval.
 
-Do not cache remaining allowance or an admission decision in APIM, use a TTL to delay permission revocation, or send requests directly to Foundry after a cache hit. Adding a second policy-document cache in APIM would duplicate data without removing the required backend transaction, so this implementation keeps that cache in the Function. Semantic prompt/answer caching is disabled and independent of this feature.
+Do not cache remaining allowance or an admission decision in APIM, use a TTL to delay permission revocation, or send requests directly to Foundry after a cache hit. L2 reduces repeated snapshot loads across runtime workers; it does not remove the required backend transaction. Semantic prompt/answer caching is disabled and independent of this feature.
 
 Do not dual-write monetary counters to APIM and Table, or race a cached approval against the database and accept whichever returns first. Publication persists the Blob before conditionally activating its Table reference; it does not require synchronizing cache writes with that transaction. Cache population is optional acceleration after selecting an authoritative version, never a second permission or spending authority.
+
+### Where to inspect the APIM cache policy
+
+In your deployed APIM service, open **APIs → Claude via Azure Foundry — budget preview → Design → Policy snapshot cache (runtime identities only)**. Its operation ID is `policy-snapshot`, path `/v1/policy-snapshots/{digest}`. Open that operation's policy code to see `cache-lookup-value` in inbound and `cache-store-value` in outbound. The main Messages/Responses policies still call the budget service for every inference. The shared operation is hosted under the Claude budget API but serves the common policy for both providers.
+
+The default governed API IDs are **`claude-budget-preview`** and **`codex-budget-preview`**. Baseline `claude-foundry` / `codex-foundry` and the older `claude-foundry-preview` API can coexist in an evaluation; those paths are separate from the enforced ledger. Look at the API ID/path, not only the display label. See [deployment and cache-backend selection](../budget/README.md#optional-shared-apim-policy-cache).
 
 ## Where budgets, usage and conversations are stored
 

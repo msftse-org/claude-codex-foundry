@@ -698,10 +698,16 @@ def test_snapshot_download_does_not_lock_other_versions(policy, snapshot_store):
         "new_blob_corrupt",
     ],
 )
+@pytest.mark.parametrize("shared", [False, True])
 def test_warm_policy_cache_cannot_bypass_live_admission(
-    policy, ledger, snapshot_store, monkeypatch, change
+    policy, ledger, snapshot_store, monkeypatch, change, shared
 ):
-    store, documents, _ = snapshot_store(policy)
+    store, documents, _ = snapshot_store(
+        policy,
+        shared_cache=SimpleNamespace(get=lambda digest: (json.dumps(policy).encode(), "hit"))
+        if shared
+        else None,
+    )
     store.get(policy_digest(policy))
     changed = copy.deepcopy(policy)
     if change == "suspend":
@@ -832,3 +838,109 @@ def test_apim_never_caches_admission_or_semantic_answers(org, provider):
     assert not any("cache" in element.tag for element in root.iter())
     assert root.find(".//return-response") is None
     assert root.find("outbound/set-header[@name='Cache-Control']/value").text == "no-store"
+
+
+@pytest.mark.parametrize("result", ["hit", "miss"])
+def test_shared_snapshot_cache_is_verified_and_reused_locally(policy, snapshot_store, result):
+    shared = SimpleNamespace(get=lambda digest: (json.dumps(policy).encode(), result))
+    store, _, downloads = snapshot_store(policy, shared_cache=shared)
+    assert store.get(policy_digest(policy)) == policy
+    assert store.get(policy_digest(policy)) == policy
+    info = store.cache_info()
+    assert downloads == [] and info["shared_reads"] == 1 and info["hits"] == 1
+    assert info["shared_hits"] == (result == "hit")
+
+
+@pytest.mark.parametrize("failure", ["outage", "corrupt", "wrong_version"])
+def test_shared_cache_failure_falls_back_only_to_verified_durable_version(
+    policy, snapshot_store, failure
+):
+    def get(digest):
+        if failure == "outage":
+            raise TimeoutError("Shared cache unavailable")
+        return (b"not-json" if failure == "corrupt" else b"{}"), "hit"
+
+    store, documents, downloads = snapshot_store(policy, shared_cache=SimpleNamespace(get=get))
+    digest = policy_digest(policy)
+    assert store.get(digest) == policy
+    assert len(downloads) == 1 and store.cache_info()["shared_failures"] == 1
+    fresh, documents, _ = snapshot_store(policy, shared_cache=SimpleNamespace(get=get))
+    documents[digest + ".json"] = b"{}"
+    with pytest.raises(ValueError, match="integrity"):
+        fresh.get(digest)
+    assert fresh.cache_info()["entries"] == 0
+
+
+@pytest.mark.parametrize("status", [200, 401, 403, 429, 500])
+def test_apim_snapshot_client_uses_machine_token_and_does_not_follow_redirects(policy, status):
+    from claude_foundry.portal.policy_cache import ApimPolicyCache
+
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            status, content=json.dumps(policy).encode(), headers={"x-budget-policy-cache": "hit"}
+        )
+
+    token_scopes = []
+
+    def token(scope):
+        token_scopes.append(scope)
+        return SimpleNamespace(token="synthetic-machine-token")
+
+    audience = "api://" + str(uuid4())
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        shared = ApimPolicyCache(
+            "https://test.azure-api.net/claude-budget-preview/v1/policy-snapshots",
+            audience,
+            SimpleNamespace(get_token=token),
+            client,
+        )
+        if status == 200:
+            assert json.loads(shared.get(policy_digest(policy))[0]) == policy
+        else:
+            with pytest.raises(httpx.HTTPStatusError):
+                shared.get(policy_digest(policy))
+    assert len(calls) == 1 and calls[0].headers["authorization"] == "Bearer synthetic-machine-token"
+    assert token_scopes == [audience + "/.default"]
+
+
+def test_shared_snapshot_size_bound(policy):
+    from claude_foundry.portal.policy_cache import MAX_SHARED_BYTES, ApimPolicyCache
+
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, content=b"x" * (MAX_SHARED_BYTES + 1))
+        )
+    ) as client:
+        shared = ApimPolicyCache(
+            "https://test.azure-api.net/claude-budget-preview/v1/policy-snapshots",
+            "api://" + str(uuid4()),
+            SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="test")),
+            client,
+        )
+        with pytest.raises(ValueError, match="too large"):
+            shared.get(policy_digest(policy))
+
+
+@pytest.mark.parametrize(
+    "role", ["owner", "admin", "group_admin", "developer", "billing", "auditor"]
+)
+def test_cache_diagnostics_require_current_organization_admin(policy, ledger, snapshot_store, role):
+    from fastapi import HTTPException
+
+    policy["members"][0]["role"] = role
+    ledger.activate(policy)
+    store, _, _ = snapshot_store(policy)
+    proxy = BudgetProxy(
+        ledger, store, None, "https://test.services.ai.azure.com", {}, client=object()
+    )
+    if role in {"owner", "admin"}:
+        assert (
+            asyncio.run(proxy.cache_status(policy["members"][0]["id"]))["scope"] == "current_worker"
+        )
+    else:
+        with pytest.raises(HTTPException) as denied:
+            asyncio.run(proxy.cache_status(policy["members"][0]["id"]))
+        assert denied.value.status_code == 403
