@@ -1,6 +1,9 @@
 """Immutable reviewed snapshots; publication and admission share a ledger barrier."""
 
 import json
+import threading
+from collections import OrderedDict
+from concurrent.futures import Future
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import ContainerClient
@@ -73,10 +76,35 @@ def snapshot(state):
 
 
 class Snapshots:
-    def __init__(self, account, credential):
+    """Cache verified immutable documents, never the ledger's active reference.
+
+    Each instance owns its cache, so storage accounts cannot share entries. Serialized
+    bytes prevent callers from modifying cached grants. Coalesce concurrent downloads
+    of one digest without holding the cache lock during network I/O.
+    """
+
+    def __init__(self, account, credential, *, max_entries=8, max_bytes=8 * 1024 * 1024):
+        if any(type(v) is not int or v < 0 for v in (max_entries, max_bytes)):
+            raise ValueError("Snapshot cache limits must be nonnegative integers")
         self.blobs = ContainerClient(
             f"https://{account}.blob.core.windows.net", "budget-policies", credential=credential
         )
+        self._max_entries, self._max_bytes = max_entries, max_bytes
+        self._cache, self._loading = OrderedDict(), {}
+        self._lock = threading.Lock()
+        self._bytes = self._hits = self._misses = self._waits = self._evictions = 0
+
+    def cache_info(self):
+        """Process-local diagnostics only; no identities, policy hashes or documents."""
+        with self._lock:
+            return {
+                "entries": len(self._cache),
+                "bytes": self._bytes,
+                "hits": self._hits,
+                "misses": self._misses,
+                "waits": self._waits,
+                "evictions": self._evictions,
+            }
 
     def put(self, policy):
         digest = policy_digest(policy)
@@ -85,17 +113,61 @@ class Snapshots:
                 digest + ".json", json.dumps(policy, sort_keys=True), overwrite=False
             )
         except ResourceExistsError:
-            if self.get(digest) != policy:
+            # Publication must verify the durable object, even if a prior read is warm.
+            if json.loads(self._download(digest)) != policy:
                 raise ValueError("Immutable budget policy does not match its digest") from None
         return digest
 
     def get(self, digest):
-        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(c not in "0123456789abcdef" for c in digest)
+        ):
             raise ValueError("Invalid policy digest")
-        policy = json.loads(self.blobs.download_blob(digest + ".json").readall())
+        with self._lock:
+            raw = self._cache.get(digest)
+            if raw is not None:
+                self._cache.move_to_end(digest)
+                self._hits += 1
+            else:
+                pending = self._loading.get(digest)
+                leader = pending is None
+                if leader:
+                    pending = self._loading[digest] = Future()
+                    self._misses += 1
+                else:
+                    self._waits += 1
+        if raw is not None:
+            return json.loads(raw)
+        if leader:
+            try:
+                raw = self._download(digest)
+                with self._lock:
+                    # Oversized documents still work, but are never retained in cache.
+                    if self._max_entries and len(raw) <= self._max_bytes:
+                        self._cache[digest] = raw
+                        self._bytes += len(raw)
+                        while len(self._cache) > self._max_entries or self._bytes > self._max_bytes:
+                            _, evicted = self._cache.popitem(last=False)
+                            self._bytes -= len(evicted)
+                            self._evictions += 1
+                    del self._loading[digest]
+                pending.set_result(raw)
+            except BaseException as error:
+                with self._lock:
+                    self._loading.pop(digest, None)
+                pending.set_exception(error)
+                raise
+        # A fresh parse isolates each caller, including concurrent miss waiters.
+        return json.loads(pending.result())
+
+    def _download(self, digest):
+        raw = self.blobs.download_blob(digest + ".json").readall()
+        policy = json.loads(raw)
         if policy_digest(policy) != digest:
             raise ValueError("Published budget policy integrity check failed")
-        return policy
+        return raw
 
 
 def group_publication(active, draft, actor):

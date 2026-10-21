@@ -17,8 +17,9 @@ flowchart TD
     E["Microsoft Entra ID"] -->|User token| C["Claude / Codex"]
     C -->|Request and user token| A["Standard Azure API Management"]
     A -->|APIM managed identity and verified user ID| B["Budget service: Azure Functions"]
-    B -->|Read published permissions and rates| P["Private Blob Storage"]
-    B <-->|Reserve and settle allowance| T["Azure Table Storage: BudgetLedger"]
+    B <-->|Snapshot selected by live digest| K["Local verified policy cache"]
+    K -->|Miss: download and verify hash| P["Private Blob Storage"]
+    B <-->|Fresh policy reference; atomic reserve and settle| T["Azure Table Storage: BudgetLedger"]
     B -->|Only after reservation succeeds| F["Azure Foundry model"]
     F -->|Response stream and token usage| B
     B -->|Response stream| A
@@ -61,7 +62,7 @@ The user cannot choose another person's identity or group by sending headers. AP
 
 The Function validates the incoming token's signature, issuer, tenant, audience, lifetime and exact APIM managed-identity object ID. It rejects delegated user tokens at this backend. Only after that check does it trust the identity headers supplied by APIM.
 
-It reads the active policy digest from `BudgetLedger`, loads the corresponding immutable Blob snapshot and verifies its hash. From that policy it resolves the active member, their group and their model grants. Group identity never comes from a workstation-supplied value.
+It reads the active policy digest and pause state from `BudgetLedger` on every authorization. The matching immutable snapshot is loaded from the process-local policy cache, or downloaded from Blob Storage and hash-verified on a miss. From that policy it resolves the active member, their group and their model grants. Group identity never comes from a workstation-supplied value. The active digest and pause state are never cached.
 
 ### 4. The service validates the request and reserves its maximum charge
 
@@ -115,6 +116,56 @@ Publication validates the reviewed revision and permissions, writes an immutable
 
 The active digest is the authority after an uncertain publication result. A `budget.publish_requested` audit event records intent, not proof that activation succeeded. The Blob audit and Table activation are separate writes; inspect the active policy before retrying an uncertain operation.
 
+## How APIM caching and Azure Table work together
+
+APIM and the budget service have different responsibilities. APIM validates identity and forwards every governed request to the budget service. The service caches immutable configuration while Azure Table remains the authority for activation and money. There is no cached APIM "allow" decision and no parallel fast path directly to Foundry.
+
+| Layer | What can be reused | What stays authoritative and fresh |
+| --- | --- | --- |
+| APIM | Native managed-identity token caching and token-validation signing-key metadata. No custom governance-value cache is installed. | Validate each incoming token and forward each request through the budget service. |
+| Budget Function memory | Hash-verified immutable policy bytes, including published membership, model grants, limits and rates. | Select the digest from the live Table row; check membership, model access, price expiry and request bounds for each request. |
+| Azure Table `BudgetLedger` | No application cache for active policy, pause state, spend, reservations or admission results. | Conditional transactions check the active version and reserve organization, group and personal allowance together. |
+| Blob Storage | Durable, content-addressed policy documents. | A cache miss must download and verify the requested document; publication checks an existing durable object even when the local cache is warm. |
+
+```mermaid
+sequenceDiagram
+    participant APIM as Standard APIM
+    participant Budget as Budget Function
+    participant Table as Azure Table
+    participant Cache as Local policy cache
+    participant Blob as Private Blob Storage
+    participant Model as Foundry
+    APIM->>Budget: Verified caller through APIM managed identity
+    Budget->>Table: Read active digest and pause state
+    Table-->>Budget: Current digest
+    Budget->>Cache: Get immutable snapshot by digest
+    alt Cold or evicted snapshot
+        Cache->>Blob: Download that digest
+        Blob-->>Cache: JSON document
+        Cache->>Cache: Verify hash before retaining bytes
+    end
+    Cache-->>Budget: Independent policy document
+    Budget->>Budget: Check current grants, expiry and request bounds
+    Budget->>Table: Conditional version check and all three reservations
+    alt Policy changed, paused, insufficient allowance or storage unavailable
+        Budget-->>APIM: Refuse; no model dispatch
+    else Reservation committed
+        Budget->>Model: Dispatch once
+    end
+```
+
+Each `Snapshots` client has an LRU cache of at most **eight documents and 8 MiB of serialized bytes**. Runtime and portal processes have independent caches; they do not share state across storage clients, workers or instances. There is no Redis resource or new network permission. Concurrent misses for the same digest share one download; a slow download does not hold the cache lock for another digest. Each caller receives a fresh JSON parse, so modifying a returned dictionary cannot alter cached grants.
+
+Only successful, hash-verified reads are retained. Oversized documents remain usable but are not retained. Failed or corrupt reads are not cached, and the reader never substitutes another version. Cache eviction, process restart or scaling only causes a fresh download. The byte limit covers retained document payloads, not total process memory or temporary request objects. `Snapshots.cache_info()` exposes process-local counters for diagnostics and tests; it is not a public HTTP endpoint.
+
+There is no freshness TTL for immutable documents. **Publication changes the live digest**, so a warm previous version cannot authorize a new admission. Admission also checks the policy row's ETag in the transaction: publication between the initial read and reservation causes contention or rejection rather than dispatch under a stale policy. A reservation committed before publication remains valid and settles normally. Rate expiry is checked on every inference even when its document is cached. Portal drafts and portal administration roles are not cached by this feature.
+
+A warm snapshot can be used during a Blob outage only when the live Table policy and admission checks still succeed. A missing or corrupt newly active snapshot blocks admission even if an older snapshot is warm. A Table outage or pause blocks admission regardless of cache contents. Deleting a Blob is not a revocation mechanism: publish a policy change or use the authoritative pause mechanism. Storage/code administrators remain inside the trust boundary.
+
+This is a constrained use of [Azure's cache-aside pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/cache-aside): the cached document is immutable, and the security-sensitive active reference is always read from the primary store. APIM's [built-in value cache is volatile](https://learn.microsoft.com/en-us/azure/api-management/cache-lookup-value-policy) and cannot replace the Table transaction. APIM [managed-identity tokens are cached until expiry](https://learn.microsoft.com/en-us/azure/api-management/authentication-managed-identity-policy); this does not cache a person's budget approval.
+
+Do not cache remaining allowance or an admission decision in APIM, use a TTL to delay permission revocation, or send requests directly to Foundry after a cache hit. Adding a second policy-document cache in APIM would duplicate data without removing the required backend transaction, so this implementation keeps that cache in the Function. Semantic prompt/answer caching is disabled and independent of this feature.
+
 ## Where budgets, usage and conversations are stored
 
 The budget templates use a customer-owned Azure Storage account. Names vary by deployment; the account is supplied as `BUDGET_STORAGE_ACCOUNT`.
@@ -123,6 +174,7 @@ The budget templates use a customer-owned Azure Storage account. Names vary by d
 | --- | --- | --- |
 | Draft budgets, members, groups, rates and administrative audit | Blob `portal-state/organization.json` | Conditional saves and Blob versioning preserve previous state versions. |
 | Published permissions, limits and enforcement rates | Blob `budget-policies/<policy-hash>.json` | Content-addressed snapshots; the reader verifies the hash. |
+| Verified policy acceleration | Budget runtime / portal process memory | Bounded, disposable snapshots selected by the live digest; no monetary counters or prompts. |
 | Active policy and pause state | `BudgetLedger`, policy row | Selects the snapshot used for admission. |
 | Monthly spend and reserved allowance | `BudgetLedger`, organization/group/user rows | Shared across Claude and Codex; these are monetary counters, not full message records. |
 | Request reservation, model, user/group, charge and settlement state | `BudgetLedger`, per-request rows | Retained for accounting and reconciliation; no automatic expiration refunds. |

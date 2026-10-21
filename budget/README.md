@@ -4,6 +4,8 @@ This unreleased add-on implements the [approved spending hierarchy](../docs/budg
 
 Before deploying, read the [Azure architecture and full request-flow diagram](../docs/budget-architecture.md): which service checks identity and allowance, where data is stored, how publication works, and what happens when a dependency fails.
 
+The runtime and budget-connected portal include a bounded in-memory cache for immutable, hash-verified policy snapshots. [The cache design](../docs/budget-architecture.md#how-apim-caching-and-azure-table-work-together) keeps the active policy and all monetary checks in Azure Table; APIM never caches budget approvals. It requires no additional Azure resources or permissions. Deploy both application packages for a cache-code update; existing policy, spend, reservations and drafts persist. Semantic prompt caching is not enabled.
+
 Do not distribute its client profile before the release acceptance tests pass. The template is an evaluation deployment, not an automatic customer migration.
 
 ## Prerequisites
