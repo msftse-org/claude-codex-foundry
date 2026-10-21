@@ -166,6 +166,8 @@ This is a constrained use of [Azure's cache-aside pattern](https://learn.microso
 
 Do not cache remaining allowance or an admission decision in APIM, use a TTL to delay permission revocation, or send requests directly to Foundry after a cache hit. Adding a second policy-document cache in APIM would duplicate data without removing the required backend transaction, so this implementation keeps that cache in the Function. Semantic prompt/answer caching is disabled and independent of this feature.
 
+Do not dual-write monetary counters to APIM and Table, or race a cached approval against the database and accept whichever returns first. Publication persists the Blob before conditionally activating its Table reference; it does not require synchronizing cache writes with that transaction. Cache population is optional acceleration after selecting an authoritative version, never a second permission or spending authority.
+
 ## Where budgets, usage and conversations are stored
 
 The budget templates use a customer-owned Azure Storage account. Names vary by deployment; the account is supplied as `BUDGET_STORAGE_ACCOUNT`.
