@@ -4,7 +4,28 @@ This unreleased add-on implements the [approved spending hierarchy](../docs/budg
 
 Before deploying, read the [Azure architecture and full request-flow diagram](../docs/budget-architecture.md): which service checks identity and allowance, where data is stored, how publication works, and what happens when a dependency fails.
 
-The runtime and budget-connected portal include a bounded in-memory cache for immutable, hash-verified policy snapshots. [The cache design](../docs/budget-architecture.md#how-apim-caching-and-azure-table-work-together) keeps the active policy and all monetary checks in Azure Table; APIM never caches budget approvals. It requires no additional Azure resources or permissions. Deploy both application packages for a cache-code update; existing policy, spend, reservations and drafts persist. Semantic prompt caching is not enabled.
+The runtime and budget-connected portal include a bounded in-memory cache for immutable, hash-verified policy snapshots. An [optional APIM shared cache](#optional-shared-apim-policy-cache) reuses those snapshots across runtime workers. [The cache design](../docs/budget-architecture.md#how-apim-caching-and-azure-table-work-together) keeps the active policy and all monetary checks in Azure Table; APIM never caches budget approvals. Deploy both application packages for a cache-code update; existing policy, spend, reservations and drafts persist. Semantic prompt caching is not enabled.
+
+## Optional shared APIM policy cache
+
+Use APIM's built-in cache on a supported tier, such as Basic v2; Consumption requires a configured external cache. No Redis resource is created by this repository. The default cache backend is `internal`. `external` requires an existing APIM external-cache configuration; `prefer-external` uses that configuration when present and otherwise the built-in cache. Configure external Redis TLS, credentials, network isolation and retention through your organization's standard infrastructure process.
+
+1. Deploy the portal package with `policyCacheAudience` equal to the runtime's dedicated budget audience and `policyCacheApimPrincipalId` equal to the APIM identity. These set `BUDGET_POLICY_CACHE_AUDIENCE` and `BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID`. The origin is otherwise disabled. It accepts only that APIM application identity, never portal user tokens.
+2. Install the machine-only operation into the already-owned Claude budget API, allowing the runtime identity's **object ID** as its reader:
+
+```bash
+uv run python scripts/deploy_policy_cache.py --config .local/organization.json \
+  --api-id claude-budget-preview \
+  --origin-url https://BUDGET_PORTAL_NAME.azurewebsites.net \
+  --audience api://BUDGET_APPLICATION_ID \
+  --reader-object-id BUDGET_RUNTIME_IDENTITY_OBJECT_ID \
+  --organization-id LEDGER_ORGANIZATION_UUID --caching-type internal
+```
+
+3. Set runtime template parameter `policyCacheUrl` (app setting `BUDGET_POLICY_CACHE_URL`) to `https://YOUR_APIM.azure-api.net/claude-budget-preview/v1/policy-snapshots`, then deploy/restart the runtime. It authenticates to APIM with its managed identity and the existing budget audience. The portal origin uses its existing private Blob access; APIM needs no Blob role or private-storage network access.
+4. Verify an initial shared miss, a subsequent shared hit from another cold runtime worker, unchanged authoritative balances and budget refusals. The owner/admin-only `/claude-budget-preview/v1/policy-cache/status` endpoint reports current-worker counters, not organization-wide totals. Azure APIM operation **Policy snapshot cache (runtime identities only)** contains the actual cache policy; model inference operations remain uncached.
+
+The shared operation rejects user tokens before cache lookup. The origin is separate from the inference app, avoiding a cache-miss callback into a worker waiting on itself. A shared-cache failure falls back to the runtime's exact-version private Blob read. Clearing `BUDGET_POLICY_CACHE_URL` disables L2 without changing published policy or ledger state; existing snapshots expire from APIM normally. Do not purge or rewrite counters to test cache behavior.
 
 Do not distribute its client profile before the release acceptance tests pass. The template is an evaluation deployment, not an automatic customer migration.
 

@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from claude_foundry.portal.budget_ledger import AzureRows, BudgetDenied, Ledger
 from claude_foundry.portal.budget_policy import Snapshots, snapshot
 from claude_foundry.portal.budget_proxy import MAX_BODY, BudgetProxy, GatewayIdentity
+from claude_foundry.portal.policy_cache import ApimPolicyCache
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 credential = ManagedIdentityCredential(client_id=os.environ["AZURE_CLIENT_ID"])
@@ -24,7 +25,15 @@ identity = GatewayIdentity(
 account = os.environ["BUDGET_STORAGE_ACCOUNT"]
 proxy = BudgetProxy(
     Ledger(AzureRows(account, os.environ["BUDGET_ORGANIZATION_ID"], credential)),
-    Snapshots(account, credential),
+    Snapshots(
+        account,
+        credential,
+        shared_cache=ApimPolicyCache(
+            os.environ["BUDGET_POLICY_CACHE_URL"], os.environ["BUDGET_AUDIENCE"], credential
+        )
+        if os.getenv("BUDGET_POLICY_CACHE_URL")
+        else None,
+    ),
     credential,
     os.environ["BUDGET_FOUNDRY_ENDPOINT"],
     json.loads(os.environ["BUDGET_DEPLOYMENTS_JSON"]),
@@ -47,6 +56,11 @@ async def inference(req: Request) -> StreamingResponse:
         provider, operation = req.path_params["provider"], req.path_params["operation"]
         principal = req.headers.get("x-budget-principal-id", "")
         request_id = req.headers.get("x-budget-request-id", "")
+        if req.method == "GET" and operation == "cache-status":
+            return JSONResponse(
+                await proxy.cache_status(principal),
+                headers={"Cache-Control": "no-store"},
+            )
         if req.method == "GET" and operation == "budget":
             policy, member, group = await proxy.authorize(principal)
             result = await asyncio.to_thread(proxy.ledger.balances, policy, principal)

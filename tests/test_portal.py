@@ -983,6 +983,61 @@ def test_budget_service_accepts_only_dedicated_gateway_identity(org, key, monkey
             identity.validate("Bearer " + token(org, key, **{**common, **bad}))
 
 
+def test_snapshot_origin_is_machine_only_and_does_not_use_portal_role_claims(
+    org, state, key, monkeypatch, tmp_path
+):
+    gateway, audience = str(uuid4()), "api://" + str(uuid4())
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    monkeypatch.setenv("PORTAL_CLIENT_ID", CLIENT)
+    monkeypatch.setenv("BUDGET_POLICY_CACHE_AUDIENCE", audience)
+    monkeypatch.setenv("BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID", gateway)
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda self, value: SimpleNamespace(key=key.public_key()),
+    )
+    reads = []
+
+    def get(digest):
+        reads.append(digest)
+        return {"schema": 1, "members": []}
+
+    app = create_app(
+        org,
+        LocalStore(tmp_path / "state.json", state),
+        credential=object(),
+        local=False,
+        budget=(None, SimpleNamespace(get=get)),
+    )
+    path = "/api/internal/budget-policies/" + "a" * 64
+    with TestClient(app) as client:
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=headers(org, key)).status_code == 401
+        for invalid in [
+            {"oid": OWNER, "scp": None},
+            {"oid": gateway, "scp": "access_as_user"},
+            {"oid": gateway, "scp": None, "tid": str(uuid4())},
+        ]:
+            assert (
+                client.get(
+                    path,
+                    headers={"Authorization": "Bearer " + token(org, key, aud=audience, **invalid)},
+                ).status_code
+                == 401
+            )
+        assert reads == []
+        auth = {"Authorization": "Bearer " + token(org, key, oid=gateway, aud=audience, scp=None)}
+        result = client.get(path, headers=auth)
+        assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+        assert client.get("/api/internal/budget-policies/invalid", headers=auth).status_code == 400
+        assert reads == ["a" * 64]
+
+
+def test_snapshot_origin_disabled_by_default(app):
+    with TestClient(app) as client:
+        assert client.get("/api/internal/budget-policies/" + "a" * 64).status_code == 404
+
+
 def test_local_navigation_is_allowed_but_cross_site_api_stays_blocked(
     org, state, monkeypatch, tmp_path
 ):

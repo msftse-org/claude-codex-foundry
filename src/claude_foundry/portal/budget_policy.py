@@ -83,7 +83,9 @@ class Snapshots:
     of one digest without holding the cache lock during network I/O.
     """
 
-    def __init__(self, account, credential, *, max_entries=8, max_bytes=8 * 1024 * 1024):
+    def __init__(
+        self, account, credential, *, max_entries=8, max_bytes=8 * 1024 * 1024, shared_cache=None
+    ):
         if any(type(v) is not int or v < 0 for v in (max_entries, max_bytes)):
             raise ValueError("Snapshot cache limits must be nonnegative integers")
         self.blobs = ContainerClient(
@@ -93,6 +95,8 @@ class Snapshots:
         self._cache, self._loading = OrderedDict(), {}
         self._lock = threading.Lock()
         self._bytes = self._hits = self._misses = self._waits = self._evictions = 0
+        self._shared = shared_cache
+        self._shared_reads = self._shared_hits = self._shared_misses = self._shared_failures = 0
 
     def cache_info(self):
         """Process-local diagnostics only; no identities, policy hashes or documents."""
@@ -104,6 +108,11 @@ class Snapshots:
                 "misses": self._misses,
                 "waits": self._waits,
                 "evictions": self._evictions,
+                "shared_enabled": self._shared is not None,
+                "shared_reads": self._shared_reads,
+                "shared_hits": self._shared_hits,
+                "shared_misses": self._shared_misses,
+                "shared_failures": self._shared_failures,
             }
 
     def put(self, policy):
@@ -142,7 +151,7 @@ class Snapshots:
             return json.loads(raw)
         if leader:
             try:
-                raw = self._download(digest)
+                raw = self._load(digest)
                 with self._lock:
                     # Oversized documents still work, but are never retained in cache.
                     if self._max_entries and len(raw) <= self._max_bytes:
@@ -164,10 +173,30 @@ class Snapshots:
 
     def _download(self, digest):
         raw = self.blobs.download_blob(digest + ".json").readall()
-        policy = json.loads(raw)
-        if policy_digest(policy) != digest:
-            raise ValueError("Published budget policy integrity check failed")
+        self._verify(raw, digest)
         return raw
+
+    @staticmethod
+    def _verify(raw, digest):
+        if policy_digest(json.loads(raw)) != digest:
+            raise ValueError("Published budget policy integrity check failed")
+
+    def _load(self, digest):
+        if self._shared is not None:
+            try:
+                raw, result = self._shared.get(digest)
+                self._verify(raw, digest)
+                with self._lock:
+                    self._shared_reads += 1
+                    self._shared_hits += result == "hit"
+                    self._shared_misses += result == "miss"
+                return raw
+            except Exception:
+                # Cache errors, timeouts and corruption never grant access or
+                # release money. Read and verify the exact durable version instead.
+                with self._lock:
+                    self._shared_failures += 1
+        return self._download(digest)
 
 
 def group_publication(active, draft, actor):

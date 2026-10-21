@@ -82,6 +82,14 @@ class BudgetProxy:
         member, group, _ = limits_for(policy, principal)
         return policy, member, group
 
+    async def cache_status(self, principal):
+        _, member, _ = await self.authorize(principal)
+        if member["role"] not in {"owner", "admin"}:
+            raise HTTPException(
+                403, "Only organization owners and administrators can inspect cache diagnostics"
+            )
+        return {"scope": "current_worker", **self.snapshots.cache_info()}
+
     async def count_tokens(self, principal, body):
         """Anthropic documents token counting as free; never treat this as a cost bound."""
         policy, member, group = await self.authorize(principal)

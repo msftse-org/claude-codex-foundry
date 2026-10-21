@@ -21,6 +21,9 @@ param insightsResourceGroup string
 param contentWorkspaceName string = ''
 param contentWorkspaceResourceGroup string = insightsResourceGroup
 param contentLogsConfig object = {}
+@description('Optional dedicated budget audience for the machine-only snapshot origin; configure with policyCacheApimPrincipalId.')
+param policyCacheAudience string = ''
+param policyCacheApimPrincipalId string = ''
 
 var tags = { solution: 'claude-codex-foundry', component: 'budget-admin-portal', release: 'preview' }
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = { name: budgetStorageAccount }
@@ -105,6 +108,8 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_ORGANIZATION_ID', value: organizationId }
         { name: 'BUDGET_CLAUDE_GATEWAY_URL', value: claudeGatewayUrl }
         { name: 'PORTAL_BUDGET_MODELS_JSON', value: string(additionalModels) }
+        { name: 'BUDGET_POLICY_CACHE_AUDIENCE', value: policyCacheAudience }
+        { name: 'BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID', value: policyCacheApimPrincipalId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }
       ]

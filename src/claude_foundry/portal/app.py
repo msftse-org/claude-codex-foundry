@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -19,10 +20,12 @@ from .auth import Authenticator
 from .boundary import RequestBoundary
 from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
 from .budget_policy import Snapshots, group_publication, portal_seed, snapshot
+from .budget_proxy import GatewayIdentity
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
+from .policy_cache import MAX_SHARED_BYTES
 from .service import ManagedAzure, publish, telemetry
 from .store import BlobStore, Conflict, LocalStore
 
@@ -56,6 +59,15 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             Snapshots(budget_account, credential),
         )
     budget_models = json.loads(os.getenv("PORTAL_BUDGET_MODELS_JSON", "[]"))
+    # Separate machine-only origin for APIM's immutable snapshot cache. This
+    # portal always reads Blob directly on a miss, preventing cache recursion.
+    origin_audience = os.getenv("BUDGET_POLICY_CACHE_AUDIENCE", "")
+    origin_gateway = os.getenv("BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID", "")
+    cache_origin = (
+        GatewayIdentity(config["tenant_id"], origin_audience, origin_gateway)
+        if origin_audience and origin_gateway
+        else None
+    )
     model_catalog = config["models"] + [
         m for m in budget_models if m["name"] not in {m["name"] for m in config["models"]}
     ]
@@ -217,6 +229,22 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             "configured": bool(client_id) or local,
             "name": "Claude & Codex Admin",
         }
+
+    @app.get("/api/internal/budget-policies/{digest}")
+    def policy_cache_origin(digest: str, request: Request):
+        if cache_origin is None or budget is None:
+            raise HTTPException(404, "Policy cache origin is not configured")
+        cache_origin.validate(request.headers.get("authorization"))
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise HTTPException(400, "Invalid policy digest")
+        try:
+            value = budget[1].get(digest)
+        except Exception:
+            raise HTTPException(503, "The durable policy source is unavailable") from None
+        response = JSONResponse(value, headers={"Cache-Control": "no-store"})
+        if len(response.body) > MAX_SHARED_BYTES:
+            raise HTTPException(413, "Policy is too large for the shared cache")
+        return response
 
     @app.get("/api/state")
     def state(access=actor_dependency):

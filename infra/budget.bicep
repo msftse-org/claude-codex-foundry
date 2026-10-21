@@ -17,6 +17,8 @@ param deployments object
 @description('Reuse the portal network so both managed identities can reach private budget storage.')
 param portalVnetName string
 param privateStorage bool = true
+@description('Optional machine-only APIM policy snapshot endpoint. Empty uses local memory and private Blob only.')
+param policyCacheUrl string = ''
 param storageName string = 'ccfbudget${uniqueString(resourceGroup().id, name)}'
 
 var tags = { solution: 'claude-codex-foundry', component: 'budget-runtime', release: 'unreleased' }
@@ -120,6 +122,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_APIM_PRINCIPAL_ID', value: apimPrincipalId }
         { name: 'BUDGET_FOUNDRY_ENDPOINT', value: 'https://${foundryName}.services.ai.azure.com' }
         { name: 'BUDGET_DEPLOYMENTS_JSON', value: string(deployments) }
+        { name: 'BUDGET_POLICY_CACHE_URL', value: policyCacheUrl }
       ]
     }
   }
