@@ -99,6 +99,14 @@ Before/after authoritative balance reads were identical: $0.938420 spent, $0 res
 
 The live checks exercise the deployed application boundary, not a controlled cache-hit latency benchmark. Cache download counts, corruption, revocation races and storage-outage cases were verified locally; this update did not inject those faults into the hosted account or complete the outstanding multi-instance and independent administrator sign-in checks. Private deployment reports, account IDs and request evidence remain outside Git.
 
+## Portal sign-in follow-up — October 21, 2026
+
+The isolated budget portal was redeployed with a single MSAL initialization and redirect handler. It waits for authentication and the first organization read before displaying access controls, preserves the requested same-origin page, and offers a connection retry after authenticated loading failures. A GET that receives 401 can refresh silently once; writes are never automatically replayed and 403 does not trigger a new sign-in. Tokens remain in session storage.
+
+In Edge, a fresh tab with no portal session required one click on **Continue with Microsoft**. The existing Entra browser session completed authentication and returned directly to the requested Budgets page. Reloading the signed-in portal also loaded that page without another sign-in. Its displayed active limits and authoritative balances matched the existing ledger. This verifies the existing-session path; it does not waive customer Conditional Access, MFA or multi-account tests.
+
+All 39 frontend tests, type checking and the production build pass. The tests cover initialization/redirect coordination, safe page restoration, interactive-request guarding, account selection, the loading/error states and bounded GET-only refresh.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
