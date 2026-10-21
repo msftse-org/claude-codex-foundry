@@ -117,13 +117,13 @@ def apply(c, azure, plan, report_path, wait_seconds=600):
                 "sku": {"name": item["sku"], "capacity": item["capacity"]},
                 "properties": {
                     "model": {
-                        "format": "Anthropic",
+                        "format": item.get("format", "Anthropic"),
                         "name": item["name"],
                         "version": item["version"],
                     }
                 },
             }
-            if c.get("model_provider_data"):
+            if c.get("model_provider_data") and item.get("format", "Anthropic") == "Anthropic":
                 body["properties"]["modelProviderData"] = c["model_provider_data"]
             try:
                 # Concurrent provisioning inside the resource provider can return
@@ -146,6 +146,10 @@ def apply(c, azure, plan, report_path, wait_seconds=600):
                 result["state"] = response["properties"]["provisioningState"]
             except AzureError as error:
                 result.update(state="Failed", error=str(error))
+            except OSError as error:
+                # A timed-out PUT may have reached Azure. Preserve its identity
+                # and let rediscovery reconcile it before another deployment.
+                result.update(state="Unknown", error=str(error))
         report.append(result)
         write_json(report_path, report)
         print(

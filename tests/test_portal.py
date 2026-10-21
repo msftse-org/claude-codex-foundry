@@ -730,3 +730,599 @@ def test_chunked_oversized_body_is_stopped_before_application():
     assert not called
     assert sent[0]["status"] == 413
     assert (b"cache-control", b"no-store") in sent[0]["headers"]
+
+
+@pytest.fixture
+def logs_app(app, org, monkeypatch):
+    monkeypatch.setenv(
+        "PORTAL_CONTENT_LOGS_JSON",
+        json.dumps(
+            {
+                "workspace_id": CLIENT,
+                "resource_id": f"/subscriptions/{CLIENT}/resourceGroups/test/providers/Microsoft.ApiManagement/service/test",
+                "api_ids": ["claude-preview", "codex-foundry"],
+                "capture_enabled": True,
+            }
+        ),
+    )
+    return create_app(org, store=app.state.store, credential=object(), local=False)
+
+
+@pytest.mark.parametrize("role", ["owner", "admin", "billing", "auditor", "developer"])
+def test_content_logs_role_boundary(logs_app, org, key, monkeypatch, role):
+    data, etag = logs_app.state.store.read()
+    member = add_member(data, role)
+    logs_app.state.store.save(data, etag)
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.list_logs", lambda *a: {"items": [], "has_more": False}
+    )
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.read_log",
+        lambda *a: {"chunks": [{"response": "PRIVATE_TEST_CONTENT"}]},
+    )
+    with TestClient(logs_app) as client:
+        auth = headers(org, key, member["id"])
+        expected = 200 if role in {"owner", "admin"} else 403
+        assert client.get("/api/content-logs/config", headers=auth).status_code == expected
+        assert (
+            client.post(
+                "/api/content-logs/search",
+                headers=auth,
+                json={"start": "2026-10-14T00:00:00Z", "end": "2026-10-15T00:00:00Z"},
+            ).status_code
+            == expected
+        )
+        response = client.post(
+            "/api/content-logs/read",
+            headers=auth,
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert response.status_code == expected
+        assert ("PRIVATE_TEST_CONTENT" in response.text) == (expected == 200)
+        assert response.headers["cache-control"] == "no-store"
+    stored, _ = logs_app.state.store.read()
+    if expected == 200:
+        event = stored["audit"][-1]
+        assert event["action"] == "content.view_requested"
+        assert event["actor_id"] == member["id"]
+        assert event["target"] == CLIENT
+    assert "PRIVATE_TEST_CONTENT" not in json.dumps(stored)
+
+
+def test_content_read_requires_durable_audit(logs_app, org, key, monkeypatch):
+    calls = []
+    monkeypatch.setattr("claude_foundry.portal.app.read_log", lambda *a: calls.append(a))
+
+    def broken_save(*args):
+        raise OSError("private storage not available")
+
+    monkeypatch.setattr(logs_app.state.store, "save", broken_save)
+    with TestClient(logs_app) as client:
+        r = client.post(
+            "/api/content-logs/read",
+            headers=headers(org, key),
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert r.status_code == 503
+        assert "private storage" not in r.text
+        assert calls == []
+
+
+def test_content_api_rejects_bad_inputs_and_unauthenticated(logs_app, org, key):
+    with TestClient(logs_app) as client:
+        assert client.get("/api/content-logs/config").status_code == 401
+        for value in [
+            {"correlation_id": "bad-id", "reason": "Support"},
+            {"correlation_id": CLIENT, "reason": "      "},
+            {"correlation_id": CLIENT, "reason": "Support", "workspace_id": OWNER},
+        ]:
+            assert (
+                client.post(
+                    "/api/content-logs/read", headers=headers(org, key), json=value
+                ).status_code
+                == 422
+            )
+        r = client.post(
+            "/api/content-logs/search",
+            headers=headers(org, key),
+            json={
+                "start": "2026-10-14T00:00:00Z",
+                "end": "2026-10-15T00:00:00Z",
+                "api_id": "unrelated-customer",
+            },
+        )
+        assert r.status_code == 422
+
+
+def test_content_revocation_during_query_denies_response(logs_app, org, key, monkeypatch):
+    def revoked(*args):
+        state, etag = logs_app.state.store.read()
+        state["members"][0]["status"] = "suspended"
+        state["revision"] += 1
+        logs_app.state.store.save(state, etag)
+        return {"chunks": [{"response": "PRIVATE_TEST_CONTENT"}]}
+
+    monkeypatch.setattr("claude_foundry.portal.app.read_log", revoked)
+    with TestClient(logs_app) as client:
+        r = client.post(
+            "/api/content-logs/read",
+            headers=headers(org, key),
+            json={"correlation_id": CLIENT, "reason": "Support investigation"},
+        )
+        assert r.status_code == 403
+        assert "PRIVATE_TEST_CONTENT" not in r.text
+
+
+def test_content_disabled_without_configuration(app, org, key):
+    with TestClient(app) as client:
+        r = client.get("/api/content-logs/config", headers=headers(org, key))
+        assert r.json()["configured"] is False
+        assert (
+            client.post(
+                "/api/content-logs/read",
+                headers=headers(org, key),
+                json={"correlation_id": CLIENT, "reason": "Support investigation"},
+            ).status_code
+            == 409
+        )
+
+
+def test_group_admin_cannot_cross_scope_raise_ceiling_or_change_roles(state):
+    group = state["groups"][0]
+    group.update(
+        spend_ceiling_usd="100", spend_limit_usd="80", delegated_models=["claude-sonnet-4-6"]
+    )
+    admin = add_member(state, "group_admin")
+    developer = add_member(state)
+    other_group = {**group, "id": str(uuid4()), "name": "Other team"}
+    state["groups"].append(other_group)
+    other = add_member(state, group_id=other_group["id"])
+    updated = change(state, "member", {**developer, "spend_limit_usd": "20"}, admin)
+    assert updated["members"][-1]["spend_limit_usd"] == "20"
+    assert updated["audit"][-1]["group_id"] == group["id"]
+    for kind, value in [
+        ("group", {**group, "spend_ceiling_usd": "101"}),
+        ("group", {**group, "delegated_models": []}),
+        ("group", other_group),
+        ("member", other),
+        ("member", {**developer, "role": "group_admin"}),
+        ("member", {**developer, "group_id": other_group["id"]}),
+        ("settings", state["settings"]),
+    ]:
+        with pytest.raises(PermissionError):
+            change(state, kind, value, admin)
+    with pytest.raises(ValueError, match="allowance"):
+        change(state, "member", {**developer, "spend_limit_usd": "81"}, admin)
+    with pytest.raises(ValueError, match="ceiling"):
+        change(state, "group", {**group, "spend_limit_usd": "101"}, admin)
+
+
+def test_group_admin_endpoint_scope(app, org, key, monkeypatch):
+    data, etag = app.state.store.read()
+    group = data["groups"][0]
+    group.update(delegated_models=["claude-sonnet-4-6"])
+    admin = add_member(data, "group_admin")
+    second = {**group, "id": str(uuid4()), "name": "Secret team"}
+    data["groups"].append(second)
+    outsider = add_member(data, group_id=second["id"])
+    data["audit"] = [
+        {"group_id": second["id"], "action": "secret"},
+        {"group_id": group["id"], "action": "local"},
+    ]
+    app.state.store.save(data, etag)
+    queried = []
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.cost_analysis",
+        lambda a, b, c, filters, p: queried.append(filters.group_ids) or {"ok": True},
+    )
+    with TestClient(app) as client:
+        auth = headers(org, key, admin["id"])
+        result = client.get("/api/state", headers=auth).json()
+        assert [g["id"] for g in result["groups"]] == [group["id"]]
+        assert outsider["id"] not in [m["id"] for m in result["members"]]
+        assert result["audit"] == [{"group_id": group["id"], "action": "local"}]
+        assert result["settings"] == {"name": data["settings"]["name"]}
+        for route in ["/api/telemetry", "/api/impact"]:
+            assert client.get(route, headers=auth).status_code == 403
+        assert (
+            client.get(
+                "/api/client-profile", params={"group_id": second["id"]}, headers=auth
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/api/budgets/balance", params={"member_id": outsider["id"]}, headers=auth
+            ).status_code
+            == 403
+        )
+        assert client.post("/api/publish", json={}, headers=auth).status_code == 403
+        assert (
+            client.post(
+                "/api/import-preview",
+                json={
+                    "csv": f"object_id,name,email\n{uuid4()},X,x@example.com",
+                    "group_id": second["id"],
+                },
+                headers=auth,
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                "/api/cost-analysis",
+                json={"start": "2026-01-01", "end": "2026-01-02", "group_ids": [second["id"]]},
+                headers=auth,
+            ).status_code
+            == 200
+        )
+        assert queried == [[group["id"]]]
+
+
+def test_budget_service_accepts_only_dedicated_gateway_identity(org, key, monkeypatch):
+    from claude_foundry.portal.budget_proxy import GatewayIdentity
+
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda self, value: SimpleNamespace(key=key.public_key()),
+    )
+    identity = GatewayIdentity(org["tenant_id"], "api://" + CLIENT, OWNER)
+    common = {"aud": "api://" + CLIENT, "scp": None}
+    identity.validate("Bearer " + token(org, key, **common))
+    identity.validate("Bearer " + token(org, key, **{**common, "aud": CLIENT, "ver": "2.0"}))
+    for bad in [
+        {"aud": str(uuid4())},
+        {"oid": str(uuid4())},
+        {"scp": "access_as_user"},
+        {"tid": str(uuid4())},
+        {"exp": int(time.time()) - 100},
+        {"iss": "https://malicious.example.com"},
+    ]:
+        with pytest.raises(HTTPException):
+            identity.validate("Bearer " + token(org, key, **{**common, **bad}))
+
+
+def test_snapshot_origin_is_machine_only_and_does_not_use_portal_role_claims(
+    org, state, key, monkeypatch, tmp_path
+):
+    gateway, audience = str(uuid4()), "api://" + str(uuid4())
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    monkeypatch.setenv("PORTAL_CLIENT_ID", CLIENT)
+    monkeypatch.setenv("BUDGET_POLICY_CACHE_AUDIENCE", audience)
+    monkeypatch.setenv("BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID", gateway)
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda self, value: SimpleNamespace(key=key.public_key()),
+    )
+    reads = []
+
+    def get(digest):
+        reads.append(digest)
+        return {"schema": 1, "members": []}
+
+    app = create_app(
+        org,
+        LocalStore(tmp_path / "state.json", state),
+        credential=object(),
+        local=False,
+        budget=(None, SimpleNamespace(get=get)),
+    )
+    path = "/api/internal/budget-policies/" + "a" * 64
+    with TestClient(app) as client:
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=headers(org, key)).status_code == 401
+        for invalid in [
+            {"oid": OWNER, "scp": None},
+            {"oid": gateway, "scp": "access_as_user"},
+            {"oid": gateway, "scp": None, "tid": str(uuid4())},
+        ]:
+            assert (
+                client.get(
+                    path,
+                    headers={"Authorization": "Bearer " + token(org, key, aud=audience, **invalid)},
+                ).status_code
+                == 401
+            )
+        assert reads == []
+        auth = {"Authorization": "Bearer " + token(org, key, oid=gateway, aud=audience, scp=None)}
+        result = client.get(path, headers=auth)
+        assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+        assert client.get("/api/internal/budget-policies/invalid", headers=auth).status_code == 400
+        assert reads == ["a" * 64]
+
+
+def test_snapshot_origin_disabled_by_default(app):
+    with TestClient(app) as client:
+        assert client.get("/api/internal/budget-policies/" + "a" * 64).status_code == 404
+
+
+def test_local_navigation_is_allowed_but_cross_site_api_stays_blocked(
+    org, state, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    application = create_app(
+        org, LocalStore(tmp_path / "local.json", state), credential=object(), local=True
+    )
+    with TestClient(application) as client:
+        navigation = {
+            "sec-fetch-site": "cross-site",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-dest": "document",
+        }
+        # 404 without a built frontend is acceptable; the boundary must not reject HTML navigation.
+        assert client.get("/", headers=navigation).status_code in {200, 404}
+        assert client.get("/api/state", headers=navigation).status_code == 403
+        assert client.post("/api/changes", headers=navigation, json={}).status_code == 403
+
+
+def test_group_content_scope_and_revoke_during_query(app, org, key, monkeypatch):
+    data, etag = app.state.store.read()
+    actor = add_member(data, "group_admin")
+    app.state.store.save(data, etag)
+    monkeypatch.setenv(
+        "PORTAL_CONTENT_LOGS_JSON",
+        json.dumps(
+            {
+                "workspace_id": str(uuid4()),
+                "resource_id": f"/subscriptions/{uuid4()}/resourceGroups/test/providers/Microsoft.ApiManagement/service/test",
+                "api_ids": ["claude-budget-preview"],
+            }
+        ),
+    )
+    application = create_app(org, app.state.store, credential=object(), local=False)
+    scopes = []
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.read_log",
+        lambda *args, **kwargs: scopes.append(kwargs["group_id"]) or None,
+    )
+    with TestClient(application) as client:
+        auth = headers(org, key, actor["id"])
+        result = client.post(
+            "/api/content-logs/read",
+            json={"correlation_id": str(uuid4()), "reason": "Investigating team failure"},
+            headers=auth,
+        )
+        assert result.status_code == 404
+        assert scopes == [actor["group_id"]]
+        assert app.state.store.read()[0]["audit"][-1]["group_id"] == actor["group_id"]
+
+        def changed_scope(*args, **kwargs):
+            data, etag = app.state.store.read()
+            next(m for m in data["members"] if m["id"] == actor["id"])["role"] = "developer"
+            app.state.store.save(data, etag)
+            return {"items": [{"content": "must not escape"}]}
+
+        monkeypatch.setattr("claude_foundry.portal.app.list_logs", changed_scope)
+        result = client.post(
+            "/api/content-logs/search",
+            json={"start": "2026-01-01T00:00:00Z", "end": "2026-01-02T00:00:00Z"},
+            headers=auth,
+        )
+        assert result.status_code == 403 and "must not escape" not in result.text
+
+
+@pytest.fixture
+def budget_app(app, org):
+    from datetime import UTC, datetime, timedelta
+
+    from claude_foundry.portal.budget_ledger import Ledger, MemoryRows, policy_digest
+    from claude_foundry.portal.budget_policy import snapshot
+
+    data, etag = app.state.store.read()
+    data["settings"].update(budget_enforcement=True, spend_limit_usd="10")
+    data["groups"][0].update(spend_ceiling_usd="5", delegated_models=["claude-sonnet-4-6"])
+    data["budget_prices"] = [
+        dict(
+            model="claude-sonnet-4-6",
+            provider="anthropic",
+            deployment_version="test",
+            max_input_tokens=1000,
+            max_output_tokens=1000,
+            default_output_tokens=100,
+            input_ceiling_per_million="3",
+            output_ceiling_per_million="15",
+            source_url="https://example.com",
+            verified_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+            valid_until=(datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            note="Synthetic test pricing only",
+        )
+    ]
+    admin = add_member(data, "group_admin")
+    developer = add_member(data)
+    second = {**data["groups"][0], "id": str(uuid4()), "name": "Another team"}
+    data["groups"].append(second)
+    outsider = add_member(data, group_id=second["id"])
+    app.state.store.save(data, etag)
+    policy = snapshot(data)
+    ledger = Ledger(MemoryRows())
+    ledger.activate(policy)
+
+    class Snapshots:
+        def __init__(self):
+            self.values = {policy_digest(policy): policy}
+
+        def get(self, key):
+            return copy.deepcopy(self.values[key])
+
+        def put(self, value):
+            key = policy_digest(value)
+            self.values[key] = copy.deepcopy(value)
+            return key
+
+    snapshots = Snapshots()
+    application = create_app(
+        org, app.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    return application, ledger, snapshots, admin, developer, outsider
+
+
+def test_budget_portal_scopes_and_owner_only_full_charge(budget_app, org, key):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    policy = snapshots.get(ledger.active())
+    requests = {}
+    for member in [developer, outsider]:
+        request = str(uuid4())
+        requests[member["id"]] = request
+        ledger.reserve(request, member["id"], "claude-sonnet-4-6", 10000, policy, "synthetic")
+    with TestClient(application) as client:
+        auth = headers(org, key, admin["id"])
+        scopes = client.get("/api/budgets/balance", headers=auth).json()["scopes"]
+        assert len(scopes) == 2 and all(s["scope"] != "org" for s in scopes)
+        assert (
+            client.get(
+                "/api/budgets/balance", params={"member_id": outsider["id"]}, headers=auth
+            ).status_code
+            == 403
+        )
+        held = client.get("/api/budgets/reservations", headers=auth).json()["items"]
+        assert [r["request_id"] for r in held] == [requests[developer["id"]]]
+        assert "fingerprint" not in held[0]
+        for member in [admin, developer, outsider]:
+            assert (
+                client.post(
+                    "/api/budgets/close-reservation",
+                    headers=headers(org, key, member["id"]),
+                    json={
+                        "request_id": requests[developer["id"]],
+                        "reason": "Investigating incomplete request",
+                    },
+                ).status_code
+                == 403
+            )
+        result = client.post(
+            "/api/budgets/close-reservation",
+            headers=headers(org, key),
+            json={
+                "request_id": requests[developer["id"]],
+                "reason": "Usage unknown; retain maximum charge",
+            },
+        )
+        assert result.status_code == 200 and result.json()["charged_micro_usd"] == 10000
+        row, _ = ledger.rows.read("request-" + requests[developer["id"]])
+        assert row["charged"] == row["reserved"] and row["state"] == "settled"
+        audit = application.state.store.read()[0]["audit"][-1]
+        assert audit["action"] == "budget.close_at_maximum_requested"
+        assert audit["group_id"] == developer["group_id"]
+
+
+def test_group_publication_excludes_owner_drafts_and_foreign_team(budget_app, org, key):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    before = snapshots.get(ledger.active())
+    data, etag = application.state.store.read()
+    data["settings"]["spend_limit_usd"] = "99"
+    data["groups"][1]["spend_ceiling_usd"] = "99"
+    next(m for m in data["members"] if m["id"] == developer["id"])["spend_limit_usd"] = "1"
+    application.state.store.save(data, etag)
+    with TestClient(application) as client:
+        result = client.post(
+            "/api/budgets/publish",
+            headers=headers(org, key, admin["id"]),
+            json={"revision": data["revision"], "organization": data["settings"]["name"]},
+        )
+        assert result.status_code == 200, result.text
+        active = snapshots.get(ledger.active())
+        assert (
+            active["settings"] == before["settings"] and active["groups"][1] == before["groups"][1]
+        )
+        assert (
+            next(m for m in active["members"] if m["id"] == developer["id"])["spend_limit_usd"]
+            == "1"
+        )
+        assert (
+            client.post(
+                "/api/budgets/publish", headers=headers(org, key, developer["id"]), json={}
+            ).status_code
+            == 403
+        )
+
+
+def test_budget_publication_and_closure_require_durable_audit(budget_app, org, key, monkeypatch):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    active = ledger.active()
+    policy = snapshots.get(active)
+    request = str(uuid4())
+    ledger.reserve(request, developer["id"], "claude-sonnet-4-6", 10000, policy, "test")
+    data, _ = application.state.store.read()
+
+    def unavailable(*args):
+        raise OSError("Storage unavailable")
+
+    monkeypatch.setattr(application.state.store, "save", unavailable)
+    with TestClient(application) as client:
+        assert (
+            client.post(
+                "/api/budgets/publish",
+                headers=headers(org, key),
+                json={
+                    "revision": data["revision"],
+                    "organization": data["settings"]["name"],
+                    "published_hash": active,
+                },
+            ).status_code
+            == 503
+        )
+        assert (
+            client.post(
+                "/api/budgets/close-reservation",
+                headers=headers(org, key),
+                json={"request_id": request, "reason": "Investigating unknown usage"},
+            ).status_code
+            == 503
+        )
+    assert ledger.active() == active
+    assert ledger.rows.read("request-" + request)[0]["state"] == "reserved"
+
+
+def test_budget_portal_cannot_overwrite_gateway_with_legacy_policy(budget_app, org, key):
+    application, *_ = budget_app
+    data, _ = application.state.store.read()
+    with TestClient(application) as client:
+        response = client.post(
+            "/api/publish",
+            headers=headers(org, key),
+            json={"revision": data["revision"], "organization": data["settings"]["name"]},
+        )
+    assert response.status_code == 409 and "Legacy gateway publication is disabled" in response.text
+
+
+def test_blob_bootstrap_is_lazy_and_never_overwrites_existing_state(monkeypatch, state):
+    from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+
+    from claude_foundry.portal.store import BlobStore
+
+    class Blob:
+        exists = True
+        uploaded = None
+
+        def get_blob_properties(self):
+            if not self.exists:
+                raise ResourceNotFoundError("Missing")
+
+        def upload_blob(self, value, **options):
+            assert options["overwrite"] is False
+            if self.exists:
+                raise ResourceExistsError("A different instance initialized first")
+            self.uploaded = json.loads(value)
+
+    blob = Blob()
+    monkeypatch.setattr("claude_foundry.portal.store.BlobClient", lambda *a, **k: blob)
+    calls = []
+
+    def initial():
+        calls.append(True)
+        return state
+
+    BlobStore("example", object(), initial)
+    assert calls == [] and blob.uploaded is None
+    blob.exists = False
+    BlobStore("example", object(), initial)
+    assert calls == [True] and blob.uploaded == state
+
+    def racing_initial():
+        blob.exists = True
+        return {**state, "revision": 99}
+
+    BlobStore("example", object(), racing_initial)
+    assert blob.uploaded == state  # Another instance won; its state is preserved.

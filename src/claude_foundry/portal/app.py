@@ -2,7 +2,9 @@
 
 import copy
 import json
+import logging
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -16,14 +18,19 @@ from pydantic import ValidationError
 from ..config import export_client, load_org
 from .auth import Authenticator
 from .boundary import RequestBoundary
+from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
+from .budget_policy import Snapshots, group_publication, portal_seed, snapshot
+from .budget_proxy import GatewayIdentity
+from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
+from .policy_cache import MAX_SHARED_BYTES
 from .service import ManagedAzure, publish, telemetry
 from .store import BlobStore, Conflict, LocalStore
 
 
-def create_app(config=None, store=None, credential=None, local=None):
+def create_app(config=None, store=None, credential=None, local=None, budget=None):
     config = config or (
         json.loads(os.environ["PORTAL_ORGANIZATION_JSON"])
         if os.getenv("PORTAL_ORGANIZATION_JSON")
@@ -45,6 +52,30 @@ def create_app(config=None, store=None, credential=None, local=None):
     app.state.store = store
     app.state.telemetry_cache = None
     app.state.cost_cache = {}
+    budget_account = os.getenv("BUDGET_STORAGE_ACCOUNT")
+    if budget is None and budget_account:
+        budget = (
+            Ledger(AzureRows(budget_account, os.environ["BUDGET_ORGANIZATION_ID"], credential)),
+            Snapshots(budget_account, credential),
+        )
+    budget_models = json.loads(os.getenv("PORTAL_BUDGET_MODELS_JSON", "[]"))
+    # Separate machine-only origin for APIM's immutable snapshot cache. This
+    # portal always reads Blob directly on a miss, preventing cache recursion.
+    origin_audience = os.getenv("BUDGET_POLICY_CACHE_AUDIENCE", "")
+    origin_gateway = os.getenv("BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID", "")
+    cache_origin = (
+        GatewayIdentity(config["tenant_id"], origin_audience, origin_gateway)
+        if origin_audience and origin_gateway
+        else None
+    )
+    model_catalog = config["models"] + [
+        m for m in budget_models if m["name"] not in {m["name"] for m in config["models"]}
+    ]
+    content_source = (
+        LogSource.model_validate_json(os.environ["PORTAL_CONTENT_LOGS_JSON"])
+        if os.getenv("PORTAL_CONTENT_LOGS_JSON")
+        else None
+    )
 
     def storage():
         if app.state.store is None:
@@ -57,7 +88,11 @@ def create_app(config=None, store=None, credential=None, local=None):
             app.state.store = (
                 LocalStore(os.getenv("PORTAL_LOCAL_PATH", ".local/portal/state.json"), initial)
                 if local
-                else BlobStore(os.environ["PORTAL_STORAGE_ACCOUNT"], credential, initial)
+                else BlobStore(
+                    os.environ["PORTAL_STORAGE_ACCOUNT"],
+                    credential,
+                    lambda: portal_seed(initial, *budget, owner_id) if budget else initial,
+                )
             )
         return app.state.store
 
@@ -76,10 +111,114 @@ def create_app(config=None, store=None, credential=None, local=None):
         return state, etag, member
 
     def administrative(member):
-        if member["role"] == "developer":
-            raise HTTPException(403, "An administration role is required.")
+        if member["role"] in {"developer", "group_admin"}:
+            raise HTTPException(403, "An organization administration role is required.")
 
     actor_dependency = Depends(actor)
+
+    def content_access(member):
+        if member["role"] not in {"owner", "admin", "group_admin"}:
+            raise HTTPException(
+                403, "Only portal owners and administrators can access content logs."
+            )
+
+    def still_authorized(member):
+        latest, _ = storage().read()
+        active = next(
+            (m for m in latest["members"] if m["id"] == member["id"] and m["status"] == "active"),
+            None,
+        )
+        if not active:
+            raise HTTPException(403, "Your portal access has changed.")
+        content_access(active)
+        if active["role"] != member["role"] or active["group_id"] != member["group_id"]:
+            raise HTTPException(403, "Your portal scope has changed.")
+
+    @app.get("/api/content-logs/config")
+    def content_config(access=actor_dependency):
+        _, _, member = access
+        content_access(member)
+        return {
+            "configured": content_source is not None,
+            "capture_enabled": bool(content_source and content_source.capture_enabled),
+            "api_ids": content_source.api_ids if content_source else [],
+            "retention_days": content_source.retention_days if content_source else 7,
+            "max_message_bytes": content_source.max_message_bytes if content_source else 262144,
+        }
+
+    @app.post("/api/content-logs/search")
+    def content_search(body: LogQuery, access=actor_dependency):
+        _, _, member = access
+        content_access(member)
+        if not content_source:
+            raise HTTPException(409, "Content logging has not been configured for this portal.")
+        if body.api_id and body.api_id not in content_source.api_ids:
+            raise HTTPException(422, "Choose a configured API.")
+        try:
+            result = list_logs(
+                content_source,
+                credential,
+                body,
+                **({"group_id": member["group_id"]} if member["role"] == "group_admin" else {}),
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Content log search failed (%s).", type(exc).__name__
+            )
+            raise HTTPException(
+                502,
+                "Content logs could not be loaded. Check log ingestion and the portal identity's workspace access.",
+            ) from None
+        still_authorized(member)
+        return result
+
+    @app.post("/api/content-logs/read")
+    def content_read(body: LogRead, access=actor_dependency):
+        data, etag, member = access
+        content_access(member)
+        if not content_source:
+            raise HTTPException(409, "Content logging has not been configured for this portal.")
+        if data["publish_status"] == "publishing":
+            raise HTTPException(409, "Wait for gateway publication to finish, then retry.")
+        # Persist the access intent BEFORE querying content. An audit failure denies the read.
+        audit(
+            data,
+            member,
+            "content.view_requested",
+            str(body.correlation_id),
+            None,
+            {"reason": body.reason},
+            group_id=member["group_id"] if member["role"] == "group_admin" else None,
+        )
+        data["revision"] += 1
+        try:
+            storage().save(data, etag)
+        except Conflict:
+            raise HTTPException(
+                409, "Portal state changed. Reload before opening content."
+            ) from None
+        except Exception:
+            raise HTTPException(
+                503, "The access audit could not be saved. Content was not opened."
+            ) from None
+        try:
+            result = read_log(
+                content_source,
+                credential,
+                body.correlation_id,
+                **({"group_id": member["group_id"]} if member["role"] == "group_admin" else {}),
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Content log read failed (%s).", type(exc).__name__)
+            raise HTTPException(
+                502, "Captured content could not be loaded. Retry after checking log ingestion."
+            ) from None
+        still_authorized(member)
+        if result is None:
+            raise HTTPException(
+                404, "No captured content was found within the permitted APIs and retention window."
+            )
+        return result
 
     @app.get("/api/bootstrap")
     def bootstrap():
@@ -91,12 +230,29 @@ def create_app(config=None, store=None, credential=None, local=None):
             "name": "Claude & Codex Admin",
         }
 
+    @app.get("/api/internal/budget-policies/{digest}")
+    def policy_cache_origin(digest: str, request: Request):
+        if cache_origin is None or budget is None:
+            raise HTTPException(404, "Policy cache origin is not configured")
+        cache_origin.validate(request.headers.get("authorization"))
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise HTTPException(400, "Invalid policy digest")
+        try:
+            value = budget[1].get(digest)
+        except Exception:
+            raise HTTPException(503, "The durable policy source is unavailable") from None
+        response = JSONResponse(value, headers={"Cache-Control": "no-store"})
+        if len(response.body) > MAX_SHARED_BYTES:
+            raise HTTPException(413, "Policy is too large for the shared cache")
+        return response
+
     @app.get("/api/state")
     def state(access=actor_dependency):
         data, _, member = access
         data.update(
             viewer=member,
-            models=config["models"],
+            models=model_catalog,
+            budget_configured=budget is not None,
             gateway_url=config["gateway_url"],
             tenant_id=config["tenant_id"],
             policy_hash=impact(config, data)["policy_hash"],
@@ -107,8 +263,21 @@ def create_app(config=None, store=None, credential=None, local=None):
                 groups=[g for g in data["groups"] if g["id"] == member["group_id"]],
                 audit=[],
                 prices=[],
+                budget_prices=[],
                 settings={"name": data["settings"]["name"]},
                 requests=[r for r in data["requests"] if r["member_id"] == member["id"]],
+            )
+        if member["role"] == "group_admin":
+            group_id = member["group_id"]
+            members = [m for m in data["members"] if m["group_id"] == group_id]
+            identifiers = {m["id"] for m in members}
+            data.update(
+                members=members,
+                groups=[g for g in data["groups"] if g["id"] == group_id],
+                audit=[a for a in data["audit"] if a.get("group_id") == group_id],
+                settings={"name": data["settings"]["name"]},
+                budget_prices=[],
+                requests=[r for r in data["requests"] if r["member_id"] in identifiers],
             )
         return data
 
@@ -123,7 +292,7 @@ def create_app(config=None, store=None, credential=None, local=None):
             raise HTTPException(409, "Gateway publication is in progress. Wait for it to finish.")
         try:
             updated = apply_change(
-                copy.deepcopy(data), body, member, [m["name"] for m in config["models"]]
+                copy.deepcopy(data), body, member, [m["name"] for m in model_catalog]
             )
             # Validate the resulting policy size and model references before persistence.
             impact(config, updated)
@@ -144,10 +313,10 @@ def create_app(config=None, store=None, credential=None, local=None):
     @app.post("/api/import-preview")
     def import_preview(body: dict, access=actor_dependency):
         data, _, member = access
-        if member["role"] not in {"owner", "admin"}:
+        if member["role"] not in {"owner", "admin", "group_admin"}:
             raise HTTPException(403, "Only owners and administrators can import members.")
         try:
-            members = import_members(data, body)
+            members = import_members(data, body, member)
             data["members"].extend(members)
             effect = impact(config, data)
             return {
@@ -155,6 +324,8 @@ def create_app(config=None, store=None, credential=None, local=None):
                 "members": members[:20],
                 "policy_bytes": effect["policy_bytes"],
             }
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
@@ -169,6 +340,10 @@ def create_app(config=None, store=None, credential=None, local=None):
         data, etag, member = access
         if member["role"] not in {"owner", "admin"}:
             raise HTTPException(403, "Only owners and administrators can publish gateway access.")
+        if budget is not None:
+            raise HTTPException(
+                409, "Use budget policy publication. Legacy gateway publication is disabled here."
+            )
         if (
             body.get("revision") != data["revision"]
             or body.get("organization") != data["settings"]["name"]
@@ -247,7 +422,10 @@ def create_app(config=None, store=None, credential=None, local=None):
     @app.post("/api/cost-analysis")
     def costs(body: CostQuery, access=actor_dependency):
         data, _, member = access
-        administrative(member)
+        if member["role"] == "group_admin":
+            body = body.model_copy(update={"group_ids": [member["group_id"]]})
+        else:
+            administrative(member)
         prices = data["prices"]
         key = body.model_dump_json() + json.dumps(prices, sort_keys=True)
         cached = app.state.cost_cache.get(key)
@@ -271,10 +449,35 @@ def create_app(config=None, store=None, credential=None, local=None):
     @app.get("/api/client-profile")
     def client_profile(group_id: str | None = None, access=actor_dependency):
         data, _, member = access
+        profile_actor = member
+        profile_config = config
+        if budget is not None:
+            url = os.getenv("BUDGET_CLAUDE_GATEWAY_URL")
+            if not url:
+                raise HTTPException(
+                    409,
+                    "Configure the validated budget gateway URL before exporting governed profiles",
+                )
+            try:
+                data = budget[1].get(budget[0].active())
+                member = next(
+                    m
+                    for m in data["members"]
+                    if m["id"] == member["id"] and m["status"] == "active"
+                )
+            except Exception:
+                raise HTTPException(
+                    409, "Publish this member's budget access before exporting a profile"
+                ) from None
+            if member["group_id"] != profile_actor["group_id"]:
+                raise HTTPException(409, "Publish the membership change before exporting a profile")
+            profile_config = {**config, "gateway_url": url}
         allowed = effective_models(data, member)
         group = next(g for g in data["groups"] if g["id"] == member["group_id"])
         if group_id:
-            if member["role"] not in {"owner", "admin"}:
+            if profile_actor["role"] not in {"owner", "admin"} and not (
+                profile_actor["role"] == "group_admin" and group_id == profile_actor["group_id"]
+            ):
                 raise HTTPException(403, "Only administrators can export another group's profile.")
             group = next((g for g in data["groups"] if g["id"] == group_id), None)
             if not group:
@@ -298,12 +501,170 @@ def create_app(config=None, store=None, credential=None, local=None):
             desktop_client_id = str(UUID(desktop_client_id))
         return JSONResponse(
             export_client(
-                {**config, "models": models},
+                {**profile_config, "models": models},
                 auth_mode="msal" if desktop_client_id else "azure-cli",
                 client_id=desktop_client_id,
             ),
             headers={"Content-Disposition": 'attachment; filename="client.json"'},
         )
+
+    @app.get("/api/budgets/balance")
+    def budget_balance(member_id: str | None = None, access=actor_dependency):
+        data, _, member = access
+        target = next((m for m in data["members"] if m["id"] == (member_id or member["id"])), None)
+        if not target or (
+            target["id"] != member["id"]
+            and member["role"] not in {"owner", "admin", "billing", "auditor"}
+            and not (member["role"] == "group_admin" and target["group_id"] == member["group_id"])
+        ):
+            raise HTTPException(403, "This member is outside your budget scope")
+        if budget is None:
+            return {"configured": False, "active": False, "scopes": []}
+        ledger, snapshots = budget
+        try:
+            digest = ledger.active()
+            policy = snapshots.get(digest)
+            # A member who moved groups cannot expose their previous team's totals.
+            published_member = next((m for m in policy["members"] if m["id"] == target["id"]), None)
+            if not published_member or published_member["group_id"] != target["group_id"]:
+                raise BudgetDenied("Membership changes await budget publication")
+            result = ledger.balances(policy, target["id"])
+            if member["role"] == "developer":
+                result["scopes"] = [s for s in result["scopes"] if s["scope"].startswith("user-")]
+            elif member["role"] == "group_admin":
+                result["scopes"] = [s for s in result["scopes"] if s["scope"] != "org"]
+            return {
+                **result,
+                "configured": True,
+                "active": True,
+                "published_hash": digest,
+                "draft_hash": None,
+            }
+        except (BudgetDenied, ValueError) as error:
+            return {"configured": True, "active": False, "scopes": [], "note": str(error)}
+        except Exception:
+            raise HTTPException(
+                503, "The budget ledger is unavailable; inference admission fails closed"
+            ) from None
+
+    @app.get("/api/budgets/reservations")
+    def budget_reservations(access=actor_dependency):
+        _, _, member = access
+        if budget is None:
+            return {"items": [], "has_more": False}
+        try:
+            rows = budget[0].rows.pending(
+                group_id=member["group_id"] if member["role"] == "group_admin" else None,
+                principal=member["id"] if member["role"] == "developer" else None,
+            )
+            fields = {
+                "request_id",
+                "principal_id",
+                "group_id",
+                "model",
+                "month",
+                "at",
+                "reserved",
+                "state",
+            }
+            return {
+                "items": [{k: v for k, v in row.items() if k in fields} for row in rows[:50]],
+                "has_more": len(rows) > 50,
+            }
+        except Exception:
+            raise HTTPException(503, "Outstanding reservations could not be loaded") from None
+
+    @app.post("/api/budgets/close-reservation")
+    def close_reservation(body: dict, access=actor_dependency):
+        data, etag, member = access
+        if member["role"] != "owner":
+            raise HTTPException(403, "Only the owner can close an uncertain reservation")
+        if budget is None:
+            raise HTTPException(409, "The budget ledger is not configured")
+        try:
+            request_id = str(UUID(body.get("request_id", "")))
+            reason = body.get("reason")
+            if not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 300:
+                raise ValueError("Provide a reason of 5–300 characters")
+            reservation, _ = budget[0].rows.read("request-" + request_id)
+            if not reservation:
+                raise ValueError("Reservation not found")
+            if reservation["state"] != "reserved":
+                raise ValueError("The reservation has already been settled")
+            audit(
+                data,
+                member,
+                "budget.close_at_maximum_requested",
+                request_id,
+                None,
+                {"reason": reason, "charge_micro_usd": reservation["reserved"]},
+                reservation["group_id"],
+            )
+            data["revision"] += 1
+            storage().save(data, etag)
+            # This is a conservative charge, never an arbitrary administrative refund.
+            budget[0].settle(request_id, reservation["reserved"])
+            return {"closed": True, "charged_micro_usd": reservation["reserved"]}
+        except (ValueError, BudgetDenied) as error:
+            raise HTTPException(422, str(error)) from error
+        except (Conflict, Contended) as error:
+            raise HTTPException(409, str(error)) from error
+        except Exception:
+            raise HTTPException(
+                503, "Closure could not be confirmed; inspect the reservation before retrying"
+            ) from None
+
+    @app.post("/api/budgets/publish")
+    def publish_budgets(body: dict, access=actor_dependency):
+        data, etag, member = access
+        if member["role"] not in {"owner", "group_admin"}:
+            raise HTTPException(403, "An owner or delegated group administrator is required")
+        if budget is None:
+            raise HTTPException(409, "Deploy and validate the budget gateway before publishing")
+        if data["publish_status"] == "publishing":
+            raise HTTPException(409, "Wait for the current gateway publication to finish")
+        if (
+            body.get("revision") != data["revision"]
+            or body.get("organization") != data["settings"]["name"]
+        ):
+            raise HTTPException(409, "Review the current revision and organization name")
+        ledger, snapshots = budget
+        try:
+            expected = body.get("published_hash")
+            if member["role"] == "group_admin":
+                expected = ledger.active()
+                policy = group_publication(snapshots.get(expected), data, member)
+            else:
+                policy = snapshot(data)
+            digest = snapshots.put(policy)
+            # Save the audit before activation; never publish when the audit cannot persist.
+            audit(
+                data,
+                member,
+                "budget.publish_requested",
+                digest,
+                None,
+                {"reviewed_revision": body["revision"]},
+                member["group_id"] if member["role"] == "group_admin" else None,
+            )
+            data["revision"] += 1
+            storage().save(data, etag)
+            ledger.activate(policy, expected=expected)
+            return {
+                "published": True,
+                "policy_hash": digest,
+                "note": "Applies only to configured budget gateway routes; other endpoints are unchanged",
+            }
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except (Conflict, Contended) as error:
+            raise HTTPException(409, str(error)) from error
+        except (ValueError, BudgetDenied) as error:
+            raise HTTPException(422, str(error)) from error
+        except Exception:
+            raise HTTPException(
+                503, "Activation could not be confirmed. Read the active policy before retrying"
+            ) from None
 
     @app.get("/api/health")
     def health():

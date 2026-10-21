@@ -91,6 +91,8 @@ def validate_client(c):
         validate_conversation_import(c["conversation_import"])
     if not c.get("models"):
         raise ValueError("models must contain at least one deployed model")
+    if c.get("client_type", "claude") not in {"claude", "codex"}:
+        raise ValueError("Unknown client_type")
     seen = set()
     defaults = set()
     for model in c["models"]:
@@ -99,6 +101,12 @@ def validate_client(c):
         if model["name"] in seen:
             raise ValueError("Duplicate model deployment name")
         seen.add(model["name"])
+        if c.get("client_type") == "codex":
+            if not isinstance(model.get("model"), str) or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", model["model"]
+            ):
+                raise ValueError("Invalid upstream model name")
+            continue
         tier = model.get("anthropicFamilyTier")
         if tier not in TIERS:
             raise ValueError(f"Unknown model tier: {tier}")
@@ -106,6 +114,11 @@ def validate_client(c):
             if tier in defaults:
                 raise ValueError(f"More than one default for {tier}")
             defaults.add(tier)
+    if c.get("client_type") == "codex":
+        if c.get("default_model") not in seen:
+            raise ValueError("default_model must name a published Codex model")
+        if not urlsplit(c["gateway_url"]).path.endswith("/v1"):
+            raise ValueError("Codex gateway_url must end with /v1")
     return c
 
 
@@ -170,4 +183,8 @@ def export_client(c, auth_mode="azure-cli", client_id=None):
         result["client_id"] = client_id
     if "conversation_import" in c:
         result["conversation_import"] = copy.deepcopy(c["conversation_import"])
+    if c.get("client_type") == "codex":
+        if not all(m.get("qualified") is True for m in c["models"]):
+            raise ValueError("Qualify Codex models and remove failed candidates before exporting")
+        result.update(client_type="codex", default_model=c["default_model"])
     return validate_client(result)

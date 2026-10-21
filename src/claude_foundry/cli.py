@@ -5,8 +5,19 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, auth, client, gateway, models
-from .azure import Azure
+from . import (
+    __version__,
+    auth,
+    client,
+    codex_client,
+    codex_gateway,
+    codex_history,
+    codex_models,
+    codex_verify,
+    gateway,
+    models,
+)
+from .azure import Azure, account_path
 from .config import export_client, load_client, load_org, write_json
 from .verify import verify
 
@@ -15,11 +26,14 @@ def parser():
     p = argparse.ArgumentParser(prog="claude-foundry", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
     actions = p.add_subparsers(dest="action", required=True)
-    actions.add_parser("token", help="Print a token for Claude; never starts interactive sign-in")
+    token = actions.add_parser("token", help="Print a token; never starts interactive sign-in")
+    token.add_argument("--config", type=Path)
     login = actions.add_parser("login", help="Open the system browser for Microsoft sign-in")
     login.add_argument("--config", type=Path)
     login.add_argument("--device-code", action="store_true")
-    install = actions.add_parser("install", help="Configure Claude Desktop and Code on macOS")
+    install = actions.add_parser(
+        "install", help="Configure Claude or Codex on macOS using the profile type"
+    )
     install.add_argument("--config", type=Path, required=True)
     install.add_argument("--login", action="store_true")
     install.add_argument(
@@ -27,7 +41,17 @@ def parser():
         action="store_true",
         help="Enable Claude's import wizard; conversations are copied only after user selection",
     )
-    actions.add_parser("restore", help="Restore managed settings while preserving subsequent edits")
+    restore = actions.add_parser(
+        "restore", help="Restore managed settings while preserving subsequent edits"
+    )
+    restore.add_argument("--client", choices=["claude", "codex"], default="claude")
+    history = actions.add_parser(
+        "export-codex-history",
+        help="Export visible messages locally for a reviewed Azure handoff; preserves the source",
+    )
+    history.add_argument("--thread-id", required=True)
+    history.add_argument("--output", type=Path, required=True)
+    history.add_argument("--codex-binary", default="codex")
     check = actions.add_parser("verify", help="Make small billable gateway inference requests")
     check.add_argument("--config", type=Path)
     check.add_argument("--all-models", action="store_true")
@@ -36,15 +60,27 @@ def parser():
     )
     admin.add_argument("--config", type=Path, required=True)
     commands = admin.add_subparsers(dest="command", required=True)
+    init_codex = commands.add_parser(
+        "init-codex", help="Create a separate Codex API profile using this foundation"
+    )
+    init_codex.add_argument("--output", type=Path, required=True)
+    qualify = commands.add_parser(
+        "qualify", help="Test Responses streaming, tools and replay; billable"
+    )
+    qualify.add_argument("--report", type=Path, default=Path(".local/codex-qualification.json"))
+    qualify.add_argument(
+        "--publish-passed",
+        action="store_true",
+        help="Save only passing models to this organization profile",
+    )
     plan = commands.add_parser(
         "models", help="Discover quota, then optionally deploy missing models"
     )
     plan.add_argument("--capacity", type=int, default=10)
     plan.add_argument(
         "--sku",
-        choices=["GlobalStandard", "DataZoneStandard"],
-        default="GlobalStandard",
-        help="Deployment type for missing models; existing deployments are preserved",
+        choices=["GlobalStandard", "DataZoneStandard", "Standard"],
+        help="Restrict new deployments to this SKU; Claude defaults to GlobalStandard, Codex prefers available metered SKUs",
     )
     plan.add_argument(
         "--model",
@@ -82,7 +118,7 @@ def main():
     args = parser().parse_args()
     try:
         if args.action == "token":
-            auth.helper()
+            auth.helper(args.config)
         elif args.action == "login":
             auth.login(args.config, args.device_code)
         elif args.action == "install":
@@ -91,42 +127,119 @@ def main():
             c = load_client(args.config)
             if args.enable_history_import:
                 c.setdefault("conversation_import", {})["enabled"] = True
-            client.check_managed_preferences()
+            installer = codex_client if c.get("client_type") == "codex" else client
+            installer.check_managed_preferences()
             # Validate credentials before replacing a working configuration.
             if args.login:
                 auth.login(args.config)
             auth.credential(c)
-            print(json.dumps(client.install(c), indent=2))
-            print("Restart Claude Desktop to apply the profile.")
+            print(json.dumps(installer.install(c), indent=2))
+            print(
+                "Reopen the desktop app to apply the profile. Existing conversations are preserved."
+            )
             if c.get("conversation_import", {}).get("enabled"):
                 print(
                     "Bring existing work: Settings → Import & export → Import… in Claude Desktop."
                 )
                 print("Review the source and import summary. Original conversations stay in place.")
         elif args.action == "restore":
-            client.restore()
-        elif args.action == "verify":
-            verify(
-                load_client(args.config) if args.config else auth.installed_config(),
-                args.all_models,
+            if args.client == "codex":
+                print(codex_client.restore())
+            else:
+                client.restore()
+        elif args.action == "export-codex-history":
+            print(
+                json.dumps(
+                    codex_history.export(args.thread_id, args.output, args.codex_binary), indent=2
+                )
             )
+        elif args.action == "verify":
+            c = load_client(args.config) if args.config else auth.installed_config()
+            if c.get("client_type") == "codex":
+                selected = (
+                    c["models"]
+                    if args.all_models
+                    else [next(m for m in c["models"] if m["name"] == c["default_model"])]
+                )
+                report = [codex_verify.qualify(c, m) for m in selected]
+                print(json.dumps(report, indent=2))
+                return 0 if all(r["passed"] for r in report) else 2
+            verify(c, args.all_models)
         elif args.action == "admin":
             c = load_org(args.config)
             azure = Azure(c["subscription_id"])
-            if args.command == "models":
+            is_codex = c.get("client_type") == "codex"
+            if args.command == "init-codex":
+                if args.output.exists():
+                    raise ValueError(
+                        "Output already exists; refusing to replace an organization profile"
+                    )
+                account = azure.request("GET", account_path(c), version=models.CS_VERSION)
+                endpoint = (
+                    account.get("properties", {})
+                    .get("endpoints", {})
+                    .get("OpenAI Language Model Instance API")
+                )
+                if not endpoint:
+                    raise ValueError(
+                        "The resource does not advertise an OpenAI endpoint; review its Foundry configuration"
+                    )
+                write_json(args.output, codex_models.initialize(c, endpoint))
+                print(f"Wrote {args.output}")
+            elif args.command == "qualify":
+                if not is_codex:
+                    raise ValueError("Qualification requires a Codex organization profile")
+                report = []
+                token = auth.credential(c)
+                for m in c["models"]:
+                    result = codex_verify.qualify(c, m, token)
+                    report.append(result)
+                    write_json(args.report, report)
+                    print(
+                        f"{m['name']}: {'passed' if result['passed'] else result.get('error', 'failed')}",
+                        flush=True,
+                    )
+                if args.publish_passed:
+                    passed = {r["name"] for r in report if r["passed"]}
+                    if not passed:
+                        raise ValueError(
+                            "No model passed qualification; organization profile was preserved"
+                        )
+                    c["models"] = [
+                        dict(m, qualified=True) for m in c["models"] if m["name"] in passed
+                    ]
+                    if c["default_model"] not in passed:
+                        c["default_model"] = c["models"][0]["name"]
+                    write_json(args.config, c)
+                return 0 if all(r["passed"] for r in report) else 2
+            elif args.command == "models":
                 if args.capacity < 1 or args.wait_seconds < 0:
                     raise ValueError("capacity must be positive; wait-seconds must be nonnegative")
-                plan = models.discover(
-                    c, azure, args.capacity, sku_name=args.sku, model_names=args.model_names
+                if not is_codex and args.sku == "Standard":
+                    raise ValueError(
+                        "Claude supports GlobalStandard or DataZoneStandard in this planner"
+                    )
+                plan = (
+                    codex_models.discover(
+                        c, azure, args.capacity, model_names=args.model_names, sku_name=args.sku
+                    )
+                    if is_codex
+                    else models.discover(
+                        c,
+                        azure,
+                        args.capacity,
+                        sku_name=args.sku or "GlobalStandard",
+                        model_names=args.model_names,
+                    )
                 )
                 if args.apply:
-                    if not args.accept_marketplace_terms:
+                    if not is_codex and not args.accept_marketplace_terms:
                         raise ValueError(
                             "Model deployment may accept paid Marketplace terms. Review docs/administrator.md, then pass --accept-marketplace-terms."
                         )
                     report = models.apply(c, azure, plan, args.report, args.wait_seconds)
                     if any(
-                        r.get("state") in {"Failed", "Creating", "Updating", "Accepted"}
+                        r.get("state") in {"Failed", "Unknown", "Creating", "Updating", "Accepted"}
                         for r in report
                     ):
                         return 2
@@ -134,10 +247,14 @@ def main():
                     write_json(args.report, plan)
                     print(json.dumps(plan, indent=2))
             elif args.command == "sync-models":
-                write_json(args.config, models.sync_models(c, azure))
+                write_json(
+                    args.config, (codex_models if is_codex else models).sync_models(c, azure)
+                )
                 print(f"Saved {len(c['models'])} succeeded deployments")
             elif args.command == "gateway":
-                print(json.dumps(gateway.deploy(c, azure), indent=2))
+                print(
+                    json.dumps((codex_gateway if is_codex else gateway).deploy(c, azure), indent=2)
+                )
             elif args.command == "observability":
                 print(
                     json.dumps(

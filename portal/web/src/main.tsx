@@ -1,7 +1,9 @@
 import { Command } from "./Command";
 import { MemberImport } from "./MemberImport";
 import { CostAnalysis } from "./CostAnalysis";
+import { ContentLogs } from "./ContentLogs";
 import { Spend } from "./Spend";
+import { SignInScreen } from "./SignIn";
 import { UsageChart } from "./UsageChart";
 import {
     MemberEditor,
@@ -22,7 +24,6 @@ import {
     CurrencyDollar,
     DownloadSimple,
     GearSix,
-    Key,
     List,
     MagnifyingGlass,
     Moon,
@@ -38,15 +39,17 @@ import {
     Desktop,
     Tray,
 } from "@phosphor-icons/react";
-import { api, download, exportCsv, initialize, signIn, signOut } from "./api";
-import type {
-    Audit,
-    Bootstrap,
-    Group,
-    Member,
-    State,
-    Telemetry,
-} from "./types";
+import {
+    api,
+    download,
+    exportCsv,
+    initialize,
+    signIn,
+    signOut,
+    SignInRequiredError,
+} from "./api";
+import type { PortalSession } from "./api";
+import type { Audit, Group, Member, State, Telemetry } from "./types";
 import {
     compact,
     date,
@@ -62,6 +65,7 @@ import {
     Seal,
     Status,
 } from "./components";
+import { BudgetPanel } from "./budgets";
 import "./style.css";
 
 const pages = [
@@ -96,6 +100,12 @@ const pages = [
     },
     { id: "audit", name: "Audit log", icon: Clock, section: "" },
     {
+        id: "content-logs",
+        name: "Prompt & response logs",
+        icon: Tray,
+        section: "",
+    },
+    {
         id: "onboarding",
         name: "Developer onboarding",
         icon: Desktop,
@@ -126,7 +136,10 @@ const emptyTelemetry: Telemetry = {
 };
 
 function App() {
-    const [boot, setBoot] = useState<Bootstrap>();
+    const [boot, setBoot] = useState<PortalSession>();
+    const [starting, setStarting] = useState(true);
+    const [signingIn, setSigningIn] = useState(false);
+    const [requiresSignIn, setRequiresSignIn] = useState(false);
     const [state, setState] = useState<State>();
     const [usage, setUsage] = useState<Telemetry>(emptyTelemetry);
     const [usageError, setUsageError] = useState("");
@@ -174,23 +187,40 @@ function App() {
             if (sequence === usageSequence.current) setUsageLoading(false);
         }
     };
+    const connect = async () => {
+        setStarting(true);
+        setError("");
+        setSignInDetails("");
+        setRequiresSignIn(false);
+        try {
+            const config = await initialize();
+            setBoot(config);
+            if (config.signInError) {
+                setSignInDetails(config.signInError);
+                setError(
+                    "Microsoft could not complete sign-in. Use an authentication method permitted by your organization.",
+                );
+                setRequiresSignIn(true);
+                return;
+            }
+            // The callback restores the requested page without another navigation.
+            const params = new URLSearchParams(location.search);
+            setPage(params.get("page") || "overview");
+            setQuery(params.get("q") || "");
+            if (config.authenticated) {
+                const data = await load();
+                if (!["developer", "group_admin"].includes(data.viewer.role))
+                    void loadUsage();
+            }
+        } catch (e) {
+            setError((e as Error).message);
+            setRequiresSignIn(e instanceof SignInRequiredError);
+        } finally {
+            setStarting(false);
+        }
+    };
     useEffect(() => {
-        initialize()
-            .then(async (config) => {
-                setBoot(config);
-                if (config.signInError) {
-                    setSignInDetails(config.signInError);
-                    setError(
-                        "Microsoft could not complete sign-in. Use this portal in your normal work browser and choose an authentication method permitted by your organization.",
-                    );
-                    return;
-                }
-                if (config.configured) {
-                    const data = await load();
-                    if (data.viewer.role !== "developer") await loadUsage();
-                }
-            })
-            .catch((e) => setError(e.message));
+        void connect();
     }, []);
     useEffect(() => {
         const media = matchMedia("(prefers-color-scheme: dark)");
@@ -279,88 +309,47 @@ function App() {
             setBusy(false);
         }
     };
-    if (!boot)
+    if (starting || !state || !boot)
         return (
-            <div className="signinscreen">
-                <div className="signincard">
-                    <Seal />
-                    <h1>Claude & Codex Admin</h1>
-                    {error ? (
-                        <Notice tone="error">{error}</Notice>
-                    ) : (
-                        <p className="muted">
-                            Connecting to your organization…
-                        </p>
-                    )}
-                    <button
-                        className="button"
-                        onClick={() => location.reload()}
-                    >
-                        <ArrowClockwise />
-                        Retry connection
-                    </button>
-                </div>
-            </div>
-        );
-    if (!state)
-        return (
-            <div className="signinscreen">
-                <div className="signincard">
-                    <Seal size={48} />
-                    <span className="preview">Development preview</span>
-                    <h1 style={{ marginTop: 24 }}>
-                        Your organization.
-                        <br />
-                        Your Claude.
-                    </h1>
-                    <p className="muted">
-                        One place to manage developer access, understand usage,
-                        and set the boundaries.
-                    </p>
-                    {error && error !== "Sign in to continue." && (
-                        <Notice tone="error">{error}</Notice>
-                    )}
-                    {signInDetails && (
-                        <details className="footnote">
-                            <summary>Sign-in diagnostic details</summary>
-                            <p>{signInDetails}</p>
-                        </details>
-                    )}
-                    {boot.configured ? (
-                        <button
-                            className="button primary"
-                            onClick={() =>
-                                signIn().catch((e) => setError(e.message))
-                            }
-                        >
-                            <Key size={18} />
-                            Continue with Microsoft
-                        </button>
-                    ) : (
-                        <Notice>
-                            Finish the single-tenant Entra application
-                            registration to enable sign-in.
-                        </Notice>
-                    )}
-                    <small>
-                        Access is limited to people authorized by your
-                        organization. Your existing Claude conversations stay on
-                        your devices.
-                    </small>
-                </div>
-            </div>
+            <SignInScreen
+                boot={boot}
+                loading={starting}
+                signingIn={signingIn}
+                requiresSignIn={requiresSignIn}
+                error={error}
+                details={signInDetails}
+                onRetry={() => void connect()}
+                onSignOut={() => signOut().catch((e) => setError(e.message))}
+                onSignIn={() => {
+                    setSigningIn(true);
+                    setError("");
+                    signIn().catch((e) => {
+                        setError(e.message);
+                        setSigningIn(false);
+                    });
+                }}
+            />
         );
     const admin = ["owner", "admin"].includes(state.viewer.role);
+    const groupAdmin = state.viewer.role === "group_admin";
+    const manager = admin || groupAdmin;
     const finance = admin || state.viewer.role === "billing";
     const developer = state.viewer.role === "developer";
     const dirty = state.policy_hash !== state.published_hash;
     const filteredPages = pages.filter(
-        (p) => !developer || ["requests", "onboarding"].includes(p.id),
+        (p) =>
+            (!developer ||
+                ["requests", "onboarding", "budgets"].includes(p.id)) &&
+            (!groupAdmin ||
+                !["overview", "analytics", "settings"].includes(p.id)) &&
+            (p.id !== "content-logs" || manager),
     );
     const currentPage =
-        developer && !["requests", "onboarding"].includes(page)
+        developer && !["requests", "onboarding", "budgets"].includes(page)
             ? "onboarding"
-            : page;
+            : groupAdmin && ["overview", "analytics", "settings"].includes(page)
+              ? "members"
+              : page;
     const memberById = (id: string) => state.members.find((m) => m.id === id);
     const groupById = (id: string) => state.groups.find((g) => g.id === id);
     const modelLabel = (id: string) =>
@@ -391,6 +380,19 @@ function App() {
     const total = usage.daily.reduce((n, r) => n + r.requests, 0);
     const failures = usage.daily.reduce((n, r) => n + r.errors, 0);
     const content = () => {
+        if (currentPage === "content-logs")
+            return manager ? (
+                <ContentLogs
+                    members={state.members}
+                    onAudit={() => {
+                        void load();
+                    }}
+                />
+            ) : (
+                <Notice>
+                    Only owners and administrators can view content logs.
+                </Notice>
+            );
         if (currentPage === "overview")
             return (
                 <>
@@ -608,7 +610,11 @@ function App() {
                                             className="iconbutton"
                                             aria-label="Review draft"
                                             onClick={() =>
-                                                setPanel({ kind: "publish" })
+                                                state.budget_configured
+                                                    ? nav("budgets")
+                                                    : setPanel({
+                                                          kind: "publish",
+                                                      })
                                             }
                                         >
                                             <ArrowRight />
@@ -703,9 +709,10 @@ function App() {
                                     </div>
                                 </dl>
                                 <p className="footnote">
-                                    This portal does not store conversation
-                                    content. Review Azure diagnostic capture
-                                    settings separately.
+                                    Portal state does not store message content.
+                                    Optional prompt and response logs use a
+                                    separate Azure workspace with restricted
+                                    access.
                                 </p>
                             </section>
                         </div>
@@ -737,7 +744,7 @@ function App() {
                             <DownloadSimple />
                             Export
                         </button>
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button"
                                 onClick={() =>
@@ -747,7 +754,7 @@ function App() {
                                 Import CSV
                             </button>
                         )}
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button primary"
                                 onClick={() => setPanel({ kind: "member" })}
@@ -776,7 +783,11 @@ function App() {
                                     <th>Role</th>
                                     <th>Primary group</th>
                                     <th>Status</th>
-                                    <th className="numeric">Monthly tokens</th>
+                                    <th className="numeric">
+                                        {state.budget_configured
+                                            ? "Monthly USD limit (draft)"
+                                            : "Monthly tokens"}
+                                    </th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -824,9 +835,13 @@ function App() {
                                                 </Status>
                                             </td>
                                             <td className="numeric">
-                                                {m.monthly_tokens
-                                                    ? fmt(m.monthly_tokens)
-                                                    : "No personal limit"}
+                                                {state.budget_configured
+                                                    ? m.spend_limit_usd == null
+                                                        ? "Inherits group"
+                                                        : `$${m.spend_limit_usd}`
+                                                    : m.monthly_tokens
+                                                      ? fmt(m.monthly_tokens)
+                                                      : "No personal token limit"}
                                             </td>
                                             <td>
                                                 <button
@@ -890,7 +905,11 @@ function App() {
                                     <th className="numeric">Members</th>
                                     <th>Default model</th>
                                     <th>Models</th>
-                                    <th className="numeric">Monthly tokens</th>
+                                    <th className="numeric">
+                                        {state.budget_configured
+                                            ? "Monthly USD limit (draft)"
+                                            : "Monthly tokens"}
+                                    </th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -926,9 +945,16 @@ function App() {
                                         </td>
                                         <td>{g.model_ids.length} allowed</td>
                                         <td className="numeric">
-                                            {g.monthly_tokens
-                                                ? fmt(g.monthly_tokens)
-                                                : "Not set"}
+                                            {state.budget_configured
+                                                ? g.spend_limit_usd != null
+                                                    ? `$${g.spend_limit_usd}`
+                                                    : g.spend_ceiling_usd !=
+                                                        null
+                                                      ? `$${g.spend_ceiling_usd} (ceiling)`
+                                                      : "Not set"
+                                                : g.monthly_tokens
+                                                  ? fmt(g.monthly_tokens)
+                                                  : "Not set"}
                                         </td>
                                         <td>
                                             <button
@@ -963,10 +989,14 @@ function App() {
                         title="Model access"
                         description="Model entitlements come from a developer’s primary group and any approved personal grants."
                     >
-                        {admin && (
+                        {manager && (
                             <button
                                 className="button primary"
-                                onClick={() => setPanel({ kind: "publish" })}
+                                onClick={() =>
+                                    groupAdmin || state.budget_configured
+                                        ? nav("budgets")
+                                        : setPanel({ kind: "publish" })
+                                }
                             >
                                 Review & publish
                                 <ArrowRight />
@@ -1107,11 +1137,18 @@ function App() {
                         description="Administration roles apply to this console. Model access is governed separately by groups."
                     />
                     <div className="sheet tablewrap">
-                        <div className="rolegrid">
+                        <div
+                            className="rolegrid"
+                            style={{
+                                gridTemplateColumns:
+                                    "minmax(200px, 2fr) repeat(6, minmax(90px, 1fr))",
+                            }}
+                        >
                             <div className="heading">Permission</div>
                             {[
                                 "Owner",
                                 "Administrator",
+                                "Group admin",
                                 "Billing",
                                 "Auditor",
                                 "Developer",
@@ -1121,15 +1158,24 @@ function App() {
                                 </div>
                             ))}
                             {[
-                                ["View organization", 1, 1, 1, 1, 0],
-                                ["Manage members", 1, 1, 0, 0, 0],
-                                ["Manage ownership", 1, 0, 0, 0, 0],
-                                ["Publish policy", 1, 1, 0, 0, 0],
-                                ["Edit token limits", 1, 1, 0, 0, 0],
-                                ["Edit dollar budget", 1, 1, 1, 0, 0],
-                                ["Read usage & audit", 1, 1, 1, 1, 0],
-                                ["Request model access", 1, 1, 1, 1, 1],
-                                ["Download own setup", 1, 1, 1, 1, 1],
+                                ["View organization", 1, 1, 0, 1, 1, 0],
+                                ["Manage team developers", 1, 1, 1, 0, 0, 0],
+                                ["Manage ownership", 1, 0, 0, 0, 0, 0],
+                                [
+                                    "Set organization / group ceilings",
+                                    1,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                ],
+                                ["Set team / user limits", 1, 1, 1, 0, 0, 0],
+                                ["Edit planning rates", 1, 1, 0, 1, 0, 0],
+                                ["Read usage & audit", 1, 1, 1, 1, 1, 0],
+                                ["Inspect captured content", 1, 1, 1, 0, 0, 0],
+                                ["Request model access", 1, 1, 1, 1, 1, 1],
+                                ["Download own setup", 1, 1, 1, 1, 1, 1],
                             ].map(([label, ...values]) => (
                                 <div
                                     key={String(label)}
@@ -1156,9 +1202,12 @@ function App() {
                         </div>
                     </div>
                     <Notice>
-                        These permissions are enforced by the API. Only an owner
-                        can appoint another owner; no one can suspend themselves
-                        or remove the last active owner.
+                        Group administrators are restricted to their own team,
+                        including content logs. All model requests, including
+                        owners’, remain subject to organization, group and user
+                        limits. These permissions are enforced by the API. Only
+                        an owner can appoint another owner; no one can suspend
+                        themselves or remove the last active owner.
                     </Notice>
                 </>
             );
@@ -1173,27 +1222,36 @@ function App() {
                         }
                         description={
                             currentPage === "budgets"
-                                ? "Set token boundaries at the gateway and a dollar budget for planning."
+                                ? "Review monthly USD limits, reserved requests, and planning estimates."
                                 : "Your customer-owned control plane, connected to Microsoft Entra and Azure."
                         }
                     />
-                    {currentPage === "budgets" && (
+                    {currentPage === "budgets" && !state.budget_configured && (
                         <Notice>
                             Token quotas apply after publishing. APIM estimates
                             streamed tokens and concurrent requests can
-                            overshoot. Dollar budgets are planning thresholds,
-                            not hard Azure billing caps.
+                            overshoot. Legacy planning amounts do not stop
+                            requests. Enforced USD limits require the dedicated
+                            budget gateway shown below.
                         </Notice>
                     )}
-                    <SettingsForm
-                        key={state.revision}
-                        settings={state.settings}
-                        admin={admin}
-                        finance={finance}
-                        busy={busy}
-                        save={(v) => save("settings", v)}
-                        organization={currentPage === "settings"}
-                    />
+                    {currentPage === "budgets" && (
+                        <BudgetPanel state={state} busy={busy} save={save} />
+                    )}
+                    {!groupAdmin &&
+                        !developer &&
+                        (!state.budget_configured ||
+                            currentPage === "settings") && (
+                            <SettingsForm
+                                key={state.revision}
+                                settings={state.settings}
+                                admin={admin}
+                                finance={finance}
+                                busy={busy}
+                                save={(v) => save("settings", v)}
+                                organization={currentPage === "settings"}
+                            />
+                        )}
                     {currentPage === "settings" && (
                         <div className="settings" style={{ marginTop: 32 }}>
                             <h2>Connected services</h2>
@@ -1229,7 +1287,9 @@ function App() {
                                 <div className="health">
                                     <dt>Data captured</dt>
                                     <dd>
-                                        Usage metadata and administrator changes
+                                        Usage metadata, administrator changes,
+                                        and optionally captured inference
+                                        messages
                                     </dd>
                                 </div>
                             </dl>
@@ -1237,8 +1297,9 @@ function App() {
                                 Conversation retention, tool restrictions,
                                 device compliance, and invoices are managed in
                                 Claude, your device management platform, and
-                                Azure. This portal does not collect chat content
-                                or issue compliance certifications.
+                                Azure. Optional captured messages remain in the
+                                protected Log Analytics workspace and are read
+                                through audited, role-scoped requests.
                             </Notice>
                         </div>
                     )}
@@ -1254,10 +1315,14 @@ function App() {
                                         <tr>
                                             <th>Group</th>
                                             <th className="numeric">
-                                                Planning budget / month
+                                                {state.budget_configured
+                                                    ? "Owner ceiling / month"
+                                                    : "Planning budget / month"}
                                             </th>
                                             <th className="numeric">
-                                                Token quota / month
+                                                {state.budget_configured
+                                                    ? "Operating limit / month"
+                                                    : "Token quota / month"}
                                             </th>
                                             <th></th>
                                         </tr>
@@ -1267,17 +1332,29 @@ function App() {
                                             <tr key={g.id}>
                                                 <td>{g.name}</td>
                                                 <td className="numeric">
-                                                    {g.budget_usd
-                                                        ? `$${fmt(g.budget_usd)}`
-                                                        : "Not set"}
+                                                    {state.budget_configured
+                                                        ? g.spend_ceiling_usd ==
+                                                          null
+                                                            ? "Not set"
+                                                            : `$${g.spend_ceiling_usd}`
+                                                        : g.budget_usd
+                                                          ? `$${fmt(g.budget_usd)}`
+                                                          : "Not set"}
                                                 </td>
                                                 <td className="numeric">
-                                                    {g.monthly_tokens
-                                                        ? fmt(g.monthly_tokens)
-                                                        : "Not set"}
+                                                    {state.budget_configured
+                                                        ? g.spend_limit_usd ==
+                                                          null
+                                                            ? "Inherits owner ceiling"
+                                                            : `$${g.spend_limit_usd}`
+                                                        : g.monthly_tokens
+                                                          ? fmt(
+                                                                g.monthly_tokens,
+                                                            )
+                                                          : "Not set"}
                                                 </td>
                                                 <td>
-                                                    {admin && (
+                                                    {manager && (
                                                         <button
                                                             className="button text"
                                                             onClick={() =>
@@ -1303,7 +1380,7 @@ function App() {
                             </p>
                         </section>
                     )}
-                    {currentPage === "budgets" && (
+                    {currentPage === "budgets" && !developer && !groupAdmin && (
                         <Spend
                             state={state}
                             usage={usage}
@@ -1321,7 +1398,7 @@ function App() {
                 <>
                     <PageHead
                         title="Usage & analytics"
-                        description="Operational activity from Application Insights. Prompt and response content is never shown."
+                        description="Operational activity from Application Insights. Captured content has a separate, restricted workspace."
                     >
                         <select
                             aria-label="Usage period"
@@ -1664,7 +1741,7 @@ function App() {
                                         </small>
                                     </div>
                                     <div className="actions">
-                                        {r.status === "open" && admin ? (
+                                        {r.status === "open" && manager ? (
                                             <>
                                                 <button
                                                     className="button"
@@ -1741,7 +1818,7 @@ function App() {
                                     their primary group, and publish the
                                     reviewed gateway policy.
                                 </p>
-                                {admin && (
+                                {manager && (
                                     <button
                                         className="button"
                                         onClick={() => nav("members")}
@@ -1981,7 +2058,7 @@ function App() {
                                 permissions before retrying.
                             </Notice>
                         )}
-                        {!admin && !developer && (
+                        {!manager && !developer && (
                             <Notice>
                                 {state.viewer.role === "billing"
                                     ? "You can edit the dollar planning budget and view operational data. Access and token controls require an owner or administrator."
@@ -1996,7 +2073,12 @@ function App() {
                 <MemberEditor
                     state={state}
                     member={panel.value}
-                    editable={admin}
+                    editable={
+                        manager &&
+                        (!groupAdmin ||
+                            !panel.value ||
+                            panel.value.role === "developer")
+                    }
                     busy={busy}
                     close={() => setPanel(undefined)}
                     save={async (v) => {
@@ -2016,7 +2098,7 @@ function App() {
                 <GroupEditor
                     state={state}
                     group={panel.value}
-                    editable={admin}
+                    editable={manager}
                     busy={busy}
                     close={() => setPanel(undefined)}
                     save={async (v) => {
@@ -2024,10 +2106,10 @@ function App() {
                     }}
                 />
             )}
-            {panel?.kind === "publish" && (
+            {panel?.kind === "publish" && !state.budget_configured && (
                 <PublishDialog
                     state={state}
-                    editable={admin}
+                    editable={manager}
                     close={() => setPanel(undefined)}
                     completed={async () => {
                         await load();

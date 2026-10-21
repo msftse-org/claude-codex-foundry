@@ -5,17 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "claude-foundry"
 version = "0.1.0"
-description = "Deploy and onboard Claude Desktop and Code through standard Azure API Management and Foundry"
+description = "Deploy and onboard Claude and Codex through standard Azure API Management and Foundry"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "tomlkit>=0.13,<1",
+]
 
 [project.optional-dependencies]
 auth = ["msal>=1.33,<2", "msal-extensions>=1.3,<2"]
 portal = [
+    "azure-data-tables>=12.7,<13",
     "azure-functions>=1.23,<2",
     "azure-identity>=1.21,<2",
     "azure-storage-blob>=12.25,<13",
+    "azurefunctions-extensions-http-fastapi>=1,<2",
     "fastapi>=0.115,<1",
     "httpx>=0.28,<1",
     "pyjwt[crypto]>=2.10,<3",

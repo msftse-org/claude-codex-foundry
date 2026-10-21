@@ -1,5 +1,9 @@
 # Identity, permissions, and request flow
 
+> **Budget hierarchy branch:** follow the [Azure architecture and identity flow](budget-architecture.md) for the dedicated budget runtime, then [Enforced USD limits](budget-enforcement.md) for the additional `group_admin` role, owner-controlled ceilings, shared ledger and request-time team content scope. These remain subject to release checks. The legacy token/planning controls below still describe the existing gateway.
+
+For Codex Desktop/CLI, see [Codex identity and routing](codex.md#identity-security-and-logging). The feature preview uses the baseline user-token/RBAC path through a separate `codex-foundry` API; portal roles and grants currently apply to Claude only. Users may choose the same Azure CLI or lightweight MSAL sign-in mechanism.
+
 [← README](../README.md) · [Security boundaries](security.md) · [Portal guide](portal-guide.md) · [Validation evidence](../portal/VALIDATION.md)
 
 Claude & Codex on Azure separates three kinds of authority: permission to use a model, permission to administer the portal, and permission to administer Azure. A portal role does not grant an Azure role or an Entra directory role.
@@ -26,12 +30,14 @@ The portal is outside the inference path. An unavailable portal stops administra
 ## Portal sign-in and server authorization
 
 1. The SPA loads public bootstrap metadata: tenant ID, portal client ID, and sign-in configuration. These identifiers are not secrets. HTML, assets, bootstrap, and health are public; organization state is authenticated.
-2. MSAL performs authorization-code sign-in with PKCE against the organization's tenant. It requests the portal's delegated `api://<portal-client-id>/access_as_user` scope. There is no browser client secret. The current implementation uses browser session storage for MSAL's cache.
+2. MSAL performs authorization-code sign-in with PKCE against the organization's tenant. It requests the portal's delegated `api://<portal-client-id>/access_as_user` scope. There is no browser client secret. The current implementation uses browser session storage for MSAL's cache. One MSAL instance processes the callback on the registered root URL, without a second redirect back to the originating page. The requested portal page travels in MSAL's validated custom state and is restored only as a same-origin root query; external URLs, API paths and OAuth fragments are not restored.
 3. The API validates the JWT signature against that tenant's fixed signing-key endpoint, RS256 algorithm, v2 issuer, audience, tenant, expiration, not-before and issued-at claims. It also requires `access_as_user`, the expected client (`azp`), and a valid user object ID (`oid`). A Cognitive Services token is not a portal access token.
 4. The server looks up that object ID in private portal state and requires an active member. Email, display name, browser-provided roles, and forwarded identity headers cannot grant access. A guest uses its object ID **in the resource tenant**.
 5. Every API request checks membership again. Authorization and mutations use the same state snapshot; writes require its Blob ETag and the client's reviewed revision. Concurrent changes fail with 409 rather than overwrite another administrator's work.
 
 These checks follow Microsoft's guidance to validate the token's [audience, tenant, subject, and authorized client](https://learn.microsoft.com/en-us/entra/identity-platform/claims-validation). Conditional Access, MFA, consent, and account disablement remain Entra responsibilities. The app does not configure those tenant policies or claim immediate revocation of an already issued Entra token. Portal suspension blocks subsequent portal requests; requests already in progress may finish.
+
+The portal keeps the loading screen visible until authentication and the first organization-state read finish; it does not offer another login during that work. A connection or permission failure with an authenticated session offers **Retry connection**, which reuses that session. A rejected read token triggers one silent refresh and one retry; writes and 403 permission denials are never automatically replayed. When Microsoft requires interaction, the portal waits for an explicit **Continue with Microsoft** action and prevents duplicate redirects. It does not automatically sign users out or initiate repeated MFA requests. See Microsoft's [redirect initialization](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/initialization) and [custom-state guidance](https://learn.microsoft.com/en-us/entra/msal/javascript/browser/mip-pass-custom-state).
 
 Use a dedicated single-tenant registration per environment. Register exact HTTPS redirect URIs. Localhost redirect URIs are for development registrations and should be removed from a customer production registration. The development `PORTAL_LOCAL_MODE=1` bypass requires loopback, is rejected in Azure, and must never be exposed through a tunnel or reverse proxy.
 
@@ -42,6 +48,7 @@ Use a dedicated single-tenant registration per environment. Register exact HTTPS
 | View organization members, groups, audit and analytics | Yes | Yes | Yes | Yes | Own member/group and requests only |
 | Export own client profile; request model access | Yes | Yes | Yes | Yes | Yes |
 | Add/import/edit members and model grants | Yes | Yes, except owners | No | No | No |
+| Inspect captured prompts/responses with an audited reason | Yes | Yes | No | No | No |
 | Change ownership | Yes | No | No | No | No |
 | Edit groups, token quotas and request rates | Yes | Yes | No | No | No |
 | Set organization dollar planning threshold and model rates | Yes | Yes | Yes | No | No |
@@ -59,6 +66,7 @@ Billing and auditors can read organization identities and administrative history
 | --- | --- | --- |
 | Portal user-assigned managed identity | Custom Claude & Codex policy editor | One configured APIM API. Allows API-policy and operation-policy read/write. The code updates the API policy and `models` operation; the role can edit **all operation policies within that API**. |
 | Portal managed identity | Monitoring Reader | Selected Application Insights component, for usage and cost queries. This can read the component's other telemetry too; API filtering in application queries does not narrow Azure RBAC. Use a dedicated component when stronger isolation is required. |
+| Portal managed identity (optional content logging) | Log Analytics Reader | Dedicated content-log workspace. Reads its underlying tables; API allowlisting is enforced by portal code, not this Azure role. Workspace/Azure administrators can bypass portal view auditing. |
 | Portal managed identity | Monitoring Metrics Publisher | Same Insights component, for authenticated portal telemetry ingestion. |
 | Portal managed identity | Storage Blob Data Owner | Dedicated portal storage account, containing Functions host/deployment data and portal state. This includes write/delete authority over those blobs. |
 | APIM managed identity | Cognitive Services User | Configured Foundry account, for governed inference. Confirm the actual foundation/preview assignments before deployment. |

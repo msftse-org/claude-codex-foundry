@@ -1,6 +1,24 @@
 # Portal verification record
 
-Status: **preview**. Source is maintained in `main`; this record is evidence for the isolated Azure preview, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
+Status: **preview**. The baseline source is maintained in `main`; the Codex and content-log extension remains on `feat/codex-azure`. This record is evidence for the isolated Azure preview, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
+
+## Verification on 2026-10-15: restricted content logs
+
+The `feat/codex-azure` preview adds native APIM message capture for Claude and Codex. Capture remains opt-in in the template; it was explicitly enabled on the isolated preview Claude API and the Codex API for this verification. Existing demo resources were not renamed or migrated.
+
+| Check | Evidence |
+| --- | --- |
+| Native capture | Synthetic Claude Messages and OpenAI Responses requests returned HTTP 200 in both JSON and streaming modes. All four had correlated prompt and response records in `ApiManagementGatewayLlmLog`. Gateway traces supplied the authenticated developer object ID. |
+| Hosted content view | The existing signed-in Edge owner session opened both streaming captures through the hosted portal's managed identity. Prompt, response and raw-record controls worked; the access reason was required before opening. No new sign-in was needed. Combined API/model/developer filters returned three expected Codex records; an unknown model showed the empty state. |
+| Access audit | Hosted `content.view_requested` events contained the actor, UTC time, correlation ID and reason, without message bodies. Automated tests prove audit-storage failure prevents the content query. |
+| Query boundaries | API/resource allowlists, retention clamping, escaped model filters, stable pagination, invalid inputs and fragment limits tested. Model filtering happens after correlation so native fragments without model fields are retained. |
+| Authorization | All five portal roles tested with signed-token authentication. Only owners and administrators can configure-view, search or open content. Revocation during a query denies its result. Real customer administrator/billing/auditor/developer sessions remain acceptance work. |
+| Azure configuration | Dedicated content workspace; resource-only access disabled. Both native message and gateway correlation tables report seven-day Analytics and total retention. Portal managed identity has Log Analytics Reader scoped to this workspace. Conventional HTTP body capture is zero; headers are unselected and credentials masked. |
+| Build and tests | **143 Python tests and 14 frontend tests pass**; Ruff, strict TypeScript/Vite build and all three Bicep templates pass. |
+
+A seven-day table setting is not proof of immediate physical erasure: Azure retention/deletion behavior still applies. Direct Azure workspace readers can bypass portal access auditing. The state audit is mutable/versioned, not immutable. No sustained customer-scale throughput or logging-cost claim is made. See [content logging](../docs/content-logs.md) for deployment, stop-capture instructions and limitations.
+
+The same day's README routing investigation **did not validate the Azure Desktop UI path**: the three existing-conversation turns used the normal OpenAI provider, with no matching APIM requests. A separate controlled Responses request did appear in APIM. See [Codex routing evidence](../docs/codex-validation.md).
 
 ## Verification on 2026-10-14
 
@@ -46,6 +64,8 @@ The `fix/portal-validation-security` review checked every implemented portal fea
 The walkthrough's screenshots were captured from the actual hosted preview on 2026-10-14, with pointers and customer identifiers excluded. Earlier checks covered group/model filtering, custom UTC dates, trend/daily tables, unsaved-form discard, command search with Enter navigation, focus restoration, and a 390-pixel light/dark layout. See the [portal walkthrough](../docs/portal-guide.md) and [capture notes](../docs/images/README.md). Those screenshots illustrate features; the table above is the current test record.
 
 ## Remaining customer acceptance work
+
+- **Required spending control is not implemented:** hard organization/group/user dollar limits, shared Claude/Codex accounting, and scoped group-administrator permissions. The existing token-quota tests do not validate these requirements. See the [release-blocking acceptance criteria](../docs/budget-enforcement.md).
 
 - Real administrator, billing, auditor and developer sessions under the customer's Conditional Access, consent and device policies; account disablement/expired-token journeys.
 - Complete the hosted browser CSV upload once extension file access is available, and a fresh Mac installation from the exported portal profile. Verify MSAL mode with a separate desktop registration if Azure CLI-free onboarding is required.

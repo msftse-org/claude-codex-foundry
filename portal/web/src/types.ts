@@ -1,4 +1,10 @@
-export type Role = "owner" | "admin" | "billing" | "auditor" | "developer";
+export type Role =
+    | "owner"
+    | "admin"
+    | "group_admin"
+    | "billing"
+    | "auditor"
+    | "developer";
 export interface Member {
     id: string;
     name: string;
@@ -8,6 +14,7 @@ export interface Member {
     group_id: string;
     monthly_tokens: number;
     extra_models: string[];
+    spend_limit_usd?: string | null;
 }
 export interface Group {
     id: string;
@@ -17,6 +24,9 @@ export interface Group {
     default_model: string;
     monthly_tokens: number;
     budget_usd: number;
+    spend_ceiling_usd?: string | null;
+    spend_limit_usd?: string | null;
+    delegated_models?: string[];
 }
 export interface Model {
     name: string;
@@ -27,6 +37,8 @@ export interface Model {
 export interface Settings {
     name: string;
     monthly_budget_usd: number;
+    spend_limit_usd?: string | null;
+    budget_enforcement?: boolean;
     monthly_tokens: number;
     member_tokens_per_minute: number;
     member_requests_per_minute: number;
@@ -53,6 +65,8 @@ export interface AccessRequest {
 }
 export interface State {
     revision: number;
+    budget_configured?: boolean;
+    budget_prices?: BudgetPrice[];
     viewer: Member;
     members: Member[];
     groups: Group[];
@@ -114,4 +128,19 @@ export interface Bootstrap {
     configured: boolean;
     local: boolean;
     name: string;
+}
+
+export interface BudgetPrice {
+    model: string;
+    provider: "anthropic" | "openai";
+    deployment_version: string;
+    max_input_tokens: number;
+    max_output_tokens: number;
+    default_output_tokens: number;
+    input_ceiling_per_million: string;
+    output_ceiling_per_million: string;
+    source_url: string;
+    verified_at: string;
+    valid_until: string;
+    note: string;
 }

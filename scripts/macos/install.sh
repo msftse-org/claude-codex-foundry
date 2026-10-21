@@ -48,4 +48,5 @@ if [[ "$task_history" == true ]]; then
   task_install_args+=(--enable-history-import)
 fi
 "$task_runtime/bin/claude-foundry" "${task_install_args[@]}"
-echo "Installed. Restart Claude Desktop. Recovery: $task_runtime/bin/claude-foundry restore"
+task_client="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("client_type", "claude"))' "$task_profile")"
+echo "Installed. Reopen the desktop app. Recovery: $task_runtime/bin/claude-foundry restore --client $task_client"
