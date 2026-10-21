@@ -18,7 +18,7 @@ Yes, through Claude Desktop's native import wizard. Claude & Codex on Azure supp
 
 ## Can Codex Desktop and CLI use the same Azure foundation?
 
-Yes, on the `feat/codex-azure` feature branch. A separate **Codex via Azure Foundry** API exposes stateless OpenAI Responses with Entra authentication. The Mac installer preserves existing Codex settings and sessions. The baseline portal governance remains Claude-only; the unreleased budget hierarchy adds shared Claude/Codex permissions and monetary counters on dedicated routes. See [Codex setup](codex.md), [budget architecture](budget-architecture.md) and the [model/client validation record](codex-validation.md).
+Yes. Codex support is included in `main`. A separate **Codex via Azure Foundry** API exposes stateless OpenAI Responses with Entra authentication. The Mac installer preserves existing Codex settings and sessions. The baseline portal governance remains Claude-only; the optional budget hierarchy preview adds shared Claude/Codex permissions and monetary counters on dedicated routes. See [Codex setup](codex.md), [budget architecture](budget-architecture.md) and the [model/client validation record](codex-validation.md).
 
 Existing OpenAI-backed Codex conversations can contain encrypted state Azure cannot decrypt. The included read-only history exporter supports a reviewed visible-text handoff into a new Azure conversation. It preserves the original but does not transfer attachments, tool payloads or hidden reasoning. Ordinary ChatGPT cloud history is outside this integration.
 
@@ -36,7 +36,7 @@ It is a working preview. Offline import and generated-policy-size checks cover 2
 
 ## Does a dollar budget stop spending?
 
-Legacy planning amounts do not stop requests. The unreleased [budget gateway](budget-enforcement.md) adds atomic organization/group/user reservations across Claude and Codex. It applies only after that service and its dedicated routes are deployed and a reviewed policy is published. All limits apply to owners too. A zero spending allowance blocks new requests; an unset personal allowance inherits the group limit. Existing endpoints retain their previous behavior. Configure Azure billing alerts separately for infrastructure and other charges.
+Legacy planning amounts do not stop requests. The optional [budget gateway preview](budget-enforcement.md) adds atomic organization/group/user reservations across Claude and Codex. It applies only after that service and its dedicated routes are deployed and a reviewed policy is published. All limits apply to owners too. A zero spending allowance blocks new requests; an unset personal allowance inherits the group limit. Existing endpoints retain their previous behavior. Configure Azure billing alerts separately for infrastructure and other charges.
 
 ## What is the budget service, and who checks each request?
 

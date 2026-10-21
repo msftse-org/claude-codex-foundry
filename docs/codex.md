@@ -2,7 +2,7 @@
 
 Connect local Codex work to OpenAI models deployed in your organization's Azure Foundry resource, through a dedicated API on **standard Azure API Management**. Users authenticate with Microsoft Entra ID. Claude can use the same foundation through its separate API.
 
-**Feature preview:** this work lives on `feat/codex-azure`. Review and pilot it before a customer rollout. The existing administration portal currently governs Claude; it does **not** publish Codex access policies, budgets, or OpenAI pricing. Codex uses the baseline Entra/RBAC gateway described below.
+**Feature preview, included in `main`:** review and pilot it before a customer rollout. The baseline administration portal policy governs Claude; it does **not** publish Codex access policies or budgets. Codex uses the baseline Entra/RBAC gateway described below. The separately deployed [budget gateway preview](budget-architecture.md) supports shared Claude/Codex permissions, reviewed enforcement rates and USD limits.
 
 ## What is supported
 
