@@ -81,6 +81,24 @@ Native APIM logs contained prompt and response fragments for the six completed H
 
 Capture remains opt-in with seven-day retention and a 256 KiB limit per direction. Large prompts may be truncated; interrupted requests can lack response fragments. Capture is not a complete conversation archive. The $1 policy remains active on the dedicated budget routes, and the remaining release checks below still apply.
 
+## Verified policy cache — October 21, 2026
+
+Both the budget runtime and isolated budget portal were rebuilt from `0e5c9ce` and successfully deployed. The packages contained the same policy-cache module as that commit. The implementation caches only verified immutable snapshot bytes, with eight-entry / 8 MiB bounds, independent caller copies and coalesced concurrent downloads. The active Table reference, pause state and monetary transactions remain uncached. The [architecture and sequence diagram](budget-architecture.md#how-apim-caching-and-azure-table-work-together) explain the APIM/Table boundary and failure behavior.
+
+**Automated evidence:** all 206 Python tests pass locally on Python 3.11 and 3.13, including 27 added cache/boundary cases. Lint and formatting pass. Both repositories' CI passed the Python matrix on macOS/Linux, the portal checks and Bicep compilation for the implementation commits.
+
+- Sixteen simultaneous cold reads share one download. Failed loads propagate to waiters and are retried from storage on a later request, without caching the failure.
+- Tests cover entry/byte eviction, oversized-document bypass, storage-client isolation, mutable caller copies, corrupt/missing documents and durable publication verification despite a warm cache. A blocked download does not block a different digest.
+- With the old policy warm, suspension, model removal, each monetary ceiling, pause, Table outage, newly active missing/corrupt snapshots and expired rates prevent dispatch. A policy publication between ledger reads and the reservation commit rejects stale admission through the existing ETag barrier.
+- One hundred concurrent admission attempts through the warm snapshot cache obtain exactly ten reservations against a synthetic ten-request allowance, while downloading the policy only once. This is a deterministic local test, not a hosted load measurement.
+- Both generated APIM policies retain identity validation and a mandatory backend call, with no cached admission or semantic-answer policies.
+
+**Hosted evidence:** repeated authenticated catalog reads returned 200 on both provider routes. Both short inference probes returned 403 `budget_denied` for insufficient monthly **user** allowance after those reads. Forged principal/group headers did not change the authenticated account or its balances. Anonymous APIM calls, anonymous backend calls and direct user-token backend calls returned 401. The portal health/bootstrap reads returned 200; anonymous state and budget-balance reads returned 401, with `Cache-Control: no-store` on all four responses.
+
+Before/after authoritative balance reads were identical: $0.938420 spent, $0 reserved and $0.061580 personal allowance remaining under the $1 cap. Group and organization limits remained $5 and $10. Neither probe dispatched billable inference or changed the ledger. Both deployed APIM policy bodies were identical before and after the update; no custom value cache, semantic cache, alternate route or Redis resource was added.
+
+The live checks exercise the deployed application boundary, not a controlled cache-hit latency benchmark. Cache download counts, corruption, revocation races and storage-outage cases were verified locally; this update did not inject those faults into the hosted account or complete the outstanding multi-instance and independent administrator sign-in checks. Private deployment reports, account IDs and request evidence remain outside Git.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.
