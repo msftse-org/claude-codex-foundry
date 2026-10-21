@@ -871,7 +871,7 @@ def test_shared_cache_failure_falls_back_only_to_verified_durable_version(
     assert fresh.cache_info()["entries"] == 0
 
 
-@pytest.mark.parametrize("status", [200, 401, 403, 429, 500])
+@pytest.mark.parametrize("status", [200, 302, 401, 403, 429, 500])
 def test_apim_snapshot_client_uses_machine_token_and_does_not_follow_redirects(policy, status):
     from claude_foundry.portal.policy_cache import ApimPolicyCache
 

@@ -201,6 +201,9 @@ def deploy(
                     "displayName": label,
                     "method": "GET",
                     "urlTemplate": path,
+                    "templateParameters": [{"name": "digest", "required": True, "type": "string"}]
+                    if operation == "policy-snapshot"
+                    else [],
                     "responses": [],
                 }
             },

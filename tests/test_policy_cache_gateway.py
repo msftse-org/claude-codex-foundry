@@ -101,3 +101,34 @@ def test_deploy_rejects_unavailable_cache_and_unowned_api_before_writes(
             caching_type=mode,
         )
     assert writes == []
+
+
+def test_cache_deployment_adds_only_its_operations_and_defines_digest_parameter(org):
+    writes = []
+
+    class Azure:
+        def request(self, method, path, body=None):
+            if method == "PUT":
+                writes.append((path, body))
+                return {}
+            if "/apis/" in path:
+                return {
+                    "properties": {
+                        "description": "Managed by claude-codex-foundry budget gateway preview."
+                    }
+                }
+            return {"sku": {"name": "BasicV2"}}
+
+    deploy(
+        org,
+        Azure(),
+        api_id="claude-budget-preview",
+        origin_url="https://test.azurewebsites.net",
+        audience="api://" + str(uuid4()),
+        reader_ids=[str(uuid4())],
+        organization_id=org["subscription_id"],
+    )
+    assert len(writes) == 3 and all("/operations/" in path for path, _ in writes)
+    assert writes[0][1]["properties"]["templateParameters"] == [
+        {"name": "digest", "required": True, "type": "string"}
+    ]
