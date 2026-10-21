@@ -11,7 +11,7 @@ import jwt
 from fastapi import HTTPException
 from starlette.responses import JSONResponse, StreamingResponse
 
-from .budget_ledger import BudgetDenied, limits_for
+from .budget_ledger import BudgetDenied, limits_for, policy_digest
 from .budget_pricing import BudgetPrice, usage_tokens
 from .budget_stream import UsageStream
 
@@ -83,12 +83,13 @@ class BudgetProxy:
         return policy, member, group
 
     async def cache_status(self, principal):
-        _, member, _ = await self.authorize(principal)
+        policy, member, _ = await self.authorize(principal)
         if member["role"] not in {"owner", "admin"}:
             raise HTTPException(
                 403, "Only organization owners and administrators can inspect cache diagnostics"
             )
-        return {"scope": "current_worker", **self.snapshots.cache_info()}
+        probe = await asyncio.to_thread(self.snapshots.probe_shared, policy_digest(policy))
+        return {"scope": "current_worker", **self.snapshots.cache_info(), "shared_probe": probe}
 
     async def count_tokens(self, principal, body):
         """Anthropic documents token counting as free; never treat this as a cost bound."""

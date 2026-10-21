@@ -851,6 +851,26 @@ def test_shared_snapshot_cache_is_verified_and_reused_locally(policy, snapshot_s
     assert info["shared_hits"] == (result == "hit")
 
 
+@pytest.mark.parametrize("result", ["hit", "miss", "unknown", "corrupt", "outage", "disabled"])
+def test_shared_probe_checks_apim_even_with_warm_l1(policy, snapshot_store, result):
+    calls = []
+
+    def get(digest):
+        calls.append(digest)
+        if result == "outage":
+            raise TimeoutError("Synthetic private error")
+        return (b"{}" if result == "corrupt" else json.dumps(policy).encode()), result
+
+    store, _, _ = snapshot_store(policy)
+    digest = policy_digest(policy)
+    store.get(digest)
+    store._shared = None if result == "disabled" else SimpleNamespace(get=get)
+    before = store.cache_info()
+    assert store.probe_shared(digest) == ("failed" if result in {"corrupt", "outage"} else result)
+    assert store.cache_info() == before
+    assert calls == ([] if result == "disabled" else [digest])
+
+
 @pytest.mark.parametrize("failure", ["outage", "corrupt", "wrong_version"])
 def test_shared_cache_failure_falls_back_only_to_verified_durable_version(
     policy, snapshot_store, failure
@@ -933,14 +953,17 @@ def test_cache_diagnostics_require_current_organization_admin(policy, ledger, sn
     policy["members"][0]["role"] = role
     ledger.activate(policy)
     store, _, _ = snapshot_store(policy)
+    probes = []
+    store.probe_shared = lambda digest: probes.append(digest) or "hit"
     proxy = BudgetProxy(
         ledger, store, None, "https://test.services.ai.azure.com", {}, client=object()
     )
     if role in {"owner", "admin"}:
-        assert (
-            asyncio.run(proxy.cache_status(policy["members"][0]["id"]))["scope"] == "current_worker"
-        )
+        result = asyncio.run(proxy.cache_status(policy["members"][0]["id"]))
+        assert result["scope"] == "current_worker" and result["shared_probe"] == "hit"
+        assert probes == [policy_digest(policy)]
     else:
         with pytest.raises(HTTPException) as denied:
             asyncio.run(proxy.cache_status(policy["members"][0]["id"]))
         assert denied.value.status_code == 403
+        assert probes == []

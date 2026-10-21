@@ -65,7 +65,7 @@ The user cannot choose another person's identity or group by sending headers. AP
 
 The Function validates the incoming token's signature, issuer, tenant, audience, lifetime and exact APIM managed-identity object ID. It rejects delegated user tokens at this backend. Only after that check does it trust the identity headers supplied by APIM.
 
-It reads the active policy digest and pause state from `BudgetLedger` on every authorization. The matching immutable snapshot is loaded from the process-local policy cache, or downloaded from Blob Storage and hash-verified on a miss. From that policy it resolves the active member, their group and their model grants. Group identity never comes from a workstation-supplied value. The active digest and pause state are never cached.
+It reads the active policy digest and pause state from `BudgetLedger` on every authorization. The matching immutable snapshot is loaded from the process-local cache, then the optional APIM shared cache, with an exact-version Blob fallback. Every newly loaded document is hash-verified before use. From that policy it resolves the active member, their group and their model grants. Group identity never comes from a workstation-supplied value. The active digest and pause state are never cached.
 
 ### 4. The service validates the request and reserves its maximum charge
 
@@ -175,7 +175,7 @@ The shared cache key includes tenant, organization, APIM service/API and policy 
 
 The machine-only `policy-snapshot` operation permits only explicitly configured runtime identity object IDs with the dedicated application audience; delegated user tokens are rejected even on a hit. It forwards misses using the APIM identity to a separate origin handler on the budget portal. That handler verifies the exact APIM identity and always uses its direct Blob-backed client, preventing recursion into APIM or starvation of the inference app's own HTTP workers. Published snapshots contain organization membership and grants; treat cache access as privileged. Ordinary users, including portal owners using user tokens, cannot download these documents through the machine endpoint.
 
-`GET /claude-budget-preview/v1/policy-cache/status` is an authenticated owner/organization-administrator diagnostic. It reports **current-worker** local hits/misses, shared hit/miss responses and shared failures, with no documents, tokens or identities. Reading it performs normal live authorization and therefore itself touches the local cache. It is not a fleet-wide metric; counters reset on process replacement. APIM traces from source `budget-policy-cache` report shared hits or requested fills without recording the document. Prompts, model responses, active-policy pointers, monetary counters and admission decisions are never placed in this cache.
+`GET /claude-budget-preview/v1/policy-cache/status` is an authenticated owner/organization-administrator diagnostic. It reports **current-worker** local hits/misses, shared hit/miss responses and shared failures, with no documents, tokens or identities. Reading it performs normal live authorization and therefore itself touches the local cache. It also directly probes L2 for the authorized snapshot and verifies its hash, returning `shared_probe` as `hit`, `miss`, `failed`, `unknown` or `disabled`. That probe bypasses L1 without clearing it, changes no monetary state and is separate from the read counters. It is not a fleet-wide metric; counters reset on process replacement. APIM traces from source `budget-policy-cache` report shared hits or requested fills without recording the document. Prompts, model responses, active-policy pointers, monetary counters and admission decisions are never placed in this cache.
 
 There is no freshness TTL for immutable documents. **Publication changes the live digest**, so a warm previous version cannot authorize a new admission. Admission also checks the policy row's ETag in the transaction: publication between the initial read and reservation causes contention or rejection rather than dispatch under a stale policy. A reservation committed before publication remains valid and settles normally. Rate expiry is checked on every inference even when its document is cached. Portal drafts and portal administration roles are not cached by this feature.
 
@@ -241,6 +241,8 @@ The evaluation currently qualifies only Haiku 4.5 and GPT-4.1 nano. Consult the 
 | Responsibility | Source |
 | --- | --- |
 | APIM identity validation and routing | [`budget_gateway.py`](../src/claude_foundry/budget_gateway.py) |
+| Machine-only APIM value-cache policy and deployment | [`policy_cache_gateway.py`](../src/claude_foundry/policy_cache_gateway.py) |
+| Runtime shared-cache client | [`policy_cache.py`](../src/claude_foundry/portal/policy_cache.py) |
 | Streaming Function entry point | [`function_app.py`](../budget/functions/function_app.py) |
 | Backend identity, authorization, forwarding and settlement | [`budget_proxy.py`](../src/claude_foundry/portal/budget_proxy.py) |
 | Atomic counters and reservations | [`budget_ledger.py`](../src/claude_foundry/portal/budget_ledger.py) |

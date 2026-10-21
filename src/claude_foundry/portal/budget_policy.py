@@ -127,6 +127,18 @@ class Snapshots:
                 raise ValueError("Immutable budget policy does not match its digest") from None
         return digest
 
+    def probe_shared(self, digest):
+        """Verify L2 directly for operator diagnostics, without changing L1 or money."""
+        if self._shared is None:
+            return "disabled"
+        try:
+            raw, result = self._shared.get(digest)
+            self._verify(raw, digest)
+            return result if result in {"hit", "miss"} else "unknown"
+        except Exception:
+            # Do not disclose tokens, URLs or response bodies through diagnostics.
+            return "failed"
+
     def get(self, digest):
         if (
             not isinstance(digest, str)
