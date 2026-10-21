@@ -121,6 +121,14 @@ The deployed runtime package corresponds to `bc090cd`. All 252 Python tests pass
 
 During verification, ordinary restart and brief stop/start requests retained the previous warm worker. A stop lasting over 60 seconds followed by start produced a fresh worker serving the new package and the verified APIM hit. The evaluation runtime had no outstanding reservations; baseline routes were unaffected. Operators must verify active behavior after deployment rather than treating control-plane success alone as proof. Private deployment logs, account details and screenshots remain outside Git.
 
+## Budget table interaction follow-up — October 21, 2026
+
+The isolated portal was rebuilt from `65f74c3` and redeployed. The refresh control now sits beside the section heading; draft and publication actions have a separate toolbar with spacing above the balance table. Numeric columns align consistently. Initial loading reserves the expected row layout for the viewer's role. Refresh retains the mounted table and last successful values, displays a rotating button icon and a live status, and prevents duplicate clicks. Failed refreshes keep the previous values with an explicit warning and retry; publication is disabled until a successful refresh. Values are discarded when the viewer identity, role or group changes, or when the server successfully reports no active balances.
+
+All **45 frontend tests** and the production build pass. Six new DOM interaction tests cover initial loading, retained rows and duplicate-click prevention, failure/retry, out-of-order responses across revisions, successful inactive-policy responses and viewer changes. Reduced-motion preferences suppress the spinner animation while preserving the textual status.
+
+In the hosted Edge portal, the deployed JS/CSS asset names matched the tested package. The table remained at the same position and dimensions (744 × 196 CSS pixels) with identical values before, during and after an actual refresh; `aria-busy` was true while loading. The control re-enabled and the successful-read timestamp updated. Cursor-free screenshots captured the completed and refreshing states. This hosted check used the owner's existing account and read-only endpoints; limits, publication and ledger balances were unchanged. Error and request-race scenarios were tested locally, without injecting a hosted storage fault.
+
 ## Remaining release checks
 
 Full hosted administration journeys, long native-client/tool conversations, failure injection across runtime instances, and organization-scale load remain required. Only Haiku 4.5 and GPT-4.1 nano have reviewed prices and capacities in this live evaluation; this is not validation of every deployed model. The evaluation's reviewed rates expire on October 22, 2026; later inference requires fresh verification and publication.

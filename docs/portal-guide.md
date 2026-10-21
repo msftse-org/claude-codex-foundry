@@ -133,7 +133,17 @@ Costs use the current input/output planning rates. Cache charges, some prompt-le
 
 ## Budgets, token limits, and rates
 
-In **Budgets & limits**, distinguish the dollar planning threshold from gateway-enforced token/rate controls. `0` means no limit at that scope. Organization and group controls can still restrict a developer whose personal limit is zero.
+### Enforced dollar budgets
+
+When connected to the dedicated budget gateway, **Enforced spending limits** shows the published organization, group and personal limits alongside spent, reserved and available allowance. In this mode, **zero blocks new requests**; a blank personal limit inherits the group's allowance. The [budget architecture](budget-architecture.md) explains enforcement and the [validation record](budget-validation.md) lists outstanding release checks.
+
+Choose **Refresh balance** beside the section heading to fetch current values. The button spins and temporarily disables while the existing table stays visible. The timestamp records the last successful read. If refresh fails, the table retains its previous values with an explicit warning; retry before relying on those figures. Policy publication is disabled while balances are refreshing or the last refresh failed. This display behavior does not cache budget approvals: the gateway still checks the live ledger for every admission.
+
+Policy actions sit in a separate toolbar above the balance table. **Organization limit** and **Add verified model rate** edit drafts; **Publish budget policy** activates the reviewed changes. Group administrators see only their permitted team-publication action.
+
+### Baseline planning and token limits
+
+For the baseline gateway, distinguish the dollar planning threshold from gateway-enforced token/rate controls. A zero **baseline token limit** means no limit at that scope. Organization and group controls can still restrict a developer whose personal token limit is zero.
 
 <details>
 <summary>Edit organization budgets and limits</summary>
@@ -142,7 +152,7 @@ In **Budgets & limits**, distinguish the dollar planning threshold from gateway-
 
 </details>
 
-Publish token/rate changes before expecting gateway enforcement. Streaming token estimates and concurrency can overshoot; separate gateway regions do not share an atomic global counter. Dollar thresholds do not stop inference or Azure billing.
+Publish baseline token/rate changes before expecting gateway enforcement. Streaming token estimates and concurrency can overshoot; separate gateway regions do not share an atomic global counter. Planning dollar thresholds do not stop inference or Azure billing.
 
 Use **Set rates** or **Manage rates** to maintain input/output prices in USD per million tokens. The cost-analysis rate editor also records source, verification date, and notes. Choose prices appropriate to the actual deployment type, geography, and contract; the [dated pricing reference](../portal/PRICING.md) is a starting point, not automatic synchronization with Azure.
 
