@@ -3,6 +3,7 @@ import { MemberImport } from "./MemberImport";
 import { CostAnalysis } from "./CostAnalysis";
 import { ContentLogs } from "./ContentLogs";
 import { Spend } from "./Spend";
+import { SignInScreen } from "./SignIn";
 import { UsageChart } from "./UsageChart";
 import {
     MemberEditor,
@@ -23,7 +24,6 @@ import {
     CurrencyDollar,
     DownloadSimple,
     GearSix,
-    Key,
     List,
     MagnifyingGlass,
     Moon,
@@ -39,15 +39,17 @@ import {
     Desktop,
     Tray,
 } from "@phosphor-icons/react";
-import { api, download, exportCsv, initialize, signIn, signOut } from "./api";
-import type {
-    Audit,
-    Bootstrap,
-    Group,
-    Member,
-    State,
-    Telemetry,
-} from "./types";
+import {
+    api,
+    download,
+    exportCsv,
+    initialize,
+    signIn,
+    signOut,
+    SignInRequiredError,
+} from "./api";
+import type { PortalSession } from "./api";
+import type { Audit, Group, Member, State, Telemetry } from "./types";
 import {
     compact,
     date,
@@ -134,7 +136,10 @@ const emptyTelemetry: Telemetry = {
 };
 
 function App() {
-    const [boot, setBoot] = useState<Bootstrap>();
+    const [boot, setBoot] = useState<PortalSession>();
+    const [starting, setStarting] = useState(true);
+    const [signingIn, setSigningIn] = useState(false);
+    const [requiresSignIn, setRequiresSignIn] = useState(false);
     const [state, setState] = useState<State>();
     const [usage, setUsage] = useState<Telemetry>(emptyTelemetry);
     const [usageError, setUsageError] = useState("");
@@ -182,26 +187,40 @@ function App() {
             if (sequence === usageSequence.current) setUsageLoading(false);
         }
     };
+    const connect = async () => {
+        setStarting(true);
+        setError("");
+        setSignInDetails("");
+        setRequiresSignIn(false);
+        try {
+            const config = await initialize();
+            setBoot(config);
+            if (config.signInError) {
+                setSignInDetails(config.signInError);
+                setError(
+                    "Microsoft could not complete sign-in. Use an authentication method permitted by your organization.",
+                );
+                setRequiresSignIn(true);
+                return;
+            }
+            // The callback restores the requested page without another navigation.
+            const params = new URLSearchParams(location.search);
+            setPage(params.get("page") || "overview");
+            setQuery(params.get("q") || "");
+            if (config.authenticated) {
+                const data = await load();
+                if (!["developer", "group_admin"].includes(data.viewer.role))
+                    void loadUsage();
+            }
+        } catch (e) {
+            setError((e as Error).message);
+            setRequiresSignIn(e instanceof SignInRequiredError);
+        } finally {
+            setStarting(false);
+        }
+    };
     useEffect(() => {
-        initialize()
-            .then(async (config) => {
-                setBoot(config);
-                if (config.signInError) {
-                    setSignInDetails(config.signInError);
-                    setError(
-                        "Microsoft could not complete sign-in. Use this portal in your normal work browser and choose an authentication method permitted by your organization.",
-                    );
-                    return;
-                }
-                if (config.configured) {
-                    const data = await load();
-                    if (
-                        !["developer", "group_admin"].includes(data.viewer.role)
-                    )
-                        await loadUsage();
-                }
-            })
-            .catch((e) => setError(e.message));
+        void connect();
     }, []);
     useEffect(() => {
         const media = matchMedia("(prefers-color-scheme: dark)");
@@ -290,76 +309,26 @@ function App() {
             setBusy(false);
         }
     };
-    if (!boot)
+    if (starting || !state || !boot)
         return (
-            <div className="signinscreen">
-                <div className="signincard">
-                    <Seal />
-                    <h1>Claude & Codex Admin</h1>
-                    {error ? (
-                        <Notice tone="error">{error}</Notice>
-                    ) : (
-                        <p className="muted">
-                            Connecting to your organization…
-                        </p>
-                    )}
-                    <button
-                        className="button"
-                        onClick={() => location.reload()}
-                    >
-                        <ArrowClockwise />
-                        Retry connection
-                    </button>
-                </div>
-            </div>
-        );
-    if (!state)
-        return (
-            <div className="signinscreen">
-                <div className="signincard">
-                    <Seal size={48} />
-                    <span className="preview">Development preview</span>
-                    <h1 style={{ marginTop: 24 }}>
-                        Your organization.
-                        <br />
-                        Your Claude.
-                    </h1>
-                    <p className="muted">
-                        One place to manage developer access, understand usage,
-                        and set the boundaries.
-                    </p>
-                    {error && error !== "Sign in to continue." && (
-                        <Notice tone="error">{error}</Notice>
-                    )}
-                    {signInDetails && (
-                        <details className="footnote">
-                            <summary>Sign-in diagnostic details</summary>
-                            <p>{signInDetails}</p>
-                        </details>
-                    )}
-                    {boot.configured ? (
-                        <button
-                            className="button primary"
-                            onClick={() =>
-                                signIn().catch((e) => setError(e.message))
-                            }
-                        >
-                            <Key size={18} />
-                            Continue with Microsoft
-                        </button>
-                    ) : (
-                        <Notice>
-                            Finish the single-tenant Entra application
-                            registration to enable sign-in.
-                        </Notice>
-                    )}
-                    <small>
-                        Access is limited to people authorized by your
-                        organization. Your existing Claude conversations stay on
-                        your devices.
-                    </small>
-                </div>
-            </div>
+            <SignInScreen
+                boot={boot}
+                loading={starting}
+                signingIn={signingIn}
+                requiresSignIn={requiresSignIn}
+                error={error}
+                details={signInDetails}
+                onRetry={() => void connect()}
+                onSignOut={() => signOut().catch((e) => setError(e.message))}
+                onSignIn={() => {
+                    setSigningIn(true);
+                    setError("");
+                    signIn().catch((e) => {
+                        setError(e.message);
+                        setSigningIn(false);
+                    });
+                }}
+            />
         );
     const admin = ["owner", "admin"].includes(state.viewer.role);
     const groupAdmin = state.viewer.role === "group_admin";
