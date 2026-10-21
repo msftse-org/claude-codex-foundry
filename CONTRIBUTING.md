@@ -58,6 +58,7 @@ Compile infrastructure changes with the same checks used by CI:
 ```bash
 az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
 az bicep build --file infra/portal.bicep --outfile /tmp/claude-foundry-portal.arm.json
+az bicep build --file infra/content-logs.bicep --outfile /tmp/ccf-content-logs.arm.json
 ```
 
 CI runs Python checks on Linux/macOS with Python 3.11 and 3.13, plus frontend and Bicep validation. For documentation-only changes, check links, commands against CLI help, image paths, and screenshot privacy; do not invoke live inference just to validate prose.
@@ -103,6 +104,8 @@ For UI changes, update the [portal walkthrough](docs/portal-guide.md) when behav
 
 ## Submit a pull request
 
+Create focused working branches from `main` for Codex and budget-gateway changes. Changes to Codex provider configuration, catalogs, history handling or APIM policy need protocol tests plus an actual local-file tool and follow-up test with the approved CLI/Desktop engine versions. Keep real session exports and Azure reports in ignored `.local/`. Never rewrite original histories to make a test pass. Update [Codex validation](docs/codex-validation.md) with exact versions, limits and failed checks; a bundled-engine test is not a visual desktop UI test.
+
 1. Rebase or merge the current `main` into your working branch and resolve conflicts deliberately.
 2. Run checks relevant to your changes; record both passing checks and anything not exercised.
 3. Inspect `git diff --check`, the complete diff, and all new files for private data.
@@ -125,3 +128,7 @@ npm --prefix portal/web audit --omit=dev
 ```
 
 The export contains all resolved transitive runtime dependencies; `--no-deps --disable-pip` avoids resolving a second, potentially different environment. Inspect audit errors and skipped packages; an unavailable advisory service is not a passing result. Keep a dated, sanitized result in the validation record. Never publish a live token or raw customer policy to reproduce a security issue.
+
+## Content-log changes
+
+Use synthetic messages for capture tests and screenshots. Test all portal roles, audit-storage failure, role revocation during a query, API/resource scoping, and retention bounds before changing content access. Never add captured customer messages or access tokens to fixtures, screenshots, Git, or CI artifacts. Follow the opt-in deployment and pause instructions in [content logging](docs/content-logs.md).

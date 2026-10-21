@@ -6,7 +6,9 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 
 [Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
 
-> **Codex and content-log preview:** these additions remain on the dedicated [`feat/codex-azure` branch](https://github.com/orsharon7/claude-codex-foundry/tree/feat/codex-azure), outside `main`. See its [setup guide](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex.md), [validation evidence](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/codex-validation.md), and [restricted prompt/response logs](https://github.com/orsharon7/claude-codex-foundry/blob/feat/codex-azure/docs/content-logs.md). The ordinary ChatGPT app is not a gateway client.
+> **Codex and content-log preview:** included in `main`, Codex Desktop/CLI routes to Azure OpenAI models through a separate standard APIM API. It includes Entra sign-in, model qualification, Mac onboarding, restore, and a readable-history handoff for existing conversations. [Setup and limitations](docs/codex.md) · [Validation record](docs/codex-validation.md). The baseline management portal policy remains Claude-only; the optional budget gateway adds shared Claude/Codex policy. Optional [content logs](docs/content-logs.md) support both clients.
+
+> **Budget hierarchy preview:** included in `main` for evaluation, the optional budget gateway adds organization, group and user USD limits and delegated group administrators. Customer release checks remain outstanding. [Azure architecture and request-flow diagram](docs/budget-architecture.md) · [Budget rules](docs/budget-enforcement.md) · [Completed Azure tests and remaining checks](docs/budget-validation.md). Existing endpoints do not acquire dollar enforcement automatically.
 
 > **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
 
@@ -24,7 +26,7 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 | **Finance and operations** | Explore usage by model, group, and developer; combine filters; compare periods; export CSVs; maintain sourced planning rates and dollar thresholds. |
 | **Security reviewers** | Inspect Entra authentication, API-enforced roles, managed identities, private portal storage, policy publication, and administrative audit records. |
 
-The portal manages gateway access and operational metadata. Entra remains responsible for directory accounts and sign-in policy; Azure Cost Management remains responsible for billed spend. Conversations are not displayed or managed in the portal.
+The portal manages gateway access and operational metadata. Entra remains responsible for directory accounts and sign-in policy; Azure Cost Management remains responsible for billed spend. Optional [prompt and response logs](docs/content-logs.md) let owners and administrators inspect newly captured gateway messages with audited access. Capture is off by default; this is not a full conversation archive.
 
 ## Choose your starting point
 
@@ -72,36 +74,43 @@ Start with the [visual walkthrough](docs/portal-guide.md), then follow the [Azur
 
 ![Register a developer in a drawer with role, primary group, status, token limit, and personal model grants](docs/images/portal-member-drawer.jpg)
 
-*Access changes are saved as drafts. An owner or administrator reviews and publishes them before gateway enforcement changes.*
+*Portal roles and suspension apply on save. Inference access changes are saved as drafts and require reviewed publication before gateway enforcement changes.*
 
 ## How it fits together
 
 ```mermaid
 flowchart LR
-  U[Claude Desktop / Code CLI] -->|Entra user token| A[Standard Azure API Management]
-  A -->|Baseline: user token| F[Azure Foundry / Anthropic models]
-  A -->|Portal governance: managed identity| F
+  U[Claude / Codex clients] -->|Entra user token| A[Standard Azure API Management]
+  A -->|Baseline: user token| F[Azure Foundry models]
+  A -->|Legacy portal governance: managed identity| F
+  A -->|Budget preview: APIM identity| R[Budget service / Azure Functions]
+  R -->|After reservation: runtime identity| F
+  R <--> T[Private budget policies and ledger]
   A --> I[Application Insights]
   P[Administration portal / Azure Functions] -->|Reviewed policy publication| A
+  P -->|Budget policy publication| T
   P -->|Read usage| I
   P --> B[Private Blob state]
   E[Microsoft Entra ID] -->|Sign-in| U
   E -->|Sign-in| P
 ```
 
-These are two gateway authorization modes, not two requests for every inference call:
+Each API route uses one of these authorization modes. A client profile must point to the intended route:
 
 | Mode | Where inference access is decided | When to use |
 | --- | --- | --- |
 | **Baseline gateway** | APIM validates the user token; Foundry applies the user's inference RBAC. One published model allowlist applies to callers. | Establish the gateway and Mac onboarding without the portal. |
 | **Portal governance preview** | APIM validates the user token and enforces published membership, model grants, and token limits. APIM's managed identity calls Foundry. | Evaluate per-developer/group administration on a separate preview API. |
+| **Budget hierarchy preview** | APIM establishes identity; a separate budget Function checks published permissions and atomically reserves organization/group/user USD allowance before its managed identity calls Foundry. | Evaluate shared Claude/Codex dollar enforcement on dedicated budget routes. Requires separate deployment and release validation. |
 
-The portal is outside the inference path: its availability does not determine whether an already-published gateway policy can serve requests. Users with direct Foundry RBAC can bypass gateway controls; review that access when adopting portal governance. Read the [security model](docs/security.md) for the full boundaries.
+The portal is outside the inference path. The budget Function and its storage are dependencies for every governed inference request; the portal is needed for administration and publication. Users with direct Foundry RBAC can bypass gateway controls; review that access when adopting governance.
+
+**Who checks identity, where is money reserved, and what happens during an outage?** Read the [Azure service walkthrough and complete request-flow diagram](docs/budget-architecture.md), including the storage map, permissions, concurrent requests and failure handling. The [security model](docs/security.md) describes the baseline boundaries.
 
 ## Costs and practical limits
 
 - **Azure charges apply.** APIM has an ongoing service charge; inference and monitoring are metered. The portal uses Functions Flex Consumption with no always-ready instances, but storage, private endpoints, DNS, and logs can still incur charges.
-- **Dollar budgets are planning thresholds.** They do not stop Azure billing. Token quotas and request limits apply after policy publication; streaming estimates and concurrent requests can overshoot.
+- **Hard dollar enforcement remains a release gate.** The optional budget gateway adds a shared reservation ledger for Claude/Codex and scoped group administrators, with organization, group and user USD limits—including owner requests. It requires a separate deployment; existing routes and planning amounts remain unchanged. See [the hierarchy, failure behavior and acceptance checks](docs/budget-enforcement.md).
 - **Cost analysis is an estimate.** Rates are maintained by administrators. Cache pricing, some prompt-length tiers, discounts, tax, and infrastructure costs are not reconciled. See the [pricing reference](portal/PRICING.md).
 - **Scale must be measured.** A 2,000-member import/policy-size check has passed; 2,000 concurrent developers have not been load-tested.
 - **Current onboarding targets macOS and Azure public cloud.** The baseline inference endpoints are public HTTPS. Private portal storage does not make Foundry or APIM private. Conversation import uses Claude's native wizard with documented source and attachment limits. Windows/Linux installers, SCIM, MDM enrollment, and immutable compliance archives are not included.
@@ -113,12 +122,16 @@ The portal is outside the inference path: its availability does not determine wh
 | Deploy infrastructure, models, and the gateway | [Organization administrator](docs/administrator.md) |
 | Install, sign in, update, or restore Claude settings | [Mac installation](docs/macos.md) |
 | Bring existing chats, projects, and local sessions | [Conversation migration](docs/conversation-migration.md) |
+| Configure Codex Desktop/CLI, OpenAI models and existing-work handoff | [Codex on Azure](docs/codex.md) |
 | Learn every portal workspace with real screenshots | [Portal guide and gallery](docs/portal-guide.md) |
 | Deploy or develop the portal | [Portal engineering guide](portal/README.md) |
 | Operate, upgrade, recover, and plan a rollout | [Operations guide](docs/operations.md) |
 | Query requests, errors, and token metrics | [Observability](docs/observability.md) |
+| Enable and inspect restricted prompt/response capture | [Content logs](docs/content-logs.md) |
 | Review identities, data, and trust boundaries | [Security architecture](docs/security.md) |
 | Understand sign-in, roles, Azure RBAC, and publication | [Identity and permissions](docs/identity-and-permissions.md) |
+| Follow a budgeted request through Azure, from sign-in to settlement | [Budget architecture and service diagram](docs/budget-architecture.md) |
+| Configure USD limits, delegated group administration and recovery | [Budget enforcement](docs/budget-enforcement.md) |
 | Diagnose errors | [Troubleshooting](docs/troubleshooting.md) |
 | Understand scope and common questions | [FAQ](docs/faq.md) |
 | Make a code or documentation contribution | [Contributing](CONTRIBUTING.md) |

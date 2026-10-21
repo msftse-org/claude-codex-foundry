@@ -34,3 +34,7 @@ Metric names and token categories depend on the provider response. Inspect the r
 Application Insights ingestion is asynchronous. Generate a verification request, allow a few minutes for ingestion, and inspect Requests/Logs. APIM integration does not by itself guarantee a populated **Live Metrics** stream: do not use an empty Live Metrics pane as evidence that gateway logging failed. Diagnose the logger destination, API diagnostic override, sampling, network restrictions and log-reader permissions first.
 
 Existing diagnostic configurations may log more data than the new foundation defaults. Inspect both API and service diagnostics, including frontend/backend headers and body-byte counts. Set body counts to zero and avoid recording authorization or API-key headers unless your organization has explicitly approved a different policy.
+
+## Optional prompt and response capture
+
+Operational metrics remain metadata-only. The separate [content-log deployment and portal workspace](content-logs.md) supports opt-in native APIM message capture with restricted, audited reads. It uses a dedicated Log Analytics workspace and does not require enabling HTTP body capture in Application Insights.

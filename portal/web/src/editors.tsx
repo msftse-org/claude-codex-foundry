@@ -31,7 +31,7 @@ export function MemberEditor({
         <Drawer
             busy={busy}
             title={m ? m.name : "Add a member"}
-            description="Use the object ID from this organization’s Entra directory. Saving creates a draft gateway entitlement; it does not send an invitation or create a directory account."
+            description="Use the object ID from this organization’s Entra directory. Saving changes portal permissions immediately. Gateway access and budgets require publication. No invitation is sent."
             onClose={close}
         >
             <form
@@ -48,6 +48,7 @@ export function MemberEditor({
                         group_id: String(f.get("group")),
                         monthly_tokens: Number(f.get("tokens")),
                         extra_models: grants,
+                        spend_limit_usd: String(f.get("spend") || "") || null,
                     });
                 }}
             >
@@ -93,9 +94,14 @@ export function MemberEditor({
                             >
                                 {[
                                     "developer",
-                                    "auditor",
-                                    "billing",
-                                    "admin",
+                                    ...(state.viewer.role === "group_admin"
+                                        ? []
+                                        : [
+                                              "group_admin",
+                                              "auditor",
+                                              "billing",
+                                              "admin",
+                                          ]),
                                     ...(state.viewer.role === "owner"
                                         ? ["owner"]
                                         : []),
@@ -144,6 +150,18 @@ export function MemberEditor({
                             />
                         </Field>
                     </div>
+                    <Field
+                        label="Monthly spending limit (USD)"
+                        help="Calendar month in UTC. Blank inherits the group allowance; zero blocks new requests. Applies after budget publication."
+                    >
+                        <input
+                            name="spend"
+                            type="number"
+                            min="0"
+                            step="0.000001"
+                            defaultValue={m?.spend_limit_usd ?? ""}
+                        />
+                    </Field>
                     <fieldset className="field modelchoices">
                         <legend>Personal model grants</legend>
                         <p className="footnote">
@@ -155,7 +173,14 @@ export function MemberEditor({
                             <label className="checkrow" key={model.name}>
                                 <input
                                     type="checkbox"
-                                    disabled={!editable}
+                                    disabled={
+                                        !editable ||
+                                        (state.viewer.role === "group_admin" &&
+                                            !state.groups[0]?.delegated_models?.includes(
+                                                model.name,
+                                            ) &&
+                                            !grants.includes(model.name))
+                                    }
                                     checked={grants.includes(model.name)}
                                     onChange={(e) =>
                                         setGrants(
@@ -172,9 +197,9 @@ export function MemberEditor({
                         ))}
                     </fieldset>
                     <div className="impact">
-                        Changes affect this member’s next gateway requests after
-                        publication. Suspending access does not delete their
-                        local conversations.
+                        Portal roles and suspension apply as soon as you save.
+                        Gateway access and budgets apply after publication.
+                        Suspending access does not delete local conversations.
                     </div>
                 </fieldset>
                 <div className="dialogfooter">
@@ -211,12 +236,14 @@ export function GroupEditor({
     save: (g: Group) => Promise<void>;
 }) {
     const [models, setModels] = useState(group?.model_ids || []);
+    const [delegated, setDelegated] = useState(group?.delegated_models || []);
+    const owner = state.viewer.role === "owner";
     const count = state.members.filter((m) => m.group_id === group?.id).length;
     return (
         <Drawer
             busy={busy}
             title={group ? group.name : "Create a group"}
-            description="Groups give developers a clear set of models and one shared monthly token limit."
+            description="Give the team allowed models and a shared monthly allowance. Group administrators work within the ceiling and models delegated by the owner."
             onClose={close}
         >
             <form
@@ -232,6 +259,11 @@ export function GroupEditor({
                         default_model: String(f.get("default")),
                         monthly_tokens: Number(f.get("tokens")),
                         budget_usd: Number(f.get("budget")),
+                        spend_ceiling_usd: owner
+                            ? String(f.get("ceiling") || "") || null
+                            : (group?.spend_ceiling_usd ?? null),
+                        spend_limit_usd: String(f.get("spend") || "") || null,
+                        delegated_models: delegated,
                     });
                 }}
             >
@@ -262,6 +294,12 @@ export function GroupEditor({
                                     <input
                                         type="checkbox"
                                         checked={models.includes(m.name)}
+                                        disabled={
+                                            state.viewer.role ===
+                                                "group_admin" &&
+                                            !delegated.includes(m.name) &&
+                                            !models.includes(m.name)
+                                        }
                                         onChange={(e) =>
                                             setModels(
                                                 e.target.checked
@@ -326,6 +364,61 @@ export function GroupEditor({
                             />
                         </Field>
                     </div>
+                    <div className="twocol">
+                        <Field
+                            label="Owner-assigned ceiling (USD)"
+                            help="Only an organization owner can change this maximum."
+                        >
+                            <input
+                                name="ceiling"
+                                type="number"
+                                min="0"
+                                step="0.000001"
+                                disabled={!owner}
+                                defaultValue={group?.spend_ceiling_usd ?? ""}
+                            />
+                        </Field>
+                        <Field
+                            label="Group spending limit (USD)"
+                            help="Blank uses the ceiling. Zero blocks new requests. Cannot exceed the owner-assigned ceiling."
+                        >
+                            <input
+                                name="spend"
+                                type="number"
+                                min="0"
+                                step="0.000001"
+                                defaultValue={group?.spend_limit_usd ?? ""}
+                            />
+                        </Field>
+                    </div>
+                    {owner && (
+                        <fieldset className="field modelchoices">
+                            <legend>Models this group may grant</legend>
+                            <p className="footnote">
+                                The group administrator can enable these models
+                                for the team or individual developers.
+                            </p>
+                            {state.models.map((model) => (
+                                <label className="checkrow" key={model.name}>
+                                    <input
+                                        type="checkbox"
+                                        checked={delegated.includes(model.name)}
+                                        onChange={(e) =>
+                                            setDelegated(
+                                                e.target.checked
+                                                    ? [...delegated, model.name]
+                                                    : delegated.filter(
+                                                          (id) =>
+                                                              id !== model.name,
+                                                      ),
+                                            )
+                                        }
+                                    />
+                                    {model.labelOverride}
+                                </label>
+                            ))}
+                        </fieldset>
+                    )}
                     <div className="impact">
                         <strong>
                             {count} {count === 1 ? "person" : "people"}
@@ -487,7 +580,7 @@ export function SettingsForm({
                                                 ? "0.01"
                                                 : "1"
                                         }
-                                        value={draft[field.key]}
+                                        value={String(draft[field.key] ?? "")}
                                         disabled={!field.enabled || busy}
                                         onChange={(e) =>
                                             setDraft({

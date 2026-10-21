@@ -103,8 +103,8 @@ def installed_config():
     return load_client(state_dir() / "client.json")
 
 
-def helper():
-    print(credential(installed_config()))
+def helper(config_path=None):
+    print(credential(load_client(config_path) if config_path else installed_config()))
 
 
 def login(config_path=None, device_code=False):

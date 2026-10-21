@@ -215,6 +215,24 @@ def configure_observability(c, azure, enable_dimensions=False):
         )["properties"]
     properties = {k: v for k, v in current.items() if v is not None}
     properties.update(metrics=True, verbosity="information")
+    if c.get("client_type") == "codex":
+        # Never inherit payload/credential logging from another API's diagnostics.
+        properties["logClientIp"] = False
+        for side in ("frontend", "backend"):
+            properties[side] = {
+                phase: {
+                    "headers": [],
+                    "body": {"bytes": 0},
+                    "dataMasking": {
+                        "queryParams": [{"value": "*", "mode": "Hide"}],
+                        "headers": [
+                            {"value": name, "mode": "Mask"}
+                            for name in ("Authorization", "api-key", "x-api-key")
+                        ],
+                    },
+                }
+                for phase in ("request", "response")
+            }
     azure.request("PUT", path, {"properties": properties})
     if enable_dimensions:
         logger = azure.request("GET", current["loggerId"])

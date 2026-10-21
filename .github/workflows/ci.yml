@@ -18,8 +18,8 @@ jobs:
           version: '0.11.13'
           python-version: ${{ matrix.python }}
       - run: uv sync --frozen --extra auth --extra portal
-      - run: uv run --frozen --extra auth --extra portal ruff check src scripts tests
-      - run: uv run --frozen --extra auth --extra portal ruff format --check src scripts tests
+      - run: uv run --frozen --extra auth --extra portal ruff check src scripts tests budget/functions
+      - run: uv run --frozen --extra auth --extra portal ruff format --check src scripts tests budget/functions
       - run: uv run --frozen --extra auth --extra portal pytest -q
       - run: bash -n scripts/macos/install.sh Install.command
       - run: uv build
@@ -29,6 +29,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: az bicep build --file infra/main.bicep --outfile /tmp/claude-foundry.arm.json
       - run: az bicep build --file infra/portal.bicep --outfile /tmp/claude-foundry-portal.arm.json
+      - run: az bicep build --file infra/content-logs.bicep --outfile /tmp/ccf-content-logs.arm.json
+      - run: az bicep build --file infra/budget.bicep --outfile /tmp/ccf-budget.arm.json
+      - run: az bicep build --file infra/budget-portal.bicep --outfile /tmp/ccf-budget-portal.arm.json
   portal:
     runs-on: ubuntu-latest
     defaults:

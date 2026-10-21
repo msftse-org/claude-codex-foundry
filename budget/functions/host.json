@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "extensions": {
+    "http": {
+      "routePrefix": ""
+    }
+  },
+  "logging": {
+    "logLevel": {
+      "default": "Warning",
+      "Host.Results": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "maxTelemetryItemsPerSecond": 5
+      },
+      "enableDependencyTracking": false
+    }
+  },
+  "functionTimeout": "00:30:00"
+}

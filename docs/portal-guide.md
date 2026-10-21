@@ -1,5 +1,7 @@
 # Management portal guide
 
+> **Budget hierarchy branch:** the additional `group_admin` role, owner-controlled USD ceilings, shared ledger and request-time team content scope are documented in [Enforced USD limits](budget-enforcement.md). These require the dedicated budget runtime and remain subject to its release checks. The legacy token/planning controls below still describe the existing gateway.
+
 [← README](../README.md) · [Deploy the Azure preview](../portal/README.md#isolated-azure-preview) · [Operations](operations.md)
 
 The portal gives your organization one place to manage developer access through its Claude gateway and understand usage. It runs in your Azure subscription and uses your Microsoft Entra tenant. It is currently a **preview**; review the [validation record](../portal/VALIDATION.md) before a production rollout.
@@ -131,7 +133,17 @@ Costs use the current input/output planning rates. Cache charges, some prompt-le
 
 ## Budgets, token limits, and rates
 
-In **Budgets & limits**, distinguish the dollar planning threshold from gateway-enforced token/rate controls. `0` means no limit at that scope. Organization and group controls can still restrict a developer whose personal limit is zero.
+### Enforced dollar budgets
+
+When connected to the dedicated budget gateway, **Enforced spending limits** shows the published organization, group and personal limits alongside spent, reserved and available allowance. In this mode, **zero blocks new requests**; a blank personal limit inherits the group's allowance. The [budget architecture](budget-architecture.md) explains enforcement and the [validation record](budget-validation.md) lists outstanding release checks.
+
+Choose **Refresh balance** beside the section heading to fetch current values. The button spins and temporarily disables while the existing table stays visible. The timestamp records the last successful read. If refresh fails, the table retains its previous values with an explicit warning; retry before relying on those figures. Policy publication is disabled while balances are refreshing or the last refresh failed. This display behavior does not cache budget approvals: the gateway still checks the live ledger for every admission.
+
+Policy actions sit in a separate toolbar above the balance table. **Organization limit** and **Add verified model rate** edit drafts; **Publish budget policy** activates the reviewed changes. Group administrators see only their permitted team-publication action.
+
+### Baseline planning and token limits
+
+For the baseline gateway, distinguish the dollar planning threshold from gateway-enforced token/rate controls. A zero **baseline token limit** means no limit at that scope. Organization and group controls can still restrict a developer whose personal token limit is zero.
 
 <details>
 <summary>Edit organization budgets and limits</summary>
@@ -140,7 +152,7 @@ In **Budgets & limits**, distinguish the dollar planning threshold from gateway-
 
 </details>
 
-Publish token/rate changes before expecting gateway enforcement. Streaming token estimates and concurrency can overshoot; separate gateway regions do not share an atomic global counter. Dollar thresholds do not stop inference or Azure billing.
+Publish baseline token/rate changes before expecting gateway enforcement. Streaming token estimates and concurrency can overshoot; separate gateway regions do not share an atomic global counter. Planning dollar thresholds do not stop inference or Azure billing.
 
 Use **Set rates** or **Manage rates** to maintain input/output prices in USD per million tokens. The cost-analysis rate editor also records source, verification date, and notes. Choose prices appropriate to the actual deployment type, geography, and contract; the [dated pricing reference](../portal/PRICING.md) is a starting point, not automatic synchronization with Azure.
 
@@ -197,3 +209,7 @@ Use **Search or jump to…** (`⌘K` on Mac) to find pages and people. The theme
 For an expired session, sign in through your normal work browser. For a sign-in error, retain the correlation ID and timestamp for your identity administrator; repeatedly approving MFA is not a fix for a blocked authentication method. For missing usage, check the selected period, filters, ingestion delay, and monitoring permissions. For conflicting edits, refresh and review the latest revision before retrying.
 
 See [troubleshooting](troubleshooting.md), [operations](operations.md), and the [portal engineering guide](../portal/README.md) for diagnostics, recovery, and deployment details.
+
+## Prompt and response logs
+
+Owners and administrators can use **Prompt & response logs** when the platform team has enabled capture. Filter by date/time, API, developer object ID, model, or request ID, then inspect a record in a drawer. An access reason is audited before its captured prompt and response are displayed. Billing, auditors, and developers cannot open this workspace. Capture is off by default and cannot recover earlier chats. See [setup, retention and permission boundaries](content-logs.md).

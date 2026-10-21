@@ -24,6 +24,7 @@ export const date = (s: string) =>
 export const roleName = (r: string) =>
     ({
         owner: "Owner",
+        group_admin: "Group administrator",
         admin: "Administrator",
         billing: "Billing administrator",
         auditor: "Auditor",

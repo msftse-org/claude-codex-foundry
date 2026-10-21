@@ -45,14 +45,21 @@ class RequestBoundary:
                 "testclient",
             }:
                 return await reject(403, "Local administrator mode accepts loopback requests only.")
+            navigation = (
+                scope["method"] == "GET"
+                and not scope["path"].startswith("/api/")
+                and headers.get("sec-fetch-mode") == "navigate"
+                and headers.get("sec-fetch-dest") == "document"
+            )
             if (
                 URL(scope=scope).hostname not in {"localhost", "127.0.0.1", "::1", "testserver"}
                 or (
-                    headers.get("origin")
+                    not navigation
+                    and headers.get("origin")
                     and urlsplit(headers["origin"]).hostname
                     not in {"localhost", "127.0.0.1", "::1"}
                 )
-                or headers.get("sec-fetch-site") == "cross-site"
+                or (not navigation and headers.get("sec-fetch-site") == "cross-site")
             ):
                 return await reject(403, "Use a loopback origin for local preview.")
         try:
