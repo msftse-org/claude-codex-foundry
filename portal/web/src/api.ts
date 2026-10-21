@@ -7,9 +7,26 @@ import { csvText } from "./csv";
 let msal: PublicClientApplication | undefined;
 let interactionRequired: typeof InteractionRequiredAuthError | undefined;
 let config: Bootstrap;
-export async function initialize(): Promise<
-    Bootstrap & { signInError?: string }
-> {
+export type PortalSession = Bootstrap & {
+    authenticated: boolean;
+    signInError?: string;
+};
+let initialization: Promise<PortalSession> | undefined;
+let signingIn: Promise<void> | undefined;
+
+export class SignInRequiredError extends Error {}
+
+// One instance and one redirect handler per page, including concurrent startup calls.
+export function initialize(): Promise<PortalSession> {
+    if (!initialization)
+        initialization = initializeOnce().catch((error) => {
+            initialization = undefined;
+            throw error;
+        });
+    return initialization;
+}
+
+async function initializeOnce(): Promise<PortalSession> {
     const response = await fetch("/api/bootstrap");
     if (!response.ok)
         throw new Error(
@@ -33,27 +50,65 @@ export async function initialize(): Promise<
         // starting another redirect or confusing it with a connection failure.
         let redirect;
         try {
-            redirect = await msal.handleRedirectPromise();
+            // Redeem the callback here instead of navigating a second time before
+            // tokens are available. MSAL validates the custom return-page state.
+            redirect = await msal.handleRedirectPromise({
+                navigateToLoginRequestUrl: false,
+            });
         } catch (error) {
             return {
                 ...config,
+                authenticated: false,
                 signInError:
                     error instanceof Error
                         ? error.message
                         : "Microsoft did not complete sign-in.",
             };
         }
-        if (redirect) msal.setActiveAccount(redirect.account);
-        else if (msal.getAllAccounts().length === 1)
+        if (redirect?.account) {
+            msal.setActiveAccount(redirect.account);
+            restorePage(redirect.state);
+        } else if (
+            !msal.getActiveAccount() &&
+            msal.getAllAccounts().length === 1
+        )
             msal.setActiveAccount(msal.getAllAccounts()[0]);
     }
-    return config;
+    return {
+        ...config,
+        authenticated: config.local || Boolean(msal?.getActiveAccount()),
+    };
+}
+
+function restorePage(state?: string) {
+    if (!state?.startsWith("/") || state.startsWith("//")) return;
+    try {
+        const target = new URL(state, location.origin);
+        // The portal has query-based pages at /. Never navigate to an external
+        // site, an API endpoint or an OAuth fragment supplied as return state.
+        if (target.origin === location.origin && target.pathname === "/")
+            history.replaceState(
+                history.state,
+                "",
+                target.pathname + target.search,
+            );
+    } catch {
+        // An invalid return page must not discard a successful authentication.
+    }
 }
 export async function signIn() {
-    if (msal)
-        await msal.loginRedirect({
-            scopes: [`api://${config.clientId}/access_as_user`],
-        });
+    await initialize();
+    if (msal && !signingIn)
+        signingIn = msal
+            .loginRedirect({
+                scopes: [`api://${config.clientId}/access_as_user`],
+                state: location.pathname + location.search,
+            })
+            .catch((error) => {
+                signingIn = undefined;
+                throw error;
+            });
+    return signingIn;
 }
 export async function signOut() {
     if (msal)
@@ -65,37 +120,55 @@ export async function api<T>(
     path: string,
     options: RequestInit = {},
 ): Promise<T> {
+    await initialize();
     const headers = new Headers(options.headers);
     if (options.body) headers.set("Content-Type", "application/json");
     if (!config?.local) {
-        const account = msal?.getActiveAccount();
-        if (!msal || !account) throw new Error("Sign in to continue.");
-        try {
-            const token = await msal.acquireTokenSilent({
-                account,
-                scopes: [`api://${config.clientId}/access_as_user`],
-            });
-            headers.set("Authorization", `Bearer ${token.accessToken}`);
-        } catch (error) {
-            if (interactionRequired && error instanceof interactionRequired)
-                throw new Error(
-                    "Your session needs attention. Sign out and sign in again.",
-                );
-            throw error;
-        }
+        headers.set("Authorization", `Bearer ${await accessToken()}`);
     }
-    const result = await fetch(path, { ...options, headers });
+    let result = await fetch(path, { ...options, headers });
+    // Refresh once for a rejected read token. Never replay writes or retry a
+    // permission denial; neither condition should start an interactive sign-in.
+    if (
+        !config.local &&
+        result.status === 401 &&
+        (options.method || "GET").toUpperCase() === "GET"
+    ) {
+        headers.set("Authorization", `Bearer ${await accessToken(true)}`);
+        result = await fetch(path, { ...options, headers });
+    }
     if (!result.ok) {
         const body = await result.json().catch(() => ({
             detail: "The service could not complete this request.",
         }));
-        throw new Error(
+        const message =
             typeof body.detail === "string"
                 ? body.detail
-                : "Check the form values and try again.",
-        );
+                : "Check the form values and try again.";
+        if (result.status === 401) throw new SignInRequiredError(message);
+        throw new Error(message);
     }
     return result.json();
+}
+
+async function accessToken(forceRefresh = false): Promise<string> {
+    const account = msal?.getActiveAccount();
+    if (!msal || !account)
+        throw new SignInRequiredError("Sign in to continue.");
+    try {
+        const token = await msal.acquireTokenSilent({
+            account,
+            scopes: [`api://${config.clientId}/access_as_user`],
+            ...(forceRefresh ? { forceRefresh: true } : {}),
+        });
+        return token.accessToken;
+    } catch (error) {
+        if (interactionRequired && error instanceof interactionRequired)
+            throw new SignInRequiredError(
+                "Your Microsoft session needs to be renewed. Continue with Microsoft to sign in again.",
+            );
+        throw error;
+    }
 }
 export function download(name: string, value: unknown) {
     const blob = new Blob([JSON.stringify(value, null, 2)], {
