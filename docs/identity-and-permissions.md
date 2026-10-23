@@ -25,6 +25,8 @@ flowchart LR
 
 This diagram describes **portal governance**. The baseline gateway forwards the user's delegated token to Foundry instead; its users need inference RBAC themselves. Do not confuse those authorization modes when reviewing direct Foundry access.
 
+Clients and the portal use one configured Claude API by default: usage reporting, profile exports and policy publication share its API ID and gateway URL. Optional isolated testing uses a separate API and requires clients to select that route explicitly. Attaching the portal does not publish access rules; reviewed publication switches backend authorization to APIM's managed identity.
+
 The portal is outside the inference path. An unavailable portal stops administration and publication, but the last published APIM policy continues serving requests.
 
 ## Portal sign-in and server authorization

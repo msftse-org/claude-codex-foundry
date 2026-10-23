@@ -74,6 +74,8 @@ class FakeAzure:
             raise AzureError(404, "missing")
         if self.reject_policy and path.endswith("/policies/policy"):
             raise AzureError(400, "invalid policy")
+        if method == "GET" and path.endswith("/policies/policy"):
+            return {"properties": {"value": "<policies><inbound><base /></inbound></policies>"}}
         return {}
 
 
@@ -98,8 +100,25 @@ def test_failed_policy_never_disables_subscription_gate(org):
 def test_existing_api_is_patched_without_replacing_diagnostics(org):
     azure = FakeAzure()
     deploy(org, azure)
-    assert azure.calls[1][0] == "PATCH"
-    assert "subscriptionRequired" not in azure.calls[1][2]["properties"]
+    patch = next(call for call in azure.calls if call[0] == "PATCH")
+    assert "subscriptionRequired" not in patch[2]["properties"]
+
+
+def test_baseline_gateway_cannot_overwrite_managed_policy(org):
+    from unittest.mock import Mock
+
+    azure = Mock()
+    azure.request.side_effect = [
+        {},
+        {
+            "properties": {
+                "value": '<policies><inbound><set-variable name="governance" value="x" /></inbound></policies>'
+            }
+        },
+    ]
+    with pytest.raises(ValueError, match="managed"):
+        deploy(org, azure)
+    assert all(call.args[0] == "GET" for call in azure.request.call_args_list)
 
 
 def test_observability_reuses_logger_without_editing_global_diagnostics(org):

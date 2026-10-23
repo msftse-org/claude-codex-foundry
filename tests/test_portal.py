@@ -386,6 +386,44 @@ def test_publication_requires_review_and_success_sets_revision(app, org, key, mo
         assert saved["revision"] == saved["published_revision"]
 
 
+def test_shared_target_drives_profiles_reporting_and_publication_without_resetting_state(
+    app, org, key, monkeypatch
+):
+    calls = []
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.publish", lambda config, *args: calls.append(config)
+    )
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        before = client.get("/api/state", headers=auth).json()
+        assert before["gateway_url"] == org["gateway_url"]
+        profile = client.get("/api/client-profile", headers=auth).json()
+        assert profile["gateway_url"] == org["gateway_url"]
+        result = client.post(
+            "/api/publish",
+            headers=auth,
+            json={
+                "revision": before["revision"],
+                "organization": before["settings"]["name"],
+            },
+        )
+        assert result.status_code == 200
+        after = client.get("/api/state", headers=auth).json()
+        for field in ["members", "groups", "prices", "settings"]:
+            assert after[field] == before[field]
+        assert calls[0]["api_id"] == org["api_id"]
+        assert calls[0]["gateway_url"] == profile["gateway_url"]
+        from claude_foundry.portal.governance import impact
+
+        other = {
+            **org,
+            "api_id": "claude-foundry-preview",
+            "api_path": "claude-preview",
+            "gateway_url": org["gateway_url"] + "-preview",
+        }
+        assert impact(other, after)["policy_hash"] != after["published_hash"]
+
+
 def test_cost_analysis_enforces_roles_and_date_bounds(app, org, key):
     body = {"start": "2024-03-01", "end": "2024-03-02"}
     data, etag = app.state.store.read()
