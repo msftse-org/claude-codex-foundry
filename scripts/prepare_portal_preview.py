@@ -4,11 +4,11 @@
 import argparse
 import copy
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
 
-from claude_foundry.azure import Azure, AzureError, account_path, api_path
+from claude_foundry.azure import Azure, AzureError, api_path
 from claude_foundry.config import load_org, write_json
 from claude_foundry.gateway import deploy
+from claude_foundry.portal_setup import ensure_inference_identity
 
 
 def prepare(config, api_id, api_route, azure):
@@ -49,33 +49,7 @@ def prepare(config, api_id, api_route, azure):
         {"properties": diagnostics["properties"]},
     )
     apim = azure.request("GET", service)
-    principal = apim.get("identity", {}).get("principalId")
-    if not principal:
-        raise ValueError("Enable the APIM service's system-assigned managed identity first")
-    scope = account_path(config)
-    role = f"/subscriptions/{config['subscription_id']}/providers/Microsoft.Authorization/roleDefinitions/a97b65f3-24c7-4388-baec-2e87135dc908"
-    assignments = azure.request(
-        "GET", scope + "/providers/Microsoft.Authorization/roleAssignments", version="2022-04-01"
-    )["value"]
-    if any(
-        a["properties"]["principalId"] == principal
-        and a["properties"]["roleDefinitionId"].lower() == role.lower()
-        for a in assignments
-    ):
-        return preview
-    assignment = str(uuid5(NAMESPACE_URL, scope + principal + role))
-    azure.request(
-        "PUT",
-        scope + "/providers/Microsoft.Authorization/roleAssignments/" + assignment,
-        {
-            "properties": {
-                "principalId": principal,
-                "principalType": "ServicePrincipal",
-                "roleDefinitionId": role,
-            }
-        },
-        version="2022-04-01",
-    )
+    ensure_inference_identity(config, azure, apim)
     return preview
 
 

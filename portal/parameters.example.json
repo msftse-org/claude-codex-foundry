@@ -4,7 +4,7 @@
   "parameters": {
     "portalName": { "value": "ccf-admin-<unique-suffix>" },
     "location": { "value": "eastus2" },
-    "organization": { "value": { "replace": "Use the complete preview organization configuration" } },
+    "organization": { "value": { "replace": "Use the complete canonical Claude organization configuration from prepare_portal.py" } },
     "ownerObjectId": { "value": "00000000-0000-0000-0000-000000000001" },
     "ownerName": { "value": "Organization owner" },
     "ownerEmail": { "value": "owner@example.com" },

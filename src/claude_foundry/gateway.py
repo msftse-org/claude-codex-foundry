@@ -169,6 +169,18 @@ def deploy(c, azure):
             raise
         azure.request("PUT", base, {"properties": {**properties, "subscriptionRequired": True}})
     else:
+        try:
+            current = azure.request("GET", base + "/policies/policy")
+        except AzureError as error:
+            if error.status != 404:
+                raise
+        else:
+            existing = ET.fromstring(current["properties"]["value"])
+            if existing.find(".//set-variable[@name='governance']") is not None:
+                raise ValueError(
+                    "This API is portal-managed. Review and publish through the portal; "
+                    "baseline gateway deployment would overwrite its access controls."
+                )
         # PATCH leaves customer-managed API settings and diagnostics intact.
         azure.request("PATCH", base, {"properties": properties})
     azure.request(
