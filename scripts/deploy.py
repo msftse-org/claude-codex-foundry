@@ -143,6 +143,7 @@ class Deployment:
         self.azure = azure
         self.state_path = self.local / "deploy-state.json"
         self.state = read_json(self.state_path, default={"schema_version": 1})
+        self.warnings = []
         self.org_path = self.local / "organization.json"
         self.codex_path = self.local / "codex-organization.json"
 
@@ -355,13 +356,29 @@ class Deployment:
         client_id = self.state.get("desktop_client_id")
         if not client_id:
             self.step("Registering the developer sign-in application (no secrets)")
-            args = ["--tenant", self.s["tenant_id"], "--name", self.n["desktop_app"]]
-            if self.s["grant_admin_consent"]:
-                args.append("--grant-admin-consent")
-            client_id = json.loads(self.script("register_client_app.py", *args, capture=True))[
-                "client_id"
-            ]
+            output = self.script(
+                "register_client_app.py",
+                "--tenant",
+                self.s["tenant_id"],
+                "--name",
+                self.n["desktop_app"],
+                capture=True,
+            )
+            client_id = json.loads(output)["client_id"]
             self.save(desktop_client_id=client_id)
+        if self.s["grant_admin_consent"] and not self.state.get("admin_consent"):
+            try:
+                self.run(
+                    ["az", "ad", "app", "permission", "admin-consent", "--id", client_id],
+                    capture=True,
+                )
+                self.save(admin_consent=True)
+            except DeployError:
+                # Deployment can finish; developers sign in once an administrator consents.
+                self.warnings.append(
+                    "Developer sign-in needs tenant-wide admin consent. Ask an Entra administrator "
+                    f"to run: az ad app permission admin-consent --id {client_id}"
+                )
         return client_id
 
     def profiles(self, client_id):
@@ -506,6 +523,8 @@ class Deployment:
             print(f"  Portal:          {self.state['portal_url']} (owner: {self.user['email']})")
         print(f"  Developer group: {self.s['developer_group_name']} ({group})")
         print(f"  Installer ZIP:   {self.state['bundle']}")
+        for warning in self.warnings:
+            print(f"\nAction needed: {warning}")
         print("\nOnboard developers:")
         print("  uv run python scripts/onboard_users.py alice@example.com bob@example.com")
         print("  Send them the installer ZIP. They open Install.command and sign in once.")

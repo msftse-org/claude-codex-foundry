@@ -37,7 +37,7 @@ Edit `.local/deploy.json`:
 | `claude`, `codex` | `enabled`, optional `models` list (empty deploys every eligible model with quota), `capacity` per deployment, and `sku`. |
 | `portal.enabled` | Deploys the administration portal on the same Claude route. Governance is not published automatically. |
 
-Optional fields: `apim_sku` (`BasicV2` or `StandardV2`), `auth_mode` (`msal`, the default, needs no Azure CLI on developer Macs), `allowed_object_ids`, `profile_name`, `grant_admin_consent`, `add_deployer_to_developers` and `names` overrides. Keep this file and everything the script writes in `.local/`, outside Git.
+Optional fields: `apim_sku` (`BasicV2` or `StandardV2`), `auth_mode` (`msal`, the default, needs no Azure CLI on developer Macs; `azure-cli` needs no app registration or consent), `allowed_object_ids`, `profile_name`, `grant_admin_consent`, `add_deployer_to_developers` and `names` overrides. Keep this file and everything the script writes in `.local/`, outside Git.
 
 ## 2. Deploy
 
@@ -52,7 +52,7 @@ The script creates billable Azure resources and makes small billable verificatio
 3. Deploys Foundry, API Management, Application Insights and Log Analytics, granting the group inference access.
 4. Deploys Claude models, publishes **Claude via Azure Foundry** and connects observability.
 5. Creates **Codex via Azure Foundry**, deploys and qualifies OpenAI models, and publishes only those that pass.
-6. Registers the developer sign-in application (public client, no secret) and exports client profiles.
+6. Registers the developer sign-in application (public client, no secret), requests tenant-wide admin consent and exports client profiles. If you cannot grant consent, the script finishes and prints the command for an Entra administrator; developers can sign in once consent is granted.
 7. Builds one installer ZIP for Claude and Codex in `dist/`.
 8. Deploys the administration portal and its application package, then waits for it to report healthy.
 9. Verifies the gateways with your Azure CLI sign-in. Use `--skip-verify` to skip the billable checks.

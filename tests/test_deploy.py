@@ -42,16 +42,19 @@ def settings(tmp_path):
 class FakeRunner:
     """Answers Azure CLI calls and emulates the files each documented command writes."""
 
-    def __init__(self, org, group_exists=False, account_tenant=TENANT):
+    def __init__(self, org, group_exists=False, account_tenant=TENANT, consent_error=None):
         self.calls = []
         self.org = org
         self.group_exists = group_exists
         self.account_tenant = account_tenant
+        self.consent_error = consent_error
 
     def __call__(self, args, capture=False, allowed=(0,)):
         args = [str(a) for a in args]
         self.calls.append(args)
         if args[0] == "az":
+            if args[1:5] == ["ad", "app", "permission", "admin-consent"] and self.consent_error:
+                raise self.consent_error("Command failed with exit code 1. Forbidden")
             return json.dumps(self.az(args[1:])) if capture else 0
         command = args[3:] if args[1:3] == ["-m", "claude_foundry.cli"] else args[1:]
         return self.tool(command, capture)
@@ -160,6 +163,7 @@ def test_full_deployment_runs_documented_steps_in_order(
         "init-codex",
         "qualify",
         "register_client_app.py",
+        "ad app permission admin-consent",
         "export-client",
         "build_client_bundle.py",
         "prepare_portal.py",
@@ -175,6 +179,8 @@ def test_full_deployment_runs_documented_steps_in_order(
     assert bundle.count("--profile") == 2
     assert job.state["developer_group_id"] == GROUP
     assert job.state["desktop_client_id"] == DESKTOP
+    assert job.state["admin_consent"] is True
+    assert job.warnings == []
     assert job.state["portal_url"] == "https://ccf-admin-contoso1.azurewebsites.net"
     main = json.loads((tmp_path / ".local/parameters.json").read_text())["parameters"]
     assert main["foundryName"]["value"] == "ccf-foundry-contoso1"
@@ -196,10 +202,24 @@ def test_rerun_reuses_group_app_registration_and_qualified_models(
     seen = commands(runner)
     assert not any("ad group create" in c for c in seen)
     assert not any("register_client_app.py" in c for c in seen)
+    assert not any("admin-consent" in c for c in seen)
     assert not any(" qualify " in f" {c} " for c in seen)
     assert any("--app-id " + PORTAL_APP in c for c in seen)
     org_config = json.loads((tmp_path / ".local/organization.json").read_text())
     assert org_config["models"] == [{"name": "m1"}]
+
+
+def test_missing_admin_consent_is_reported_without_stopping(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    runner = FakeRunner(organization(org), consent_error=deploy.DeployError)
+    job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    assert job.state["desktop_client_id"] == DESKTOP
+    assert "admin_consent" not in job.state
+    assert len(job.warnings) == 1 and f"admin-consent --id {DESKTOP}" in job.warnings[0]
+    exports = [c for c in runner.calls if "export-client" in c]
+    assert exports and all(DESKTOP in c for c in exports)
+    assert any("config-zip" in c for c in runner.calls)
 
 
 def test_portal_managed_api_is_not_overwritten(deploy, settings, tmp_path, org, monkeypatch):
