@@ -129,6 +129,8 @@ uv run python scripts/build_client_bundle.py \
 
 Distribute the reviewed ZIP through your organization's normal software channel. It contains a public client profile and the pinned installer runtime dependencies, not administrator configuration. Export/install reject unqualified model profiles. Client-side catalogs are convenience settings; APIM independently enforces the model allowlist.
 
+To give developers one installer for Claude and Codex, pass both profiles: `--profile .local/client.json --profile .local/codex-client.json`. The profiles must use the same tenant. The installer signs in once and configures Codex only on Macs where it is installed. The [quick start](quickstart.md) builds this combined ZIP.
+
 ## Existing conversations
 
 Installing Azure routing keeps the original Codex session files in place. It does not move or bulk rewrite them. However, changing providers is not always a seamless resume: during validation, a native fork of an OpenAI-backed conversation failed with `invalid_encrypted_content`. Azure could not verify reasoning state encrypted by the previous provider. An Azure-to-Azure continuation succeeded.

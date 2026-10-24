@@ -49,15 +49,21 @@ The installer supplies its own isolated runtime and preserves unrelated settings
 
 An Azure administrator deploys the shared foundation once. An Entra administrator may also be needed for app registration and consent. Start with a small pilot and your own reviewed configuration.
 
+One settings file and one command deploy Foundry, API Management, Claude, Codex and the portal, then build a single developer installer:
+
 ```bash
 git clone https://github.com/msftse-org/claude-codex-foundry.git
 cd claude-codex-foundry
-uv sync --frozen --extra auth
-mkdir -p .local
-cp infra/parameters.example.json .local/parameters.json
+uv sync --frozen --extra auth --extra portal
+mkdir -p .local && cp examples/deploy.json .local/deploy.json   # edit tenant, subscription, suffix, Marketplace details
+az login --tenant YOUR_TENANT_ID
+uv run python scripts/deploy.py --settings .local/deploy.json
+uv run python scripts/onboard_users.py alice@contoso.com bob@contoso.com
 ```
 
-Edit the placeholders before deploying. The [administrator guide](docs/administrator.md) covers the complete sequence:
+Send developers the ZIP from `dist/`. **[Quick start →](docs/quickstart.md)**
+
+The [administrator guide](docs/administrator.md) explains each step the script runs, for existing infrastructure or step-by-step control:
 
 1. Confirm subscription eligibility, regions, permissions, and Marketplace details.
 2. Deploy new infrastructure, or configure a dedicated API on existing APIM/Foundry resources.
@@ -121,6 +127,7 @@ The portal is outside the inference path. The budget Function and its storage ar
 
 | Task | Guide |
 | --- | --- |
+| Deploy everything with one command and onboard developers | [Quick start](docs/quickstart.md) |
 | Deploy infrastructure, models, and the gateway | [Organization administrator](docs/administrator.md) |
 | Install, sign in, update, or restore Claude settings | [Mac installation](docs/macos.md) |
 | Bring existing chats, projects, and local sessions | [Conversation migration](docs/conversation-migration.md) |

@@ -8,6 +8,8 @@ You need a Mac, your work Microsoft account, your organization’s installation 
 
 Obtain the installation bundle from your organization and unzip it. The bundle must include `client.json`. Use your organization's approved distribution of Claude Desktop and, if needed, the Claude Code CLI. The installer configures those apps; it does not replace or update them.
 
+A combined bundle also contains `codex-client.json`. One run of `Install.command` and one Microsoft sign-in then configure Claude and, when Codex Desktop or the Codex CLI is installed, Codex as well. If you install Codex later, open `Install.command` again.
+
 ## Install and sign in
 
 Double-click `Install.command`, or run this from the extracted folder:

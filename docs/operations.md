@@ -86,7 +86,7 @@ For Blob recovery, use an operator with data-plane rights from a network that ca
 
 ## Offboarding and retirement
 
-For the baseline gateway, revoke the user's/group's Foundry inference permission and any applicable APIM object-ID entry. For portal governance, suspend the member, review/publish the policy, and verify denial of a new request. Portal sign-in uses the current active-member state; gateway enforcement uses the last published state. In-flight requests may finish.
+For the baseline gateway, revoke the user's/group's Foundry inference permission and any applicable APIM object-ID entry. For a quick-start deployment, run `uv run python scripts/onboard_users.py --remove PERSON` to remove them from the developer group. For portal governance, suspend the member, review/publish the policy, and verify denial of a new request. Portal sign-in uses the current active-member state; gateway enforcement uses the last published state. In-flight requests may finish.
 
 Review direct Foundry RBAC and any separately granted permissions. Portal suspension does not disable an Entra account, erase a user's local conversations, or uninstall Claude. Coordinate those actions with identity and desktop support.
 

@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [Mac guide](macos.md) · [Operations](operations.md)
 
-This guide takes an Azure administrator from an empty resource group (or existing resources) to a verified gateway and a Mac installation ZIP. Developers receive the ZIP; they do not perform these cloud steps. The commands in this guide configure the **baseline user-token gateway**. Add the [portal](../portal/README.md#azure-deployment) afterward using the same API for reporting and reviewed per-member governance. Isolation is optional for testing. The baseline `gateway` command refuses to overwrite portal governance; update the catalog and publish through the portal instead.
+This guide takes an Azure administrator from an empty resource group (or existing resources) to a verified gateway and a Mac installation ZIP. Developers receive the ZIP; they do not perform these cloud steps. For a new installation, the [one-command quick start](quickstart.md) runs these steps for you; use this guide for existing infrastructure or step-by-step control. The commands in this guide configure the **baseline user-token gateway**. Add the [portal](../portal/README.md#azure-deployment) afterward using the same API for reporting and reviewed per-member governance. Isolation is optional for testing. The baseline `gateway` command refuses to overwrite portal governance; update the catalog and publish through the portal instead.
 
 ## Before you begin
 
