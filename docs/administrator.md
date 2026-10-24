@@ -141,7 +141,7 @@ uv run python scripts/build_client_bundle.py --profile .local/client.json \
 
 Distribute the bundle through an approved internal channel. Its file allowlist excludes `.local`, deployment reports, cloud administrator configuration, Git metadata and caches. `client.json` contains tenant ID, gateway URL, public client ID when applicable, and the model list; it contains no secret. Users follow [the Mac guide](macos.md).
 
-To update models, repeat discovery/deployment and synchronize. Redeploy the baseline gateway only for baseline APIs; for portal-governed APIs update the portal catalog and review/publish there. Export and verify a fresh profile, then redistribute the bundle. Existing client catalogs do not refresh automatically.
+To update models, repeat discovery/deployment and synchronize. Redeploy the baseline gateway only for baseline APIs; for portal-governed APIs update the portal catalog and review/publish there. Export and verify a fresh profile (add `--governed` on a portal-governed API), then redistribute the bundle. Existing client catalogs do not refresh automatically.
 
 ## Completion checklist
 

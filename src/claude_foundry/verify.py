@@ -70,5 +70,12 @@ def verify(c, all_models=False, *, governed=False):
     status, _, _ = request(c, "/v1/messages", token, payload)
     expected = 403 if governed else 400
     if status != expected:
-        raise RuntimeError(f"Unknown model should return {expected} at the gateway, got {status}")
+        hint = {
+            403: " A 403 usually means portal governance is published; rerun with --governed.",
+            400: " A 400 means the baseline policy is active; omit --governed or wait for"
+            " publication to propagate.",
+        }.get(status, "")
+        raise RuntimeError(
+            f"Unknown model should return {expected} at the gateway, got {status}.{hint}"
+        )
     print("PASS model allowlist", flush=True)

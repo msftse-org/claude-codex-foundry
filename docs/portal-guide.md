@@ -75,7 +75,7 @@ The everyday workflow is **edit → save draft → review → publish → verify
 1. Save member, group, and token-limit changes.
 2. Choose **Review & publish** and inspect affected membership and the target gateway.
 3. Confirm the organization name and publish the reviewed revision.
-4. Verify a new allowed request on the configured route and confirm its telemetry. Use an explicitly isolated API for disruptive suspension/quota tests. Azure policy propagation may take time.
+4. Verify a new allowed request on the configured route, for example with `claude-foundry verify --governed`, and confirm its telemetry. Use an explicitly isolated API for disruptive suspension/quota tests. Azure policy propagation may take time.
 
 ![Publication impact review showing active and suspended membership and enforcement limitations](images/portal-publication-review.jpg)
 

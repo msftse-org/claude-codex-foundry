@@ -56,7 +56,7 @@ Model capacity allocation is not a spending cap. The deployment command preserve
 
 Use a reviewed commit and keep the previous package/commit available. Re-run relevant checks, inspect configuration/schema changes, and validate in the preview environment before rollout. `main` updates and GitHub CI do not deploy Azure automatically.
 
-Build portal code with `scripts/build_portal.py` and deploy the explicit package as described in the [portal guide](../portal/README.md#azure-deployment). Verify health, Microsoft sign-in, authenticated state, telemetry, and a reviewed preview publication after deployment. Record the deployed commit and verification outcome.
+Build portal code with `scripts/build_portal.py` and deploy the explicit package as described in the [portal guide](../portal/README.md#azure-deployment). Verify health, Microsoft sign-in, authenticated state and telemetry after deployment. Exercise publication changes on an isolated API first; on a governed shared route, confirm the reviewed publication and run `claude-foundry verify --governed`. Record the deployed commit and verification outcome.
 
 For Mac updates, distribute a newly built organization bundle. Users rerun `Install.command`, then restart Claude. Existing unrelated settings and later user changes must be preserved; [restore](macos.md#settings-and-recovery) is available if required.
 

@@ -33,7 +33,7 @@ def test_verifier_checks_exact_authorization_mode(org, monkeypatch, governed, st
         (200, {}, '{"input_tokens": 1}'),
         (400 if governed else 403, {}, ""),
     ]
-    with pytest.raises(RuntimeError, match=f"return {status}"):
+    with pytest.raises(RuntimeError, match=f"return {status}.*--governed"):
         verify(org, governed=governed)
 
 

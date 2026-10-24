@@ -92,6 +92,22 @@ def test_shared_setup_rejects_missing_operation(org):
     assert all(c.args[0] == "GET" for c in azure.request.call_args_list)
 
 
+def test_shared_setup_requires_api_observability_before_writing(org):
+    azure, _ = shared_azure(org)
+    diagnostic = api_path(org) + "/diagnostics/applicationinsights"
+    respond = azure.request.side_effect
+
+    def without_diagnostic(method, path, *args, **kwargs):
+        if path == diagnostic:
+            raise AzureError(404, "missing")
+        return respond(method, path, *args, **kwargs)
+
+    azure.request.side_effect = without_diagnostic
+    with pytest.raises(ValueError, match="admin observability"):
+        prepare_shared(org, azure)
+    assert all(c.args[0] == "GET" for c in azure.request.call_args_list)
+
+
 def test_shared_setup_surfaces_azure_errors_without_writes(org):
     azure = Mock()
     azure.request.side_effect = AzureError(403, "denied")

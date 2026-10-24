@@ -3,7 +3,7 @@
 import copy
 from uuid import NAMESPACE_URL, uuid5
 
-from .azure import account_path, api_path
+from .azure import AzureError, account_path, api_path
 from .config import validate_client
 
 
@@ -66,10 +66,16 @@ def prepare_shared(config, azure):
     }
     if any(operations.get(name) != route for name, route in required.items()):
         raise ValueError("The existing API must expose the expected Claude operations")
-    diagnostic = azure.request("GET", base + "/diagnostics/applicationinsights")["properties"]
+    try:
+        diagnostic = azure.request("GET", base + "/diagnostics/applicationinsights")["properties"]
+    except AzureError as error:
+        if error.status != 404:
+            raise
+        diagnostic = {}
     if not diagnostic.get("loggerId"):
         raise ValueError(
-            "Configure API Application Insights observability before attaching the portal"
+            "Configure API Application Insights observability before attaching the portal "
+            "(claude-foundry admin observability)"
         )
     ensure_inference_identity(result, azure, apim)
     return result

@@ -1,6 +1,25 @@
 # Portal verification record
 
-Status: **preview**. The baseline source is maintained in `main`; the Codex and content-log extension remains on `feat/codex-azure`. This record is evidence for the isolated Azure preview, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
+Status: **preview**. The portal, Codex and content-log sources are maintained in `main`. This record is evidence for the isolated Azure preview and for one authorized shared-route acceptance, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
+
+## Verification recorded on 2026-10-23: one shared Claude route
+
+[PR #7](https://github.com/msftse-org/claude-codex-foundry/pull/7) makes the existing Claude API the default target for clients, portal reporting, profile export and governance publication. An isolated API remains an explicit testing option. The rollout below was performed in one authorized environment; backups, configuration, telemetry and recovery snapshots remain private.
+
+| Check | Evidence |
+| --- | --- |
+| Isolated destructive tests | Before the shared route changed, `verify_portal_preview.py --all-models` passed all 18 checks: authentication rejection, catalog, inference, token counting, streaming, denied model, suspended member, organization/group/member token quotas and member token/request rates. Both original preview policies were restored. |
+| Retargeted deployment | ARM what-if was reviewed. The retargeted configuration and locally built Functions package were deployed with the existing resource names, identity, private storage and networking. No resource replacement was required. |
+| Before publication | Sign-in, preserved member/group state, a canonical-route profile export and historical dashboard traffic were verified. `claude-foundry verify --all-models` passed against the baseline policy. |
+| Publication | After explicit approval and impact review, the existing access policy was published to the canonical API. Publication/audit state, client JWT validation and APIM managed-identity backend authentication were confirmed. |
+| Governed verification | `claude-foundry verify --all-models --governed` passed after publication and again after preview removal: missing/invalid tokens rejected; catalog, inference, streaming, token counting and the governed model allowlist passed. |
+| Installed client | Claude Code, started from an empty temporary directory, returned its expected marker in a text-only test and in a tool-enabled test that ran only `pwd`. |
+| Reporting | The authenticated portal displayed canonical-route requests, including the client tests. New governed token metrics carried member/group attribution; historical metrics remain unattributed. |
+| Preview cleanup | After confirming no preview traffic, only the obsolete preview API and its API-scoped writer assignment were removed. Exactly one Claude API remains, and the portal policy-edit role targets only it. |
+| Deployed security checks | Portal health returned 200 and anonymous state 401. Storage public networking and shared keys are disabled, with an approved private endpoint, Blob versioning and 30-day deletion protection. |
+| Source checks | 269 Python tests, 45 frontend tests, Ruff, the frontend production build and all five Bicep templates pass. |
+
+This is shared-route acceptance in one environment, not production certification, cross-tenant testing or load testing. Analytics remain subject to Application Insights ingestion and caching delays, and streaming tokens are estimates. Direct Foundry RBAC was reviewed, not revoked, and still bypasses gateway enforcement. Historical member/group attribution is not backfilled. Optional Codex, dollar-budget and content-log deployments were not redeployed or recertified by this rollout.
 
 ## Verification on 2026-10-15: restricted content logs
 
@@ -68,6 +87,7 @@ The walkthrough's screenshots were captured from the actual hosted preview on 20
 - **Required spending control is not implemented:** hard organization/group/user dollar limits, shared Claude/Codex accounting, and scoped group-administrator permissions. The existing token-quota tests do not validate these requirements. See the [release-blocking acceptance criteria](../docs/budget-enforcement.md).
 
 - Real administrator, billing, auditor and developer sessions under the customer's Conditional Access, consent and device policies; account disablement/expired-token journeys.
+- Shared-route migration in each customer environment: back up both policy surfaces and portal state, review all intended callers and direct Foundry RBAC, verify reporting before publication, and run `claude-foundry verify --governed` afterward.
 - Complete the hosted browser CSV upload once extension file access is available, and a fresh Mac installation from the exported portal profile. Verify MSAL mode with a separate desktop registration if Azure CLI-free onboarding is required.
 - Process termination during publication, live two-session administrator conflicts, rollback failures, and a real Blob-version restore from an authorized private-network operator. Offline failure/concurrency tests do not replace these operational drills.
 - Sustained load, latency and cost measurement for the intended user count; state/audit growth, log retention, alerts, and recovery objectives. A 2,000-member configuration test does not establish 2,000 concurrent developer throughput.
