@@ -48,6 +48,7 @@ class FakeRunner:
         self.group_exists = group_exists
         self.account_tenant = account_tenant
         self.consent_error = consent_error
+        self.synced = ["m1"]
 
     def __call__(self, args, capture=False, allowed=(0,)):
         args = [str(a) for a in args]
@@ -105,7 +106,7 @@ class FakeRunner:
                 # Like the real command, keep existing entries (and their qualification).
                 data = json.loads(config.read_text())
                 kept = {m["name"]: m for m in data.get("models", [])}
-                data["models"] = [kept.get("m1", {"name": "m1"})]
+                data["models"] = [kept.get(name, {"name": name}) for name in self.synced]
                 write_json(config, data)
             if action == "qualify":
                 data = json.loads(config.read_text())
@@ -207,6 +208,26 @@ def test_rerun_reuses_group_app_registration_and_qualified_models(
     assert any("--app-id " + PORTAL_APP in c for c in seen)
     org_config = json.loads((tmp_path / ".local/organization.json").read_text())
     assert org_config["models"] == [{"name": "m1"}]
+
+
+def test_rerun_qualifies_only_models_not_yet_qualified(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    run_deployment(deploy, settings, tmp_path, FakeRunner(organization(org)), monkeypatch)
+    runner = FakeRunner(organization(org), group_exists=True)
+    runner.synced = ["m1", "m2"]
+    run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    qualify = [c for c in runner.calls if "qualify" in c]
+    assert len(qualify) == 1 and qualify[0][5].endswith("codex-qualification-retry-config.json")
+    retry = json.loads((tmp_path / ".local/codex-qualification-retry-config.json").read_text())
+    assert [m["name"] for m in retry["models"]] == ["m2"]
+    codex = json.loads((tmp_path / ".local/codex-organization.json").read_text())
+    assert [(m["name"], m.get("qualified")) for m in codex["models"]] == [
+        ("m1", True),
+        ("m2", True),
+    ]
+    gateways = [c for c in runner.calls if c[-1] == "gateway" and "codex" in c[5]]
+    assert len(gateways) == 2
 
 
 def test_missing_admin_consent_is_reported_without_stopping(

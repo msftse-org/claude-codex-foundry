@@ -333,20 +333,43 @@ class Deployment:
         self.cli("admin", "--config", config, "sync-models")
         self.cli("admin", "--config", config, "gateway")
         self.cli("admin", "--config", config, "observability")
-        if not all(m.get("qualified") is True for m in read_json(config)["models"]):
+        org = read_json(config)
+        pending = [m for m in org["models"] if m.get("qualified") is not True]
+        if pending:
             # Three small billable requests per model; failing models are left unpublished.
-            report = self.local / "codex-qualification.json"
-            code = self.cli(
-                "admin",
-                "--config",
-                config,
-                "qualify",
-                "--report",
-                report,
-                "--publish-passed",
-                allowed=(0, 2),
-            )
-            if code == 2:
+            if len(pending) == len(org["models"]):
+                code = self.cli(
+                    "admin",
+                    "--config",
+                    config,
+                    "qualify",
+                    "--report",
+                    self.local / "codex-qualification.json",
+                    "--publish-passed",
+                    allowed=(0, 2),
+                )
+            else:
+                # Retry only models not yet qualified, e.g. after a transient network error.
+                retry = self.local / "codex-qualification-retry-config.json"
+                write_json(retry, {**org, "models": pending})
+                code = self.cli(
+                    "admin",
+                    "--config",
+                    retry,
+                    "qualify",
+                    "--report",
+                    self.local / "codex-qualification-retry.json",
+                    "--publish-passed",
+                    allowed=(0, 1, 2),
+                )
+                passed = set() if code == 1 else {m["name"] for m in read_json(retry)["models"]}
+                org["models"] = [
+                    dict(m, qualified=True)
+                    for m in org["models"]
+                    if m.get("qualified") is True or m["name"] in passed
+                ]
+                write_json(config, org)
+            if code != 0:
                 print("Some Codex models failed qualification and were not published.")
             self.cli("admin", "--config", config, "gateway")
 
