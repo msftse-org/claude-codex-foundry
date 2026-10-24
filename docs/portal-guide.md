@@ -2,7 +2,7 @@
 
 > **Budget hierarchy branch:** the additional `group_admin` role, owner-controlled USD ceilings, shared ledger and request-time team content scope are documented in [Enforced USD limits](budget-enforcement.md). These require the dedicated budget runtime and remain subject to its release checks. The legacy token/planning controls below still describe the existing gateway.
 
-[← README](../README.md) · [Deploy the Azure preview](../portal/README.md#isolated-azure-preview) · [Operations](operations.md)
+[← README](../README.md) · [Deploy the portal](../portal/README.md#azure-deployment) · [Operations](operations.md)
 
 The portal gives your organization one place to manage developer access through its Claude gateway and understand usage. It runs in your Azure subscription and uses your Microsoft Entra tenant. It is currently a **preview**; review the [validation record](../portal/VALIDATION.md) before a production rollout.
 
@@ -75,7 +75,7 @@ The everyday workflow is **edit → save draft → review → publish → verify
 1. Save member, group, and token-limit changes.
 2. Choose **Review & publish** and inspect affected membership and the target gateway.
 3. Confirm the organization name and publish the reviewed revision.
-4. Verify a new allowed request and a new denied request on the preview API. Azure policy propagation may take time.
+4. Verify a new allowed request on the configured route, for example with `claude-foundry verify --governed`, and confirm its telemetry. Use an explicitly isolated API for disruptive suspension/quota tests. Azure policy propagation may take time.
 
 ![Publication impact review showing active and suspended membership and enforcement limitations](images/portal-publication-review.jpg)
 

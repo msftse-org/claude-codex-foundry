@@ -32,7 +32,7 @@ For external contributions, fork the repository and push your branch to your for
 | --- | --- |
 | CLI, model discovery, baseline gateway policy | `src/claude_foundry/cli.py`, `models.py`, `gateway.py`, `azure.py` |
 | User authentication and Claude settings | `src/claude_foundry/auth.py`, `client.py`, `config.py` |
-| Portal API, roles, drafts, policy compilation, storage | `src/claude_foundry/portal/` |
+| Portal API, roles, drafts, policy compilation, storage, shared-route preparation | `src/claude_foundry/portal/`, `portal_setup.py`, `scripts/prepare_portal.py` |
 | React interface and frontend tests | `portal/web/src/` |
 | Foundation and portal infrastructure | `infra/` |
 | Mac bootstrap, packaging, Entra setup, live verification | `scripts/` |

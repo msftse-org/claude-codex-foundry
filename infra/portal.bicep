@@ -1,9 +1,10 @@
 targetScope = 'resourceGroup'
 
-@description('Unreleased management portal. Deploy into a dedicated preview resource group.')
+@description('Preview management portal. Use a dedicated resource group; share the existing Claude API by default.')
 param portalName string
 param location string = resourceGroup().location
 @secure()
+@description('Canonical Claude organization configuration. Clients, analytics and policy publication use this API; a separate preview API is optional.')
 param organization object
 param ownerObjectId string
 param ownerName string = 'Organization owner'

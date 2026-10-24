@@ -55,6 +55,8 @@ The installer configures your local apps. It does not enroll your device in MDM,
 
 Login opens the browser for MSAL, or runs `az login` for Azure CLI mode. For environments that permit device-code sign-in, `login --device-code` is also available. Background credential refresh never opens a browser. Verification makes small billable inference requests.
 
+If your organization manages access through the administration portal, run `verify --governed` instead. A governed gateway rejects an unlisted model with 403 rather than the baseline 400. Your platform team can tell you which mode applies.
+
 The helper writes only a token to standard output. Do not run the `token` command in a recorded terminal or paste its output into support tickets.
 
 ## Settings and recovery

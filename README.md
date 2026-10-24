@@ -12,7 +12,7 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 
 > **Budget hierarchy preview:** included in `main` for evaluation, the optional budget gateway adds organization, group and user USD limits and delegated group administrators. Customer release checks remain outstanding. [Azure architecture and request-flow diagram](docs/budget-architecture.md) · [Budget rules](docs/budget-enforcement.md) · [Completed Azure tests and remaining checks](docs/budget-validation.md). Existing endpoints do not acquire dollar enforcement automatically.
 
-> **Portal preview:** the management portal is included in `main` for continued development and evaluation. Its Azure deployment guide uses an isolated preview API. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
+> **Portal preview:** the management portal is included for continued development and evaluation. By default it reports on and manages the same Claude API used by clients; an isolated API is an explicit testing option. Attaching the portal does not publish access rules automatically. See the [validation record and remaining production checks](portal/VALIDATION.md) before planning a customer rollout. Merging source does not deploy Azure resources.
 
 ![Cost analysis in the hosted Azure portal: date controls, estimated model spend, token consumption, and rate coverage](docs/images/portal-cost-analysis.jpg)
 
@@ -64,7 +64,7 @@ Edit the placeholders before deploying. The [administrator guide](docs/administr
 3. Discover eligible models, review paid terms, deploy, and verify inference.
 4. Publish **Claude via Azure Foundry** in APIM and connect observability.
 5. Choose Azure CLI or MSAL sign-in, export a client profile, and build the Mac ZIP.
-6. Optionally deploy the [isolated management portal preview](portal/README.md#isolated-azure-preview).
+6. Optionally deploy the [management portal](portal/README.md#azure-deployment) on the same Claude route.
 
 Model availability and quota depend on the subscription, region, and deployment type. Catalog discovery is not a guarantee that a model can be purchased or invoked.
 
@@ -102,7 +102,7 @@ Each API route uses one of these authorization modes. A client profile must poin
 | Mode | Where inference access is decided | When to use |
 | --- | --- | --- |
 | **Baseline gateway** | APIM validates the user token; Foundry applies the user's inference RBAC. One published model allowlist applies to callers. | Establish the gateway and Mac onboarding without the portal. |
-| **Portal governance preview** | APIM validates the user token and enforces published membership, model grants, and token limits. APIM's managed identity calls Foundry. | Evaluate per-developer/group administration on a separate preview API. |
+| **Portal governance preview** | APIM validates the user token and enforces published membership, model grants, and token limits. APIM's managed identity calls Foundry. | Add administration to the existing Claude route after reviewing and publishing access rules. Use an isolated API only when explicitly testing. |
 | **Budget hierarchy preview** | APIM establishes identity; a separate budget Function checks published permissions and atomically reserves organization/group/user USD allowance before its managed identity calls Foundry. | Evaluate shared Claude/Codex dollar enforcement on dedicated budget routes. Requires separate deployment and release validation. |
 
 The portal is outside the inference path. The budget Function and its storage are dependencies for every governed inference request; the portal is needed for administration and publication. Users with direct Foundry RBAC can bypass gateway controls; review that access when adopting governance.

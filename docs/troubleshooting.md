@@ -15,7 +15,10 @@
 | CLI works but Desktop fails | Restart Desktop fully; check MDM precedence and `~/Library/Logs/Claude-3p/main.log`. GUI launches have a different PATH, so the installed helper and runtime use absolute paths. |
 | Wrong endpoint/provider in Code | Inspect process environment, project settings and managed settings for conflicting `ANTHROPIC_*` / `CLAUDE_CODE_USE_*` variables. Project/MDM settings can override user configuration. |
 | Old history missing | Consumer and third-party Desktop use separate profiles/stores. The installer preserves the old profile; it does not migrate conversation history. |
-| Catalog mismatch during verify | Redeploy the reviewed gateway catalog and export a fresh client profile. |
+| Catalog mismatch during verify | Baseline route: redeploy the reviewed gateway catalog and export a fresh client profile. Portal-governed route: the catalog is filtered by published grants; publish pending changes, then export a fresh profile from the portal. |
+| Verify expects 400 but gets 403, or the reverse | The check does not match the route's authorization mode. Add `--governed` after portal governance is published on that route; omit it for baseline routes. A 400 with `--governed` means the baseline policy is still active or publication has not propagated. |
+| `admin gateway` reports a portal-managed API | The baseline command refuses to overwrite published portal governance. Update the catalog and review/publish through the portal. To roll back, follow [publication recovery](operations.md#portal-publication-recovery). |
+| `prepare_portal.py` reports an API mismatch or missing observability | Use the organization configuration your clients actually use: its `api_path`, `gateway_url` and `foundry_url` must match the existing API. Run `admin observability` if the API has no Application Insights diagnostic. |
 | Empty metrics/logs | See the observability guide; distinguish Logs from Live Metrics and check ingestion delay/permissions. |
 
 Use `.local/models-report.json` for administrator diagnostics and the private installation snapshots for user recovery. Before sharing troubleshooting output, remove tokens, account identifiers, prompts and any customer content. Do not enable shell tracing around credential commands.

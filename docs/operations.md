@@ -26,7 +26,7 @@ Portal roles do not grant Azure subscription or Entra administrator permissions.
 - Complete Microsoft sign-in under the customer's actual Conditional Access policy.
 - Install the generated bundle on a pilot Mac; test Chat, Code, CLI, and settings restore.
 - Confirm requests and token metrics arrive in the intended Application Insights resource.
-- For portal governance, publish only to the separate preview API, verify allowed/denied identities, and review direct Foundry RBAC.
+- For portal governance, review all intended callers before publishing on the shared Claude API. Verify allowed requests there; use an explicitly isolated API for disruptive suspension/quota tests. Review direct Foundry RBAC separately.
 - Set Azure billing alerts separately from portal planning thresholds. Record model SKU, geography, quota, and the source/date of planning rates.
 - Exercise recovery and measure representative workload latency, throttling, and cost before expanding the pilot.
 
@@ -56,7 +56,7 @@ Model capacity allocation is not a spending cap. The deployment command preserve
 
 Use a reviewed commit and keep the previous package/commit available. Re-run relevant checks, inspect configuration/schema changes, and validate in the preview environment before rollout. `main` updates and GitHub CI do not deploy Azure automatically.
 
-Build portal code with `scripts/build_portal.py` and deploy the explicit package as described in the [portal guide](../portal/README.md#isolated-azure-preview). Verify health, Microsoft sign-in, authenticated state, telemetry, and a reviewed preview publication after deployment. Record the deployed commit and verification outcome.
+Build portal code with `scripts/build_portal.py` and deploy the explicit package as described in the [portal guide](../portal/README.md#azure-deployment). Verify health, Microsoft sign-in, authenticated state and telemetry after deployment. Exercise publication changes on an isolated API first; on a governed shared route, confirm the reviewed publication and run `claude-foundry verify --governed`. Record the deployed commit and verification outcome.
 
 For Mac updates, distribute a newly built organization bundle. Users rerun `Install.command`, then restart Claude. Existing unrelated settings and later user changes must be preserved; [restore](macos.md#settings-and-recovery) is available if required.
 

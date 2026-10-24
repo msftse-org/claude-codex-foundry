@@ -25,6 +25,8 @@ flowchart LR
 
 This diagram describes **portal governance**. The baseline gateway forwards the user's delegated token to Foundry instead; its users need inference RBAC themselves. Do not confuse those authorization modes when reviewing direct Foundry access.
 
+Clients and the portal use one configured Claude API by default: usage reporting, profile exports and policy publication share its API ID and gateway URL. Optional isolated testing uses a separate API and requires clients to select that route explicitly. Attaching the portal does not publish access rules; reviewed publication switches backend authorization to APIM's managed identity.
+
 The portal is outside the inference path. An unavailable portal stops administration and publication, but the last published APIM policy continues serving requests.
 
 ## Portal sign-in and server authorization
@@ -69,7 +71,7 @@ Billing and auditors can read organization identities and administrative history
 | Portal managed identity (optional content logging) | Log Analytics Reader | Dedicated content-log workspace. Reads its underlying tables; API allowlisting is enforced by portal code, not this Azure role. Workspace/Azure administrators can bypass portal view auditing. |
 | Portal managed identity | Monitoring Metrics Publisher | Same Insights component, for authenticated portal telemetry ingestion. |
 | Portal managed identity | Storage Blob Data Owner | Dedicated portal storage account, containing Functions host/deployment data and portal state. This includes write/delete authority over those blobs. |
-| APIM managed identity | Cognitive Services User | Configured Foundry account, for governed inference. Confirm the actual foundation/preview assignments before deployment. |
+| APIM managed identity | Cognitive Services User | Configured Foundry account, for governed inference. `scripts/prepare_portal.py` creates this assignment when missing. Confirm the actual foundation/preview assignments before deployment. |
 | Workstation user | Entra delegated Cognitive Services token | The published gateway policy checks the caller's tenant/object ID and entitlements. In governance mode, Foundry receives APIM's identity. |
 
 The host storage role follows the documented [identity-based `AzureWebJobsStorage` requirements](https://learn.microsoft.com/en-us/azure/azure-functions/manage-connections). It is deliberately account-scoped because the same dedicated account supports the Functions host and deployment containers. Separating application state into another storage account and identity is an additional isolation option, not the current template.
@@ -90,6 +92,6 @@ Saving writes a draft and an audit event. Portal roles and suspension affect sub
 
 Publication first saves a `publishing` marker with an ETag. Edits and competing publications are blocked. The portal then reads the existing API/catalog policies and writes the compiled pair through Azure Resource Manager. A failed or uncertain write triggers restoration attempts for every attempted policy, including a timed-out write. Both restores are attempted even if one fails. This is **not an atomic transaction across Azure resources**; rollback, process termination, or the final state save can still fail. Follow the [recovery runbook](operations.md#portal-publication-recovery) before retrying an uncertain publication.
 
-The client profile reflects saved draft entitlements; it does not publish them. Distribute it after successful publication and a gateway check. Downloading a profile does not install Claude or grant access by itself. Catalog updates require redistributing profiles.
+The client profile reflects saved draft entitlements; it does not publish them. Distribute it after successful publication and a gateway check such as `claude-foundry verify --governed`. Downloading a profile does not install Claude or grant access by itself. Catalog updates require redistributing profiles.
 
 For offboarding, suspend the member and publish, then verify a denied gateway request. Separately revoke any direct Foundry RBAC and directory access as appropriate. An identity with direct inference permission can bypass the gateway while Foundry's public endpoint remains reachable. APIM regional token/rate counters are operational controls, not globally atomic billing caps; [streaming token estimation and quota accuracy have limits](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy).

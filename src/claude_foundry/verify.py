@@ -21,7 +21,7 @@ def request(c, path, token=None, data=None):
         return error.code, dict(error.headers), error.read().decode()
 
 
-def verify(c, all_models=False):
+def verify(c, all_models=False, *, governed=False):
     for label, token in [("missing token", None), ("invalid token", "not-a-token")]:
         status, _, _ = request(c, "/v1/models", token)
         if status != 401:
@@ -68,6 +68,14 @@ def verify(c, all_models=False):
     print("PASS token counting", flush=True)
     payload["model"] = "not-an-allowed-deployment"
     status, _, _ = request(c, "/v1/messages", token, payload)
-    if status != 400:
-        raise RuntimeError(f"Unknown model should be rejected at the gateway, got {status}")
+    expected = 403 if governed else 400
+    if status != expected:
+        hint = {
+            403: " A 403 usually means portal governance is published; rerun with --governed.",
+            400: " A 400 means the baseline policy is active; omit --governed or wait for"
+            " publication to propagate.",
+        }.get(status, "")
+        raise RuntimeError(
+            f"Unknown model should return {expected} at the gateway, got {status}.{hint}"
+        )
     print("PASS model allowlist", flush=True)

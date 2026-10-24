@@ -1,6 +1,6 @@
 # Management portal — preview
 
-The portal is included in `main` for continued development and evaluation. Use feature branches and pull requests for follow-up work. CI validates source; it does not deploy Azure resources. The deployment workflow below uses an isolated preview API. Complete the remaining validation and an explicit rollout review before customer production use.
+The portal is included for continued development and evaluation. Use feature branches and pull requests for follow-up work. CI validates source; it does not deploy Azure resources. The deployment workflow below attaches to the existing Claude API by default: clients, usage/cost reporting, profile export and publication share one route. Complete the remaining validation and an explicit rollout review before customer production use.
 
 For daily administration and screenshots, start with the [portal user guide](../docs/portal-guide.md). For code contributions, use [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -26,7 +26,7 @@ See [the dated public pricing reference](PRICING.md) before configuring model ra
 
 ## Local development
 
-Use a separate preview API and a dedicated local state file. Local mode is an explicit administrator bypass for development; the server rejects non-loopback hosts/origins and refuses to start in Azure with this mode enabled.
+Use an [isolated preview API](#isolated-azure-preview) and a dedicated local state file, never the shared client route. Local mode is an explicit administrator bypass for development and publishes with your Azure CLI credentials. The server rejects non-loopback hosts/origins and refuses to start in Azure with this mode enabled.
 
 ```bash
 uv sync --frozen --extra auth --extra portal
@@ -34,11 +34,11 @@ npm --prefix portal/web ci --ignore-scripts
 npm --prefix portal/web run build
 
 PORTAL_LOCAL_MODE=1 \
-PORTAL_ORGANIZATION_PATH=.local/portal/organization.json \
+PORTAL_ORGANIZATION_PATH=.local/portal-preview/organization.json \
 PORTAL_OWNER_ID='<your tenant object ID>' \
 PORTAL_OWNER_NAME='Organization owner' \
 PORTAL_OWNER_EMAIL='owner@example.com' \
-PORTAL_LOCAL_PATH=.local/portal/state.json \
+PORTAL_LOCAL_PATH=.local/portal-preview/state.json \
 uv run --extra portal uvicorn claude_foundry.portal.app:create_app \
   --factory --host 127.0.0.1 --port 8787
 ```
@@ -53,14 +53,14 @@ Open the hosted portal in the browser/profile normally used for work. An embedde
 
 `AADSTS50012` is a general authentication failure. Use the correlation ID and timestamp in **Sign-in diagnostic details** to look up the specific failure in Entra sign-in logs. During preview validation, an attempt reported `130500: Phone sign in was blocked due to User Credential Policy` even though MFA was satisfied. Repeating that phone sign-in is not a repair: use a method allowed by the organization's policy, such as the password option when offered, or ask its identity administrator to investigate. Do not disable MFA, change tenant authentication policy, or add a client secret to this SPA as a workaround.
 
-## Isolated Azure preview
+## Azure deployment
 
 The administrator needs permissions to create resources and scoped role assignments, plus permission to register a single-tenant Entra application. Developers need neither subscription access nor the administrator CLI.
 
-1. Prepare a separate gateway API. This script rejects a route or API ID that does not end in `-preview`, preserves the original API, reuses its diagnostics, and grants the APIM managed identity inference access to the configured Foundry account.
+1. Prepare the portal configuration using the existing Claude gateway. This validates the API path, backend, operations, gateway URL and Application Insights diagnostic, and prepares APIM managed-identity inference access. It does not create another API, replace policies, change diagnostics or publish governance.
 
    ```bash
-   uv run python scripts/prepare_portal_preview.py \
+   uv run python scripts/prepare_portal.py \
      --organization .local/organization.json \
      --output .local/portal/organization.json
    ```
@@ -76,7 +76,7 @@ The administrator needs permissions to create resources and scoped role assignme
 
    Tenant consent and Conditional Access policies still apply. Register the separate desktop public client using the main repository’s administrator guide if users should onboard without Azure CLI. Never use the portal SPA client ID as the desktop client ID.
 
-3. Create a dedicated resource group. Copy `portal/parameters.example.json` to `.local/portal/parameters.json`, fill in the customer values, and replace its `organization` object with the preview organization configuration. Do not commit customer configuration or outputs.
+3. Create a dedicated resource group. Copy `portal/parameters.example.json` to `.local/portal/parameters.json`, fill in the customer values, and replace its `organization` object with the complete `.local/portal/organization.json` generated in step 1. Do not commit customer configuration or outputs.
 
    ```bash
    az group create --subscription '<subscription>' \
@@ -88,7 +88,7 @@ The administrator needs permissions to create resources and scoped role assignme
      --parameters @.local/portal/parameters.json
    ```
 
-   The template creates a consumption plan with no always-ready instances, private storage with shared keys disabled, a managed identity, and RBAC limited to one APIM API’s policies and the selected Insights component. Blob versioning and 30-day deletion recovery are enabled. Private storage networking is enabled by default, with a private endpoint and a dedicated VNet. Choose CIDRs compatible with the customer’s network. The template does not enable public access to storage when `privateStorage=true`.
+   Its `api_id`, `api_path` and `gateway_url` must identify the route your clients actually use. The template creates a consumption plan with no always-ready instances, private storage with shared keys disabled, a managed identity, and RBAC limited to that APIM API’s policies and the selected Insights component. Blob versioning and 30-day deletion recovery are enabled. Private storage networking is enabled by default, with a private endpoint and a dedicated VNet. Choose CIDRs compatible with the customer’s network. The template does not enable public access to storage when `privateStorage=true`. Register `Microsoft.App` before provisioning Flex VNet integration.
 
    Create the app with its private network integration from the start. In preview validation, adding private networking after creating an empty Flex app left code deployment unable to reach storage; recreating that empty app with this template resolved it. Do not recreate an existing customer app as a routine repair step.
 
@@ -104,7 +104,39 @@ The administrator needs permissions to create resources and scoped role assignme
 
    A successful infrastructure deployment is not proof that code deployment or private networking works. Verify `/api/health`, the sign-in flow, an authenticated state read/write, telemetry, and publication with the app’s managed identity. Treat storage `403` during deployment as an unresolved access/network problem; do not enable shared keys or remove network restrictions to get a green result.
 
-5. Sign in as the configured owner. Register developers, review group grants and token limits, and publish to the preview API. Direct user Foundry RBAC bypasses gateway governance and must be reviewed separately before a production rollout.
+5. Sign in as the configured owner. Existing gateway traffic should appear after ingestion; Application Insights queries are scoped to this configured API, not every model call in the subscription. Direct Foundry requests bypass gateway reporting.
+
+   Before publishing, register all intended callers and review group grants and token limits. Attaching alone leaves the inference policy unchanged. Reviewed publication changes backend authentication from the user's delegated token to APIM's managed identity and enables portal membership enforcement on the existing route. Direct user Foundry RBAC bypasses this enforcement; review it separately rather than revoking it automatically.
+
+   Verify the published route with a client profile exported from the portal:
+
+   ```bash
+   uv run claude-foundry verify --config .local/client.json --all-models --governed
+   ```
+
+   Use `--governed` only after Claude governance is published; baseline verification still expects baseline denial behavior (400 rather than 403 for an unlisted model). Do not rerun the baseline `admin gateway` command on a portal-managed API: it now refuses to replace portal governance.
+
+### Isolated Azure preview
+
+For local development or disruptive live quota/suspension tests, explicitly select a separate API. Write its configuration to a separate path so it cannot replace the shared portal configuration:
+
+```bash
+uv run python scripts/prepare_portal.py --isolated \
+  --organization .local/organization.json --output .local/portal-preview/organization.json
+```
+
+This creates or reuses the `claude-foundry-preview` API on route `claude-preview`, installs the baseline policy only when that API is new, and copies the original API's Application Insights diagnostic. Use this file instead of `.local/portal/organization.json` when deploying an isolated portal. The existing `scripts/prepare_portal_preview.py` command remains supported for custom `-preview` IDs/paths. In this mode, install profiles exported by that portal to generate traffic on its separate route. Baseline client traffic is deliberately excluded from isolated reporting.
+
+### Consolidating an existing two-route installation
+
+1. Pause publication. Verify owner sign-in and current member/model grants. Back up both API policies, operations, diagnostics, portal settings, deployment parameters, scoped RBAC and the current Blob version/ETag.
+2. Run shared preparation using the original organization configuration. Retain existing resource names, including `storageAccountName`, app/identity, private networking and monitoring; review ARM what-if before redeploying.
+3. Update `organization` in the portal parameters to the shared configuration. Redeploy the existing portal to align its settings and API-scoped policy permission. Do not overwrite or reseed Blob state. Remove the obsolete preview writer assignment after acceptance; ARM incremental deployment does not remove old assignments automatically.
+4. Verify existing clients and historical usage before publishing. The policy hash changes with the target API; review the resulting unpublished draft rather than treating an old preview publication as governing the shared route. Publication remains explicit.
+5. Review/publish and verify allowed inference, streaming, token counting and the actual client, including `claude-foundry verify --governed`. Historical metrics lacking principal/group dimensions remain unattributed; planning estimates require rates and are not Azure invoices.
+6. Check for remaining preview consumers, then remove only the unused preview API and its obsolete writer assignment. Preserve APIM, Foundry, monitoring, private storage, state and logs.
+
+Rollback restores the saved API-level and model-catalog policy pair and the previous portal configuration/permissions. Reconcile publication state and any intervening edits; restoring Blob data alone does not restore gateway policies. See [publication recovery](../docs/operations.md#portal-publication-recovery).
 
 ## Validation and release checks
 
@@ -117,12 +149,12 @@ npm --prefix portal/web test
 az bicep build --file infra/portal.bicep --outfile /tmp/portal.arm.json
 ```
 
-The live governance test temporarily changes **only a preview API** and restores both policies. It covers catalog filtering, model denial, suspension, streaming, token counting, all three monthly quota scopes, and per-member token/request rates. It sends small billable inference requests. Supply a state file containing the signed-in test principal; never use a production route.
+The live governance test temporarily changes **only a preview API** and restores both policies; it refuses an API ID or route that does not end in `-preview`. It covers catalog filtering, model denial, suspension, streaming, token counting, all three monthly quota scopes, and per-member token/request rates. It sends small billable inference requests. Supply the isolated configuration and a state file containing the signed-in test principal; never use the shared client route. On the shared route, use only the non-destructive `claude-foundry verify --governed` check after a reviewed publication.
 
 ```bash
 uv run --extra portal python scripts/verify_portal_preview.py \
-  --organization .local/portal/organization.json \
-  --state .local/portal/state.json --all-models
+  --organization .local/portal-preview/organization.json \
+  --state .local/portal-preview/state.json --all-models
 ```
 
 The current outcomes and limitations are tracked in [VALIDATION.md](VALIDATION.md). Read the [identity and permissions reference](../docs/identity-and-permissions.md) for token flows, exact Azure scopes, role boundaries and revocation timing.
