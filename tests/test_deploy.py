@@ -216,9 +216,7 @@ def test_full_deployment_runs_documented_steps_in_order(
     assert org_config["model_provider_data"]["countryCode"] == "US"
 
 
-def test_capacity_maximization_can_be_disabled(
-    deploy, settings, tmp_path, org, monkeypatch
-):
+def test_capacity_maximization_can_be_disabled(deploy, settings, tmp_path, org, monkeypatch):
     value = json.loads(settings.read_text())
     value["maximize_model_capacity"] = False
     settings.write_text(json.dumps(value))
@@ -544,9 +542,7 @@ def test_deployment_enables_stream_capture_with_content_logs(unified_job):
         )
     )
     job.deploy(verify=False)
-    params = json.loads(
-        (job.local / "unified/runtime-parameters.json").read_text()
-    )["parameters"]
+    params = json.loads((job.local / "unified/runtime-parameters.json").read_text())["parameters"]
     assert params["contentLogsEnabled"]["value"] is True
 
 

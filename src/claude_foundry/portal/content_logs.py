@@ -236,10 +236,7 @@ def _stream_records(source, credential, filters, group_id=None):
             continue
         if filters.before and not (
             timestamp < filters.before
-            or (
-                timestamp == filters.before
-                and record["correlation_id"] > str(filters.before_id)
-            )
+            or (timestamp == filters.before and record["correlation_id"] > str(filters.before_id))
         ):
             continue
         rows.append(

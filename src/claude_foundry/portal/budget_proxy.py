@@ -65,7 +65,14 @@ class GatewayIdentity:
 
 class BudgetProxy:
     def __init__(
-        self, ledger, snapshots, credential, endpoint, deployments, client=None, content_capture=None
+        self,
+        ledger,
+        snapshots,
+        credential,
+        endpoint,
+        deployments,
+        client=None,
+        content_capture=None,
     ):
         if not endpoint.startswith("https://") or not endpoint.rstrip("/").endswith(
             ".services.ai.azure.com"
@@ -241,9 +248,7 @@ class BudgetProxy:
                 try:
                     async for chunk in response.aiter_bytes():
                         if self.content_capture and len(captured) < self.content_capture.max_bytes:
-                            captured.extend(
-                                chunk[: self.content_capture.max_bytes - len(captured)]
-                            )
+                            captured.extend(chunk[: self.content_capture.max_bytes - len(captured)])
                         usage.feed(chunk)
                         # Native clients can disconnect immediately after the terminal
                         # event. Commit its authoritative usage before exposing it.

@@ -173,9 +173,7 @@ def test_list_logs_deduplicates_native_and_stream_capture(monkeypatch):
     captured = native | {"has_response": True}
     s = source()
     s.stream_capture_account = "capture"
-    monkeypatch.setattr(
-        "claude_foundry.portal.content_logs.run_query", lambda *args: [native]
-    )
+    monkeypatch.setattr("claude_foundry.portal.content_logs.run_query", lambda *args: [native])
     monkeypatch.setattr(
         "claude_foundry.portal.content_logs._stream_records",
         lambda *args: [captured],

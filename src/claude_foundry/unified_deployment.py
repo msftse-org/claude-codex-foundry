@@ -103,9 +103,7 @@ def prepare(job):
     return primary, settings, deployments
 
 
-def deploy_runtime(
-    job, primary, settings, deployments, portal_identity, content_logs_config=None
-):
+def deploy_runtime(job, primary, settings, deployments, portal_identity, content_logs_config=None):
 
     job.step("Connecting both providers to shared portal governance")
     app_path = job.local / "unified/entra.json"
