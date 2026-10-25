@@ -212,10 +212,11 @@ class BudgetProxy:
                     if provider == "anthropic"
                     else {
                         "type": "error",
-                        "code": "upstream_stream_incomplete",
-                        "message": message,
-                        "param": None,
-                        "sequence_number": 0,
+                        "error": {
+                            "code": "upstream_stream_incomplete",
+                            "message": message,
+                            "param": None,
+                        },
                     }
                 )
                 return ("data: " + json.dumps(value, separators=(",", ":")) + "\n\n").encode()
@@ -236,11 +237,11 @@ class BudgetProxy:
                             await settle(usage.tokens())
                             settled = True
                         except Exception:
-                            # A provider terminal failure was already forwarded. For an
-                            # unexplained EOF, add a protocol-native error event so clients
-                            # do not misdiagnose it as a transport disconnect.
-                            if not usage.failed:
-                                yield incomplete_stream_event()
+                            # Normalize every unsettled terminal path. Some compatible
+                            # providers emit a failure-shaped event that a native client
+                            # does not recognize; the canonical error prevents that event
+                            # from degrading into a misleading transport disconnect.
+                            yield incomplete_stream_event()
                             LOG.warning(
                                 "Stream did not confirm settlement; check reservation: %s",
                                 request_id,
@@ -254,8 +255,7 @@ class BudgetProxy:
                 except Exception:
                     # Upstream read errors and settlement failures keep the reservation,
                     # but clients still receive a terminal protocol error when possible.
-                    if not usage.failed:
-                        yield incomplete_stream_event()
+                    yield incomplete_stream_event()
                     if not settled:
                         LOG.warning(
                             "Stream did not confirm settlement; check reservation: %s", request_id

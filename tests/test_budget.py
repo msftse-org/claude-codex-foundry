@@ -1203,13 +1203,14 @@ def test_openai_stream_eof_emits_terminal_error_and_keeps_reservation(policy, le
             ]
             assert events[-1] == {
                 "type": "error",
-                "code": "upstream_stream_incomplete",
-                "message": (
-                    "The upstream model stream ended before a terminal event; "
-                    "the budget reservation remains held for review."
-                ),
-                "param": None,
-                "sequence_number": 0,
+                "error": {
+                    "code": "upstream_stream_incomplete",
+                    "message": (
+                        "The upstream model stream ended before a terminal event; "
+                        "the budget reservation remains held for review."
+                    ),
+                    "param": None,
+                },
             }
 
     asyncio.run(run())
@@ -1217,6 +1218,52 @@ def test_openai_stream_eof_emits_terminal_error_and_keeps_reservation(policy, le
         scope["reserved_micro_usd"] == 4500 and scope["spent_micro_usd"] == 0
         for scope in ledger.balances(policy, policy["members"][0]["id"])["scopes"]
     )
+
+
+def test_openai_failed_stream_is_normalized_for_native_clients(policy, ledger):
+    policy["budget_prices"][0]["provider"] = "openai"
+    ledger.activate(policy)
+    failed = b'data: {"type":"error","message":"provider failure"}\n\n'
+
+    class ProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield failed
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=ProviderStream())
+            )
+        ) as client:
+            proxy = BudgetProxy(
+                ledger,
+                SimpleNamespace(get=lambda digest: policy),
+                SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="test")),
+                "https://test.services.ai.azure.com",
+                {
+                    "claude-sonnet-4-6": {
+                        "version": "1",
+                        "provider": "openai",
+                        "max_input_tokens": 1000,
+                        "max_output_tokens": 1000,
+                    }
+                },
+                client,
+            )
+            response = await proxy.infer(
+                "openai",
+                policy["members"][0]["id"],
+                str(uuid4()),
+                {"model": "claude-sonnet-4-6", "stream": True},
+            )
+            wire = b"".join([chunk async for chunk in response.body_iterator])
+            events = [
+                json.loads(line[6:]) for line in wire.splitlines() if line.startswith(b"data: ")
+            ]
+            assert events[0] == {"type": "error", "message": "provider failure"}
+            assert events[-1]["error"]["code"] == "upstream_stream_incomplete"
+
+    asyncio.run(run())
 
 
 def test_explicit_unlimited_scopes_keep_accounting_and_enforce_finite_team(policy):
