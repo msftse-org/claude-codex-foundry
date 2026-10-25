@@ -164,6 +164,40 @@ class Deployment:
     def step(self, title):
         print(f"\n== {title}", flush=True)
 
+    def bind_target(self):
+        """Never reuse another customer's local IDs, profiles or consent state."""
+        target = {
+            "tenant_id": self.s["tenant_id"],
+            "subscription_id": self.s["subscription_id"],
+            "names": self.n,
+        }
+        previous = self.state.get("target")
+        if previous is not None and previous != target:
+            raise DeployError(
+                "Deployment target changed; use a separate checkout for each customer"
+            )
+        if previous is None and self.state.get("developer_group_id") and not self.org_path.exists():
+            raise DeployError(
+                "Legacy deployment state has no target configuration; preserve it and use a separate checkout"
+            )
+        for path in (self.org_path, self.codex_path):
+            if not path.exists():
+                continue
+            org = read_json(path)
+            expected = {
+                "tenant_id": self.s["tenant_id"],
+                "subscription_id": self.s["subscription_id"],
+                "foundry_name": self.n["foundry"],
+                "foundry_resource_group": self.n["resource_group"],
+                "apim_name": self.n["apim"],
+                "apim_resource_group": self.n["resource_group"],
+            }
+            if any(org.get(key) != value for key, value in expected.items()):
+                raise DeployError(f"{path} belongs to another deployment; use a separate checkout")
+        self.save(
+            target=target, tenant_id=self.s["tenant_id"], subscription_id=self.s["subscription_id"]
+        )
+
     def sign_in(self):
         self.step("Checking Azure CLI sign-in")
         account = self.az("account", "show")
@@ -351,7 +385,11 @@ class Deployment:
             else:
                 # Retry only models not yet qualified, e.g. after a transient network error.
                 retry = self.local / "codex-qualification-retry-config.json"
-                write_json(retry, {**org, "models": pending})
+                pending_names = {m["name"] for m in pending}
+                retry_default = org.get("default_model")
+                if retry_default not in pending_names:
+                    retry_default = pending[0]["name"]
+                write_json(retry, {**org, "models": pending, "default_model": retry_default})
                 code = self.cli(
                     "admin",
                     "--config",
@@ -368,6 +406,8 @@ class Deployment:
                     for m in org["models"]
                     if m.get("qualified") is True or m["name"] in passed
                 ]
+                if org.get("default_model") not in {m["name"] for m in org["models"]}:
+                    org["default_model"] = org["models"][0]["name"]
                 write_json(config, org)
             if code != 0:
                 print("Some Codex models failed qualification and were not published.")
@@ -507,6 +547,8 @@ class Deployment:
             args = ["verify", "--config", path]
             if config.get("client_type") != "codex":
                 args.append("--all-models")
+                if self.portal_managed(read_json(self.org_path)):
+                    args.append("--governed")
             # New group membership can take a few minutes to reach Foundry authorization.
             for attempt in range(4):
                 if self.cli(*args, allowed=(0, 1, 2)) == 0:
@@ -519,6 +561,7 @@ class Deployment:
                 time.sleep(90)
 
     def deploy(self, verify=True):
+        self.bind_target()
         self.sign_in()
         self.providers()
         group = self.developer_group()
@@ -592,7 +635,11 @@ def main():
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("--settings", type=Path, default=Path(".local/deploy.json"))
-    parser.add_argument("--skip-verify", action="store_true", help="Skip billable gateway checks")
+    parser.add_argument(
+        "--skip-verify",
+        action="store_true",
+        help="Skip final gateway checks; Codex qualification still makes billable requests",
+    )
     args = parser.parse_args()
     try:
         Deployment(load_settings(args.settings)).deploy(verify=not args.skip_verify)

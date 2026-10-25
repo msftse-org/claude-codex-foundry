@@ -100,7 +100,12 @@ class FakeRunner:
             if action == "init-codex":
                 write_json(
                     Path(command[5]),
-                    {"client_type": "codex", "gateway_url": "https://apim/codex/v1", "models": []},
+                    {
+                        **self.org,
+                        "client_type": "codex",
+                        "gateway_url": "https://apim/codex/v1",
+                        "models": [],
+                    },
                 )
             if action == "sync-models":
                 # Like the real command, keep existing entries (and their qualification).
@@ -118,7 +123,16 @@ class FakeRunner:
 
 
 def organization(org):
-    return {**org, "subscription_id": SUBSCRIPTION, "tenant_id": TENANT, "models": []}
+    return {
+        **org,
+        "subscription_id": SUBSCRIPTION,
+        "tenant_id": TENANT,
+        "foundry_name": "ccf-foundry-contoso1",
+        "foundry_resource_group": "rg-ccf-contoso1",
+        "apim_name": "ccf-apim-contoso1",
+        "apim_resource_group": "rg-ccf-contoso1",
+        "models": [],
+    }
 
 
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
@@ -228,6 +242,66 @@ def test_rerun_qualifies_only_models_not_yet_qualified(
     ]
     gateways = [c for c in runner.calls if c[-1] == "gateway" and "codex" in c[5]]
     assert len(gateways) == 2
+
+
+def test_failed_retry_preserves_a_published_default(deploy, settings, tmp_path, org, monkeypatch):
+    run_deployment(deploy, settings, tmp_path, FakeRunner(organization(org)), monkeypatch)
+    runner = FakeRunner(organization(org), group_exists=True)
+    runner.synced = ["m1", "m2"]
+    original = runner.tool
+
+    def tool(command, capture):
+        if command[:1] == ["admin"] and command[3] == "qualify":
+            retry = json.loads(Path(command[2]).read_text())
+            assert retry["default_model"] == "m2"
+            return 1  # No new model passes; the CLI preserves the retry profile.
+        result = original(command, capture)
+        if command[:1] == ["admin"] and command[3] == "sync-models" and "codex" in command[2]:
+            config = Path(command[2])
+            data = json.loads(config.read_text())
+            data["default_model"] = "m2"
+            write_json(config, data)
+        return result
+
+    monkeypatch.setattr(runner, "tool", tool)
+    run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    codex = json.loads((tmp_path / ".local/codex-organization.json").read_text())
+    assert codex["default_model"] == "m1"
+    assert [m["name"] for m in codex["models"]] == ["m1"]
+
+
+@pytest.mark.parametrize("field,value", [("subscription_id", USER), ("suffix", "another")])
+def test_target_change_stops_before_any_azure_command(
+    deploy, settings, tmp_path, org, monkeypatch, field, value
+):
+    run_deployment(deploy, settings, tmp_path, FakeRunner(organization(org)), monkeypatch)
+    changed = json.loads(settings.read_text())
+    changed[field] = value
+    settings.write_text(json.dumps(changed))
+    runner = FakeRunner(organization(org))
+    with pytest.raises(deploy.DeployError, match="target changed"):
+        run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    assert runner.calls == []
+
+
+def test_legacy_customer_profile_is_checked_before_azure(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    write_json(tmp_path / ".local/organization.json", {**organization(org), "tenant_id": USER})
+    runner = FakeRunner(organization(org))
+    with pytest.raises(deploy.DeployError, match="another deployment"):
+        run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    assert runner.calls == []
+
+
+def test_verification_detects_published_claude_governance(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    runner = FakeRunner(organization(org))
+    job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=True)
+    job.verify([tmp_path / ".local/client.json"])
+    check = next(c for c in runner.calls if c[3:4] == ["verify"])
+    assert "--governed" in check
 
 
 def test_missing_admin_consent_is_reported_without_stopping(

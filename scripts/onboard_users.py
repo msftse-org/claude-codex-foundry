@@ -106,6 +106,7 @@ def main():
     parser.add_argument("people", nargs="*", help="Work emails, UPNs or Entra object IDs")
     parser.add_argument("--csv", type=Path, help="CSV whose first column lists people")
     parser.add_argument("--group", help="Developer group object ID; defaults to the deployment's")
+    parser.add_argument("--tenant", help="Target tenant ID; defaults to the deployment's")
     parser.add_argument("--state", type=Path, default=Path(".local/deploy-state.json"))
     parser.add_argument("--remove", action="store_true", help="Remove access instead")
     parser.add_argument("--portal-csv", type=Path, default=Path(".local/portal-members.csv"))
@@ -117,9 +118,14 @@ def main():
     people = identities(args.people, args.csv)
     if not people:
         parser.error("Name at least one person or pass --csv")
+    tenant = args.tenant or state.get("tenant_id")
+    if not tenant:
+        parser.error("Rerun scripts/deploy.py to record the tenant, or pass --tenant")
     try:
+        if az("account", "show")["tenantId"].lower() != str(UUID(tenant)).lower():
+            raise RuntimeError(f"Wrong tenant. Run az login --tenant {tenant}, then retry")
         results = manage(people, group, args.remove)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         print(f"Stopped: {error}", file=sys.stderr)
         return 1
     for r in results:
@@ -133,6 +139,10 @@ def main():
         )
         print(
             f"If portal governance is published, import {args.portal_csv} under Members and publish."
+        )
+    else:
+        print(
+            "For portal-governed routes, also suspend the member and publish to revoke inference."
         )
     return 1 if any(r["action"] == "not found" for r in results) else 0
 

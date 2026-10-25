@@ -55,9 +55,9 @@ The script creates billable Azure resources and makes small billable verificatio
 6. Registers the developer sign-in application (public client, no secret), requests tenant-wide admin consent and exports client profiles. If you cannot grant consent, the script finishes and prints the command for an Entra administrator; developers can sign in once consent is granted.
 7. Builds one installer ZIP for Claude and Codex in `dist/`.
 8. Deploys the administration portal and its application package, then waits for it to report healthy.
-9. Verifies the gateways with your Azure CLI sign-in. Use `--skip-verify` to skip the billable checks.
+9. Verifies the gateways with your Azure CLI sign-in, detecting published Claude governance on reruns. Use `--skip-verify` to skip these final checks; Codex qualification still makes billable requests.
 
-If a step fails, fix the reported problem and run the same command again. Existing resources, deployments, the group and the app registrations are reused; IDs are kept in `.local/deploy-state.json`. To change models or other settings later, edit `.local/deploy.json`, rerun the command and redistribute the new ZIP.
+If a step fails, fix the reported problem and run the same command again. Existing resources, deployments, the group and the app registrations are reused; IDs and the deployment target are kept in `.local/deploy-state.json`. Use a separate checkout for each customer: changing the tenant, subscription or resource names while retaining this state is rejected before Azure changes. To change models later, edit `.local/deploy.json`, rerun the command and redistribute the new ZIP.
 
 ## 3. Onboard developers
 
@@ -74,7 +74,9 @@ Access reaches Foundry within a few minutes. Send developers the installer ZIP f
 2. Extracts the ZIP, opens `Install.command` and signs in with Microsoft once.
 3. Reopens the apps and selects an organization model.
 
-Claude is configured on every Mac. Codex is configured when it is installed; developers who install Codex later open `Install.command` again. To remove access, run `onboard_users.py --remove` with the same people. See the [Mac guide](macos.md) for verification and restore.
+Claude is configured on every Mac. Codex is configured when it is installed; developers who install Codex later open `Install.command` again. To remove baseline group access, run `onboard_users.py --remove` with the same people. On portal-governed routes, also suspend the member and publish; removing Entra group membership alone does not revoke the portal's published access. See the [Mac guide](macos.md) for verification and restore.
+
+Onboarding checks the signed-in tenant against deployment state before resolving users or changing membership. For an explicit group or older state, supply `--tenant YOUR_TENANT_ID` and, when needed, `--group YOUR_GROUP_OBJECT_ID`. Users must already exist in that tenant; this script does not create directory accounts or invite guests.
 
 The script never publishes portal governance. Until you do, access is controlled by the developer group. To manage people in the portal instead, sign in as the owner, import `.local/portal-members.csv` (written by `onboard_users.py`) under **Members**, review and publish, then run `claude-foundry verify --governed`. Register everyone who should keep access first: publication denies anyone who is not an active member.
 

@@ -1,8 +1,11 @@
 import csv
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
+
+from claude_foundry.config import write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 GROUP = "00000000-0000-0000-0000-000000000009"
@@ -84,3 +87,19 @@ def test_csv_input_and_portal_import_file(onboard, tmp_path):
         rows = list(csv.DictReader(stream))
     assert [r["object_id"] for r in rows] == [ALICE, GUEST]
     assert set(rows[0]) == {"object_id", "name", "email"}
+
+
+def test_wrong_tenant_stops_before_directory_mutations(onboard, tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state.json"
+    write_json(state, {"tenant_id": ALICE, "developer_group_id": GROUP})
+    calls = []
+
+    def run(*args):
+        calls.append(args)
+        return {"tenantId": GUEST}
+
+    monkeypatch.setattr(onboard, "az", run)
+    monkeypatch.setattr(sys, "argv", ["onboard_users.py", "--state", str(state), ALICE])
+    assert onboard.main() == 1
+    assert calls == [("account", "show")]
+    assert "Wrong tenant" in capsys.readouterr().err
