@@ -1,5 +1,22 @@
 # Codex validation — October 15, 2026
 
+## Budget gateway regression check — October 25, 2026
+
+An authenticated Responses request ending in a `compaction_trigger` input item reproduced HTTP 400: the gateway inserted its ordinary 4,096-token default, while the provider required at least 20,000. The corrected gateway supplies at least 20,000 when the client omits the limit, within the verified model maximum. It reserves that complete output bound before dispatch; an explicit insufficient limit is rejected before reservation.
+
+Live verification after deploying the correction:
+
+- JSON compaction and streamed compaction both returned **HTTP 200** with authoritative usage. The JSON response confirmed `max_output_tokens=20000` and contained a compaction item.
+- A subsequent request replayed the opaque compaction item and correctly recalled the synthetic marker. Both JSON requests settled; neither left a pending reservation.
+- Installed CLI **0.145.0** and desktop bundled engine **0.164.0-alpha.11.1** each completed a real shell/file read and a history-based follow-up through the budget gateway using `gpt-6.1-sol`. Provider/catalog overrides were limited to the test processes.
+- **322 Python tests passed**, including output-bound reservation/settlement and shared-quota allocation regressions. Ruff checks/formatting, wheel/source build, and diff whitespace checks passed.
+
+The deployment audit found conservative initial allocations still in place. Capacity-only updates increased **40 deployments** using unallocated metered quota; **four** were already at their available maximum. A fresh audit reported **44 succeeded deployments**, all at their allocatable maximum, with exact model versions and upgrade policies preserved. Quota already allocated to other resources was not transferred. The offered catalog still excludes deployments that have not passed client qualification. Use `scripts/scale_model_capacity.py` to review allocations after future quota changes; see [budget deployment](../budget/README.md).
+
+These are protocol and native-engine smoke tests in one authorized demo environment. Forced compaction was tested through the HTTP API, not through a visual desktop UI journey. Sustained concurrency, maximum-context quality and customer-specific rollout acceptance remain untested. Private request evidence, reports and synthetic sessions remain under ignored local storage.
+
+## Earlier pilot
+
 This record describes the feature-branch pilot, not a production certification. Resource names, tenant IDs, credentials, session IDs and raw conversation exports are intentionally excluded. Private evidence is kept locally and is not distributed in installation bundles.
 
 ## Environment and results

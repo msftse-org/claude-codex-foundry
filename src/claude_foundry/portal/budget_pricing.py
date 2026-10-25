@@ -9,6 +9,7 @@ from pydantic import AwareDatetime, Field, HttpUrl, model_validator
 from .domain import StrictModel
 
 MICRO = Decimal(1_000_000)
+COMPACTION_MIN_OUTPUT_TOKENS = 20_000
 
 
 def micros(value):
@@ -141,11 +142,24 @@ class BudgetPrice(StrictModel):
             ):
                 raise ValueError("Only client-executed tools are enabled for hard budgets")
         field = "max_tokens" if self.provider == "anthropic" else "max_output_tokens"
-        maximum = body.get(field, self.default_output_tokens)
+        compacting = (
+            self.provider == "openai"
+            and isinstance(body.get("input"), list)
+            and any(
+                isinstance(item, dict) and item.get("type") == "compaction_trigger"
+                for item in body["input"]
+            )
+        )
+        maximum = body.get(field)
         if maximum is None:
-            maximum = self.default_output_tokens
+            maximum = max(
+                self.default_output_tokens,
+                COMPACTION_MIN_OUTPUT_TOKENS if compacting else 1,
+            )
         if type(maximum) is not int or not 1 <= maximum <= self.max_output_tokens:
             raise ValueError("Choose an output limit within the verified model maximum")
+        if compacting and maximum < COMPACTION_MIN_OUTPUT_TOKENS:
+            raise ValueError("Compaction requires max_output_tokens of at least 20000")
         request = {**body, field: maximum}
         request["service_tier"] = "standard_only" if self.provider == "anthropic" else "default"
         request.pop("speed", None)
