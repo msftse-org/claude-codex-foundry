@@ -19,7 +19,7 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-Registration, consent, deployment wiring, account binding and background
+Registration, consent, deployment wiring, persisted enrollment and background
 refresh are subsequent increments. Do not reuse the portal application to
 enable this endpoint.
 
@@ -166,3 +166,29 @@ Descriptor validation rejects IP literals, local/metadata host names and
 noncanonical URLs; it is not a general SSRF defense against arbitrary DNS
 aliases. Distribution through the reviewed organization setup channel remains
 essential. This component alone does not make unattended refresh available.
+
+## Enrolled Azure CLI credentials (library only)
+
+`enrollment_auth.py` adds the credential provider for the Azure CLI pilot.
+It uses an installer-owned absolute directory with mode `0700`, rejects
+symlinked cache paths, and passes `AZURE_CONFIG_DIR` only to child processes.
+It never changes the user's normal Azure CLI account or cache. Initial login
+is an explicit foreground operation; background token reads cannot sign in.
+
+Configuration reads request only `api://<resource-id>/configuration.read`;
+inference reads request only Cognitive Services `user_impersonation`.
+Before returning a token, the provider checks its tenant, audience, public
+client, delegated scope, expiry and pinned object ID. JWT payload inspection
+is **only a consistency guard**: it does not verify a signature or authorize
+access. The API and gateway still validate and authorize the actual request.
+The authoritative enrollment subject must come from the authenticated API
+response, not an unverified local token.
+
+An account switch or interaction-required response stops the helper with a
+safe sign-in-required error. The wrapper never prints CLI diagnostic output
+or persists tokens itself. Azure CLI still owns its cache and may store
+credentials there in plaintext on macOS/Linux. This is the existing pilot
+authentication posture, not an encrypted-cache fallback or a new security
+guarantee. Approval of that posture is a release gate; use the encrypted MSAL
+path instead where endpoint policy prohibits it. The library is not yet
+connected to installation or scheduled refresh.
