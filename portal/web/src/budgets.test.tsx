@@ -111,6 +111,39 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+describe("verified enforcement rate inputs", () => {
+    it("accepts whole token capacities and fractional prices with native browser validation", async () => {
+        reads.push(Promise.resolve(balance));
+        render(<BudgetPanel state={state} busy={false} save={save} />);
+        await screen.findByText("$0.06158");
+        fireEvent.click(
+            screen.getByRole("button", { name: "Add verified model rate" }),
+        );
+        for (const [name, value] of [
+            ["Verified maximum input tokens", "1000000"],
+            ["Verified maximum output tokens", "128000"],
+            ["Default output limit", "4096"],
+        ]) {
+            const input = screen.getByRole<HTMLInputElement>("spinbutton", {
+                name,
+            });
+            fireEvent.change(input, { target: { value } });
+            expect(input.checkValidity()).toBe(true);
+            fireEvent.change(input, { target: { value: "1.5" } });
+            expect(input.validity.stepMismatch).toBe(true);
+        }
+        const price = screen.getByRole<HTMLInputElement>("spinbutton", {
+            name: "Input ceiling (USD / million tokens)",
+        });
+        fireEvent.change(price, { target: { value: "0.000001" } });
+        expect(price.checkValidity()).toBe(true);
+        fireEvent.change(price, { target: { value: "1.25" } });
+        expect(price.checkValidity()).toBe(true);
+        fireEvent.change(price, { target: { value: "0" } });
+        expect(price.validity.rangeUnderflow).toBe(true);
+    });
+});
+
 describe("budget table refresh", () => {
     it("reserves the table layout during initial loading and disables refresh and publication", async () => {
         const first = deferred();

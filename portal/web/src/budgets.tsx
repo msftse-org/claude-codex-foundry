@@ -537,7 +537,11 @@ export function BudgetPanel({
                                     <input
                                         name={key}
                                         type="number"
-                                        min="0.000001"
+                                        min={
+                                            key.endsWith("tokens")
+                                                ? "1"
+                                                : "0.000001"
+                                        }
                                         step={
                                             key.endsWith("tokens")
                                                 ? "1"
