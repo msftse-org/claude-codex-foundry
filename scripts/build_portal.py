@@ -6,6 +6,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+from claude_foundry.client_bundle import build_template
+
 
 def build(output, root):
     web = root / "portal/web"
@@ -17,6 +19,7 @@ def build(output, root):
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         bundle.writestr("requirements.txt", requirements)
+        bundle.writestr("client-bundle.zip", build_template(root))
         for filename in ["function_app.py", "host.json"]:
             bundle.write(root / "portal/functions" / filename, filename)
         for path in sorted((root / "src/claude_foundry").rglob("*.py")):

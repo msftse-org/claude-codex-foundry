@@ -177,17 +177,15 @@ Displayed times use the browser's timezone; JSON details retain UTC. State and a
 
 ## Developer onboarding
 
-After granting and publishing access, export the group-specific client profile from **Developer onboarding**. Developers can download their own profile. A profile contains connection settings and model choices, not credentials; each person signs in separately.
+After granting and publishing access, open **Developer onboarding**, choose the group when offered, and select **Download Mac setup ZIP**. Developers download their own scoped setup. The page shows the target application, gateway address, and sign-in method from that profile.
 
-![Developer onboarding steps for granting access and exporting a client profile](images/portal-onboarding.jpg)
+![Complete setup ZIP, gateway address and copyable Codex setup prompt](images/portal-onboarding-setup.png)
 
-The administrator packages that profile using the repository's bundle builder and distributes the ZIP through an approved internal channel:
+Local development verification with synthetic organization data, October 25, 2026. Microsoft sign-in and live inference were not exercised in this local check.
 
-```bash
-uv run python scripts/build_client_bundle.py \
-  --profile /path/to/client.json \
-  --output dist/claude-foundry-macos.zip
-```
+Extract the ZIP and open `Install.command`, or use **Copy setup prompt for Codex** on the Mac being configured. The ZIP contains the scoped `client.json`, installer, gateway details in `README.md`, and `AGENTS.md` instructions for a coding assistant. Each person signs in with their own Microsoft work account. No repository checkout or administrator packaging step is needed.
+
+The **Advanced: connection profile only** section retains the JSON export for an existing installer or managed rollout. That file alone does not contain the installer or setup instructions.
 
 Users follow the [Mac installation guide](macos.md). For MSAL without Azure CLI, the portal deployment must be configured with the separate desktop public-client ID. The portal does not push device policies or track installation completion; use your MDM platform for managed rollout.
 
