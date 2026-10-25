@@ -74,6 +74,8 @@ for task_profile in "${task_profiles[@]}"; do
     task_install_args+=(--enable-history-import)
   fi
   "$task_runtime/bin/claude-foundry" "${task_install_args[@]}"
+  task_gateway="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["gateway_url"])' "$task_profile")"
+  echo "Configured $task_client. Gateway: $task_gateway"
   task_restore="$task_restore $task_runtime/bin/claude-foundry restore --client $task_client;"
 done
 echo "Installed. Reopen the desktop app. Recovery:${task_restore%;}"

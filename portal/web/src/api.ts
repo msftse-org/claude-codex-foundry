@@ -120,6 +120,13 @@ export async function api<T>(
     path: string,
     options: RequestInit = {},
 ): Promise<T> {
+    return (await apiResponse(path, options)).json();
+}
+
+async function apiResponse(
+    path: string,
+    options: RequestInit = {},
+): Promise<Response> {
     await initialize();
     const headers = new Headers(options.headers);
     if (options.body) headers.set("Content-Type", "application/json");
@@ -148,7 +155,7 @@ export async function api<T>(
         if (result.status === 401) throw new SignInRequiredError(message);
         throw new Error(message);
     }
-    return result.json();
+    return result;
 }
 
 async function accessToken(forceRefresh = false): Promise<string> {
@@ -174,6 +181,13 @@ export function download(name: string, value: unknown) {
     const blob = new Blob([JSON.stringify(value, null, 2)], {
         type: "application/json",
     });
+    saveBlob(name, blob);
+}
+export async function downloadFile(path: string, name: string) {
+    const response = await apiResponse(path);
+    saveBlob(name, await response.blob());
+}
+function saveBlob(name: string, blob: Blob) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

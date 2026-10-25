@@ -68,6 +68,7 @@ export interface AccessRequest {
 export interface State {
     revision: number;
     budget_configured?: boolean;
+    client_types?: ("claude" | "codex")[];
     budget_prices?: BudgetPrice[];
     viewer: Member;
     members: Member[];
