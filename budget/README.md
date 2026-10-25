@@ -49,6 +49,18 @@ Use `api://BUDGET_APPLICATION_ID` as `audience` in a private parameter file. Do 
 
 Prepare `.local/budget.parameters.json` using the parameters in [infra/budget.bicep](../infra/budget.bicep). `organizationId` is a stable UUID for this ledger, shared by both providers. `deployments` maps deployment names to `provider`, `version`, `max_input_tokens`, and `max_output_tokens`; these must match the reviewed price/capacity policy. Set `supports_reasoning: false` for a qualified non-reasoning OpenAI deployment so the gateway removes Codex’s unsupported reasoning field. Pin model deployments against automatic upgrades.
 
+Codex requests containing a `compaction_trigger` input item need at least 20,000 output tokens. When the client omits the output limit, the gateway uses at least that amount and reserves its full cost before dispatch. Explicit smaller limits or models with a verified output maximum below 20,000 are rejected before reservation. Ordinary requests retain their reviewed default output limit.
+
+Deployment throughput is separate from the per-request context/output limits above. New model deployment plans start conservatively at 10 capacity units. To review unused quota and maximize **existing metered** deployments, run:
+
+```sh
+uv run python scripts/scale_model_capacity.py --config .local/organization.json
+# Apply after reviewing the plan:
+uv run python scripts/scale_model_capacity.py --config .local/organization.json --apply
+```
+
+The scaler preserves model versions and upgrade policies, honors SKU increments and maximums, and uses only unallocated quota. Other resources' allocations remain in place. Shared pools are allocated once in deployment-name order; review the plan when multiple deployments share a pool. Re-run the plan after Azure reports all updates succeeded; quota changes can take up to 15 minutes to propagate. A skipped item needs manual review, and a failed PATCH must be reconciled before retrying.
+
 The default uses the existing portal VNet and private Blob/Table endpoints. Deploy into the portal resource group and provide `portalVnetName`. Identity-protected public storage is an explicit `privateStorage=false` option only where organizational policy permits it. The template disables shared keys and public Blob access in both modes. Private endpoints have a small ongoing cost; Functions has no configured always-ready instances.
 
 ```bash

@@ -402,6 +402,94 @@ def test_native_thinking_preservation_does_not_enable_compaction(policy):
             price.prepare({"model": price.model, "context_management": unsafe})
 
 
+@pytest.mark.parametrize("output_limit", [None, 20000, 32000])
+def test_openai_compaction_reserves_a_sufficient_verified_output_bound(policy, output_limit):
+    price = BudgetPrice.model_validate(
+        {
+            **policy["budget_prices"][0],
+            "provider": "openai",
+            "model": "gpt-test",
+            "max_output_tokens": 32000,
+        }
+    )
+    body = {"model": price.model, "input": [{"type": "compaction_trigger"}]}
+    if output_limit is not None:
+        body["max_output_tokens"] = output_limit
+    payload, held, bound = price.prepare(body)
+    assert payload["max_output_tokens"] == bound == (output_limit or 20000)
+    assert held == price.cost(price.max_input_tokens, bound)
+    assert payload["input"] == body["input"] and payload["store"] is False
+    # Ordinary requests retain the small default and lower reservation.
+    normal, _, normal_bound = price.prepare({"model": price.model, "input": "Hello"})
+    assert normal["max_output_tokens"] == normal_bound == price.default_output_tokens
+
+
+def test_compaction_cannot_bypass_verified_capacity_or_explicit_output_bound(policy):
+    data = {**policy["budget_prices"][0], "provider": "openai", "model": "gpt-test"}
+    body = {"model": "gpt-test", "input": [{"type": "compaction_trigger"}]}
+    with pytest.raises(ValueError, match="verified model maximum"):
+        BudgetPrice.model_validate(data).prepare(body)
+    data["max_output_tokens"] = 32000
+    price = BudgetPrice.model_validate(data)
+    for invalid in [True, 0, 19999, 32001]:
+        with pytest.raises(ValueError):
+            price.prepare({**body, "max_output_tokens": invalid})
+    assert price.prepare({**body, "max_output_tokens": None})[2] == 20000
+
+
+def test_compaction_gateway_dispatch_and_settlement_use_the_same_bound(policy):
+    price = policy["budget_prices"][0]
+    price.update(provider="openai", model="gpt-test", max_output_tokens=32000)
+    group = policy["groups"][0]
+    group.update(model_ids=["gpt-test"], delegated_models=["gpt-test"])
+    ledger = Ledger(MemoryRows())
+    ledger.activate(policy)
+    principal = policy["members"][0]["id"]
+
+    def handler(request):
+        assert json.loads(request.content)["max_output_tokens"] == 20000
+        assert ledger.balances(policy, principal)["scopes"][0]["reserved_micro_usd"] == 303000
+        return httpx.Response(
+            200,
+            json={
+                "output": [{"type": "compaction", "encrypted_content": "synthetic"}],
+                "usage": {"input_tokens": 100, "output_tokens": 50},
+            },
+        )
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            proxy = BudgetProxy(
+                ledger,
+                SimpleNamespace(get=lambda digest: policy),
+                SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="synthetic")),
+                "https://test.services.ai.azure.com",
+                {
+                    "gpt-test": {
+                        "provider": "openai",
+                        "version": "1",
+                        "max_input_tokens": 1000,
+                        "max_output_tokens": 32000,
+                    }
+                },
+                client,
+            )
+            response = await proxy.infer(
+                "openai",
+                principal,
+                str(uuid4()),
+                {
+                    "model": "gpt-test",
+                    "input": [{"type": "compaction_trigger"}],
+                },
+            )
+            assert response.status_code == 200
+
+    asyncio.run(run())
+    for scope in ledger.balances(policy, principal)["scopes"]:
+        assert scope["reserved_micro_usd"] == 0 and scope["spent_micro_usd"] == 1050
+
+
 def test_client_namespaces_cannot_hide_server_tools(policy):
     price = BudgetPrice.model_validate({**policy["budget_prices"][0], "provider": "openai"})
     safe = {
