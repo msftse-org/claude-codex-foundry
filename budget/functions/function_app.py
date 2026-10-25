@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from claude_foundry.portal.budget_ledger import AzureRows, BudgetDenied, Ledger
 from claude_foundry.portal.budget_policy import Snapshots, snapshot
 from claude_foundry.portal.budget_proxy import MAX_BODY, BudgetProxy, GatewayIdentity
+from claude_foundry.portal.content_capture import ContentCapture
 from claude_foundry.portal.policy_cache import ApimPolicyCache
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
@@ -37,6 +38,13 @@ proxy = BudgetProxy(
     credential,
     os.environ["BUDGET_FOUNDRY_ENDPOINT"],
     json.loads(os.environ["BUDGET_DEPLOYMENTS_JSON"]),
+    content_capture=ContentCapture(
+        account,
+        credential,
+        max_bytes=int(os.getenv("BUDGET_CONTENT_LOG_MAX_BYTES", "262144")),
+    )
+    if os.getenv("BUDGET_CONTENT_LOGS_ENABLED") == "true"
+    else None,
 )
 
 

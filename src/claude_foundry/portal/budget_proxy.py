@@ -64,13 +64,16 @@ class GatewayIdentity:
 
 
 class BudgetProxy:
-    def __init__(self, ledger, snapshots, credential, endpoint, deployments, client=None):
+    def __init__(
+        self, ledger, snapshots, credential, endpoint, deployments, client=None, content_capture=None
+    ):
         if not endpoint.startswith("https://") or not endpoint.rstrip("/").endswith(
             ".services.ai.azure.com"
         ):
             raise ValueError("A fixed Azure Foundry services endpoint is required")
         self.ledger, self.snapshots, self.credential = ledger, snapshots, credential
         self.endpoint, self.deployments = endpoint.rstrip("/"), deployments
+        self.content_capture = content_capture
         self.client = client or httpx.AsyncClient(
             timeout=httpx.Timeout(240, connect=15), follow_redirects=False
         )
@@ -163,6 +166,17 @@ class BudgetProxy:
         await asyncio.to_thread(
             self.ledger.reserve, request_id, principal, price.model, maximum, policy, fingerprint
         )
+        capture_name = capture_record = None
+        if self.content_capture:
+            capture_name, capture_record = await asyncio.to_thread(
+                self.content_capture.begin,
+                request_id,
+                provider,
+                principal,
+                group["id"],
+                price.model,
+                payload,
+            )
         path = "/anthropic/v1/messages" if provider == "anthropic" else "/openai/v1/responses"
         headers = {"Authorization": "Bearer " + token.token, "Content-Type": "application/json"}
         if provider == "anthropic":
@@ -223,8 +237,13 @@ class BudgetProxy:
 
             async def chunks():
                 settled = False
+                captured = bytearray()
                 try:
                     async for chunk in response.aiter_bytes():
+                        if self.content_capture and len(captured) < self.content_capture.max_bytes:
+                            captured.extend(
+                                chunk[: self.content_capture.max_bytes - len(captured)]
+                            )
                         usage.feed(chunk)
                         # Native clients can disconnect immediately after the terminal
                         # event. Commit its authoritative usage before exposing it.
@@ -261,6 +280,15 @@ class BudgetProxy:
                             "Stream did not confirm settlement; check reservation: %s", request_id
                         )
                 finally:
+                    if self.content_capture:
+                        await asyncio.to_thread(
+                            self.content_capture.finish,
+                            capture_name,
+                            capture_record,
+                            bytes(captured),
+                            response.status_code,
+                            settled,
+                        )
                     await response.aclose()
 
             return StreamingResponse(
@@ -284,6 +312,15 @@ class BudgetProxy:
                 except Exception:
                     LOG.warning("Response usage not settled; check reservation: %s", request_id)
             # Even a 4xx/5xx can follow billable work. No automatic refund.
+            if self.content_capture:
+                await asyncio.to_thread(
+                    self.content_capture.finish,
+                    capture_name,
+                    capture_record,
+                    bytes(raw),
+                    response.status_code,
+                    response.is_success,
+                )
             return JSONResponse(value, status_code=response.status_code, headers=public_headers)
         finally:
             await response.aclose()

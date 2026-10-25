@@ -339,6 +339,65 @@ class Ledger:
                 continue
         raise Contended("Settlement remains reserved; retry reconciliation")
 
+    def incident(self):
+        meta, _ = self.rows.read("policy")
+        if not meta.get("paused") or not meta.get("incident_request_id"):
+            return None
+        request_id = str(UUID(meta["incident_request_id"]))
+        reservation, _ = self.rows.read("request-" + request_id)
+        return {
+            "request_id": request_id,
+            "observed_cost_micro_usd": meta.get("incident_cost_micro_usd"),
+            "reservation": reservation or None,
+        }
+
+    def resolve_incident(self, request_id):
+        """Charge the recorded overrun and unpause only its exact reserved request."""
+        request_id = str(UUID(request_id))
+        key = "request-" + request_id
+        for _ in range(12):
+            meta, meta_etag = self.rows.read("policy")
+            if not meta.get("paused") or meta.get("incident_request_id") != request_id:
+                raise BudgetDenied("The accounting incident changed or is no longer active")
+            amount = meta.get("incident_cost_micro_usd")
+            if type(amount) is not int or amount < 0:
+                raise ValueError("The accounting incident has no valid observed cost")
+            reservation, reservation_etag = self.rows.read(key)
+            if not reservation or reservation.get("state") != "reserved":
+                raise ValueError("The incident reservation is not open")
+            writes = []
+            for counter_key in reservation["counters"]:
+                counter, counter_etag = self.rows.read(counter_key)
+                if not counter or counter["reserved"] < reservation["reserved"]:
+                    raise ValueError("Ledger inconsistency; manual reconciliation required")
+                counter["reserved"] -= reservation["reserved"]
+                counter["spent"] += amount
+                writes.append((counter_key, counter, counter_etag))
+            reservation.update(
+                state="settled",
+                charged=amount,
+                settled_at=datetime.now(UTC).isoformat(),
+                reconciliation="observed_overrun",
+            )
+            clean_meta = {
+                k: v
+                for k, v in meta.items()
+                if k not in {"incident_request_id", "incident_cost_micro_usd"}
+            }
+            clean_meta["paused"] = False
+            writes.extend(
+                [
+                    (key, reservation, reservation_etag),
+                    ("policy", clean_meta, meta_etag),
+                ]
+            )
+            try:
+                self.rows.commit(writes)
+                return reservation
+            except Contended:
+                continue
+        raise Contended("Incident reconciliation was contended; retry after reloading")
+
     def balances(self, policy, principal, at=None):
         _, _, limits = limits_for(policy, principal)
         month = (at or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m")

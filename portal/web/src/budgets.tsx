@@ -315,10 +315,17 @@ export function BudgetPanel({
                 </div>
             )}
             {balance?.configured && (
-                <Reservations
-                    owner={owner}
-                    revision={`${state.revision}:${refreshCount}`}
-                />
+                <>
+                    {owner && (
+                        <AccountingIncident
+                            revision={`${state.revision}:${refreshCount}`}
+                        />
+                    )}
+                    <Reservations
+                        owner={owner}
+                        revision={`${state.revision}:${refreshCount}`}
+                    />
+                </>
             )}
             {editing === "organization" && (
                 <Drawer
@@ -630,6 +637,113 @@ export function BudgetPanel({
                 </Drawer>
             )}
         </section>
+    );
+}
+
+function AccountingIncident({ revision }: { revision: string }) {
+    type Incident = {
+        request_id: string;
+        observed_cost_micro_usd: number;
+        reservation: {
+            model: string;
+            reserved: number;
+        };
+    };
+    const [incident, setIncident] = useState<Incident | null>();
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+    useEffect(() => {
+        api<{ incident: Incident | null }>("/api/budgets/incident")
+            .then((result) => setIncident(result.incident))
+            .catch((cause) =>
+                setError(cause instanceof Error ? cause.message : String(cause)),
+            );
+    }, [revision]);
+    if (incident === undefined) return null;
+    if (!incident)
+        return error ? <Notice tone="error">{error}</Notice> : null;
+    return (
+        <div style={{ marginTop: 24 }}>
+            <Notice tone="error">
+                Budget enforcement is paused because request{" "}
+                <code>{incident.request_id}</code> exceeded its verified
+                reservation. Review and reconcile the recorded charge to resume
+                inference.
+            </Notice>
+            <Drawer
+                title="Reconcile accounting incident"
+                description="This charges the recorded incident amount, releases the matching reservation, and resumes budget enforcement. The request ID is guarded so a changed incident cannot be reconciled accidentally."
+                onClose={() => undefined}
+                busy={busy}
+            >
+                <form
+                    className="drawer-form"
+                    onSubmit={async (event) => {
+                        event.preventDefault();
+                        const reason = String(
+                            new FormData(event.currentTarget).get("reason"),
+                        );
+                        setBusy(true);
+                        setError("");
+                        try {
+                            await api("/api/budgets/resolve-incident", {
+                                method: "POST",
+                                body: JSON.stringify({
+                                    request_id: incident.request_id,
+                                    reason,
+                                }),
+                            });
+                            window.location.reload();
+                        } catch (cause) {
+                            setError(
+                                cause instanceof Error
+                                    ? cause.message
+                                    : String(cause),
+                            );
+                        } finally {
+                            setBusy(false);
+                        }
+                    }}
+                >
+                    <div className="drawer-scroll drawer-fields">
+                        <p>
+                            Model: <strong>{incident.reservation.model}</strong>
+                        </p>
+                        <p>
+                            Reserved:{" "}
+                            <strong>
+                                {dollars(incident.reservation.reserved)}
+                            </strong>
+                        </p>
+                        <p>
+                            Recorded charge:{" "}
+                            <strong>
+                                {dollars(
+                                    incident.observed_cost_micro_usd,
+                                )}
+                            </strong>
+                        </p>
+                        <Field label="Reason for reconciliation">
+                            <textarea
+                                name="reason"
+                                required
+                                minLength={5}
+                                maxLength={300}
+                            />
+                        </Field>
+                        {error && <Notice tone="error">{error}</Notice>}
+                    </div>
+                    <div className="dialogfooter">
+                        <button
+                            className="button primary"
+                            disabled={busy}
+                        >
+                            Reconcile and resume inference
+                        </button>
+                    </div>
+                </form>
+            </Drawer>
+        </div>
     );
 }
 

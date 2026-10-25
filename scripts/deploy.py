@@ -622,6 +622,7 @@ class Deployment:
                 unified_settings,
                 runtime_models,
                 portal_outputs["identityObjectId"]["value"],
+                parameters.get("contentLogsConfig"),
             )
         package = self.dist / "claude-foundry-admin-preview.zip"
         self.script("build_portal.py", "--output", package)

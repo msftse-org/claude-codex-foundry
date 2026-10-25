@@ -680,6 +680,53 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         except Exception:
             raise HTTPException(503, "Outstanding reservations could not be loaded") from None
 
+    @app.get("/api/budgets/incident")
+    def budget_incident(access=actor_dependency):
+        _, _, member = access
+        if member["role"] != "owner":
+            raise HTTPException(403, "Only the owner can inspect an accounting incident")
+        return {"incident": budget[0].incident() if budget else None}
+
+    @app.post("/api/budgets/resolve-incident")
+    def resolve_budget_incident(body: dict, access=actor_dependency):
+        data, etag, member = access
+        if member["role"] != "owner":
+            raise HTTPException(403, "Only the owner can resolve an accounting incident")
+        if budget is None:
+            raise HTTPException(409, "The budget ledger is not configured")
+        try:
+            request_id = str(UUID(body.get("request_id", "")))
+            reason = body.get("reason")
+            if not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 300:
+                raise ValueError("Provide a reason of 5–300 characters")
+            incident = budget[0].incident()
+            if not incident or incident["request_id"] != request_id:
+                raise BudgetDenied("The accounting incident changed or is no longer active")
+            audit(
+                data,
+                member,
+                "budget.incident_reconciliation_requested",
+                request_id,
+                None,
+                {
+                    "reason": reason.strip(),
+                    "charge_micro_usd": incident["observed_cost_micro_usd"],
+                },
+                incident["reservation"]["group_id"],
+            )
+            data["revision"] += 1
+            storage().save(data, etag)
+            result = budget[0].resolve_incident(request_id)
+            return {"resolved": True, "charged_micro_usd": result["charged"]}
+        except (ValueError, BudgetDenied) as error:
+            raise HTTPException(422, str(error)) from error
+        except (Conflict, Contended) as error:
+            raise HTTPException(409, str(error)) from error
+        except Exception:
+            raise HTTPException(
+                503, "Incident resolution could not be confirmed; reload before retrying"
+            ) from None
+
     @app.post("/api/budgets/close-reservation")
     def close_reservation(body: dict, access=actor_dependency):
         data, etag, member = access

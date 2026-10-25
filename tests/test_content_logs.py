@@ -1,9 +1,17 @@
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
-from claude_foundry.portal.content_logs import LogQuery, LogSource, list_logs, read_log
+from claude_foundry.portal.content_logs import (
+    LogQuery,
+    LogSource,
+    _stream_record,
+    _stream_records,
+    list_logs,
+    read_log,
+)
 
 
 def source():
@@ -53,6 +61,134 @@ def test_oversized_fragment_set_fails_closed(monkeypatch):
     monkeypatch.setattr("claude_foundry.portal.content_logs.run_query", lambda *a: [{}] * 129)
     with pytest.raises(ValueError, match="Too many"):
         read_log(source(), object(), uuid4())
+
+
+def test_stream_record_accepts_endpoint_uuid(monkeypatch):
+    identifier = uuid4()
+
+    class Blob:
+        name = f"2026/10/25/{identifier}.json"
+
+    class Download:
+        @staticmethod
+        def readall():
+            return b'{"model":"gpt-chat-latest"}'
+
+    class Container:
+        @staticmethod
+        def list_blobs(**kwargs):
+            assert kwargs == {}
+            return [Blob()]
+
+        @staticmethod
+        def download_blob(name):
+            assert name == Blob.name
+            return Download()
+
+    monkeypatch.setattr(
+        "claude_foundry.portal.content_logs._stream_container",
+        lambda *args: Container(),
+    )
+    assert _stream_record(source(), object(), identifier)["model"] == "gpt-chat-latest"
+
+
+def test_stream_records_reads_retention_days_newest_first(monkeypatch):
+    now = datetime.now(UTC)
+
+    class Blob:
+        def __init__(self, name):
+            self.name = name
+
+    names = [
+        f"{now:%Y/%m/%d}/z-235959999999-{uuid4()}.json",
+        f"{now:%Y/%m/%d}/z-000001000000-{uuid4()}.json",
+    ]
+    records = {
+        name: json.dumps(
+            {
+                "timestamp": now.isoformat(),
+                "api_id": "codex-governed",
+                "model": "gpt-6.1-sol",
+                "status": 200,
+                "request": {},
+                "response": {},
+                "principal_id": str(uuid4()),
+                "correlation_id": str(uuid4()),
+            }
+        ).encode()
+        for name in names
+    }
+
+    class Download:
+        def __init__(self, value):
+            self.value = value
+
+        def readall(self):
+            return self.value
+
+    class Container:
+        requested = []
+        downloaded = []
+
+        @classmethod
+        def list_blobs(cls, name_starts_with):
+            cls.requested.append(name_starts_with)
+            return [Blob(name) for name in names]
+
+        @classmethod
+        def download_blob(cls, name):
+            cls.downloaded.append(name)
+            return Download(records[name])
+
+    monkeypatch.setattr(
+        "claude_foundry.portal.content_logs._stream_container",
+        lambda *args: Container(),
+    )
+    s = source()
+    s.stream_capture_account = "capture"
+    query = LogQuery(start=now - timedelta(hours=1), end=now + timedelta(seconds=1))
+
+    result = _stream_records(s, object(), query)
+
+    assert len(result) == 2
+    assert Container.requested == [f"{now:%Y/%m/%d}/"]
+    assert Container.downloaded == sorted(names, reverse=True)
+
+
+def test_list_logs_deduplicates_native_and_stream_capture(monkeypatch):
+    identifier = uuid4()
+    timestamp = datetime.now(UTC).isoformat()
+    native = {
+        "timestamp": timestamp,
+        "correlation_id": str(identifier),
+        "api_id": "codex-foundry",
+        "model": "gpt-chat-latest",
+        "model_name": "gpt-chat-latest",
+        "status": 200,
+        "has_request": True,
+        "has_response": False,
+        "chunks": 1,
+        "principal_id": "developer",
+    }
+    captured = native | {"has_response": True}
+    s = source()
+    s.stream_capture_account = "capture"
+    monkeypatch.setattr(
+        "claude_foundry.portal.content_logs.run_query", lambda *args: [native]
+    )
+    monkeypatch.setattr(
+        "claude_foundry.portal.content_logs._stream_records",
+        lambda *args: [captured],
+    )
+    now = datetime.now(UTC)
+
+    result = list_logs(
+        s,
+        object(),
+        LogQuery(start=now - timedelta(days=1), end=now + timedelta(seconds=1)),
+    )
+
+    assert result == {"items": [captured], "has_more": False}
 
 
 def test_cursor_ties_and_invalid_periods(monkeypatch):

@@ -103,7 +103,9 @@ def prepare(job):
     return primary, settings, deployments
 
 
-def deploy_runtime(job, primary, settings, deployments, portal_identity):
+def deploy_runtime(
+    job, primary, settings, deployments, portal_identity, content_logs_config=None
+):
 
     job.step("Connecting both providers to shared portal governance")
     app_path = job.local / "unified/entra.json"
@@ -137,6 +139,11 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity):
         )
     apim = job.azure(job.s["subscription_id"]).request("GET", api_path(primary).split("/apis/")[0])
     name = f"ccf-budget-{job.s['suffix']}"
+    content_logs_config = content_logs_config or {}
+    content_logs_enabled = (
+        existing_runtime.get("BUDGET_CONTENT_LOGS_ENABLED", "").lower() == "true"
+        or content_logs_config.get("capture_enabled") is True
+    )
     params = {
         "name": name,
         "location": job.s["location"],
@@ -152,6 +159,7 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity):
         "privateStorage": True,
         "storageName": settings["budgetStorageAccount"],
         "policyCacheUrl": existing_runtime.get("BUDGET_POLICY_CACHE_URL", ""),
+        "contentLogsEnabled": content_logs_enabled,
     }
     path = job.local / "unified/runtime-parameters.json"
     write_json(

@@ -525,6 +525,31 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     assert job.state["governance_mode"] == "unified"
 
 
+def test_deployment_enables_stream_capture_with_content_logs(unified_job):
+    job, _, _ = unified_job
+    portal = job.local / "portal"
+    portal.mkdir(parents=True)
+    (portal / "parameters.json").write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    "contentLogsConfig": {
+                        "value": {
+                            "capture_enabled": True,
+                            "workspace_id": "00000000-0000-0000-0000-000000000001",
+                        }
+                    }
+                }
+            }
+        )
+    )
+    job.deploy(verify=False)
+    params = json.loads(
+        (job.local / "unified/runtime-parameters.json").read_text()
+    )["parameters"]
+    assert params["contentLogsEnabled"]["value"] is True
+
+
 def test_upgrade_does_not_redeploy_foundation_models_or_replace_owner(unified_job):
     job, runner, _ = unified_job
     job.deploy(verify=False)

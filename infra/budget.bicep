@@ -19,6 +19,8 @@ param portalVnetName string
 param privateStorage bool = true
 @description('Optional machine-only APIM policy snapshot endpoint. Empty uses local memory and private Blob only.')
 param policyCacheUrl string = ''
+@description('Capture prompts and complete streamed responses in the private, retention-bounded content log container.')
+param contentLogsEnabled bool = false
 param storageName string = 'ccfbudget${uniqueString(resourceGroup().id, name)}'
 
 var tags = { solution: 'claude-codex-foundry', component: 'budget-runtime', release: 'unreleased' }
@@ -54,7 +56,7 @@ resource blobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   name: 'default'
   properties: { isVersioningEnabled: true, deleteRetentionPolicy: { enabled: true, days: 30 } }
 }
-resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for container in ['deployment', 'budget-policies']: {
+resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for container in ['deployment', 'budget-policies', 'content-logs']: {
   parent: blobs
   name: container
   properties: { publicAccess: 'None' }
@@ -66,6 +68,32 @@ resource tables 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = {
 resource ledger 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
   parent: tables
   name: 'BudgetLedger'
+}
+resource retention 'Microsoft.Storage/storageAccounts/managementPolicies@2023-05-01' = {
+  parent: storage
+  name: 'default'
+  properties: {
+    policy: {
+      rules: [
+        {
+          enabled: true
+          name: 'delete-content-logs-after-seven-days'
+          type: 'Lifecycle'
+          definition: {
+            actions: {
+              baseBlob: {
+                delete: { daysAfterModificationGreaterThan: 7 }
+              }
+            }
+            filters: {
+              blobTypes: ['blockBlob']
+              prefixMatch: ['content-logs/']
+            }
+          }
+        }
+      ]
+    }
+  }
 }
 resource blobRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for i in range(0, 2): {
   scope: storage
@@ -123,6 +151,8 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_FOUNDRY_ENDPOINT', value: 'https://${foundryName}.services.ai.azure.com' }
         { name: 'BUDGET_DEPLOYMENTS_JSON', value: string(deployments) }
         { name: 'BUDGET_POLICY_CACHE_URL', value: policyCacheUrl }
+        { name: 'BUDGET_CONTENT_LOGS_ENABLED', value: string(contentLogsEnabled) }
+        { name: 'BUDGET_CONTENT_LOG_MAX_BYTES', value: '262144' }
       ]
     }
   }
