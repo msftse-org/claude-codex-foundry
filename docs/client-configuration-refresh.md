@@ -20,8 +20,50 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-Registration, consent and deployment wiring are subsequent
-increments. Do not reuse the portal application to enable this endpoint.
+The dedicated registration helper is available below. Consent, deployed wiring
+and native client qualification are still release gates. Do not reuse the
+portal application to enable this endpoint.
+
+## Dedicated Entra registrations
+
+An authorized tenant app administrator runs this from the customer's checkout.
+It previews by default (read-only); `--apply` creates Entra resources, and
+`--grant-admin-consent` separately requests tenant-wide delegated consent for
+the new public client. This does not deploy or enable the portal feature.
+
+```bash
+uv run --frozen --extra auth --extra portal python scripts/register_enrollment.py \
+  --tenant TENANT_UUID --subscription SUBSCRIPTION_UUID \
+  --name "Example Refresh Pilot" \
+  --output .local/enrollment/entra-receipt.json
+# Review the target, then repeat with --apply.
+# Add --grant-admin-consent only when authorized for tenant-wide consent.
+```
+
+Use a unique environment-specific name. The API registration exposes only
+admin-consent delegated `configuration.read`, uses v2 tokens and has no secret.
+The distinct public client registers the MSAL PKCE loopback redirect and only
+configuration-read plus delegated Cognitive Services `user_impersonation`.
+It has no Graph, ARM, application-only or portal permission. Fallback public
+flows and implicit token issuance are not enabled. There is no API
+preauthorization; tenant consent and the server's client allowlist are separate
+checks. Public-client IDs are not device authentication.
+
+Keep the private receipt (`0600`) and reuse the **same path, tenant and name**
+after an interrupted run. A durable registration tag lets the helper find a
+created app even when its creation response was lost. It never blindly retries
+creation or consent, adopts another app by display name, repairs drift, adds
+credentials, or re-enables a disabled enterprise application. Do not run
+registration concurrently. If the receipt is lost or an administrator changes
+the dedicated manifest, stop for review; do not generate a fresh receipt to
+retry the same deployment.
+
+The administrator needs permission to create applications/service principals
+and, for consent, the appropriate tenant consent role. These operator privileges
+are not granted to the workstation client. See Microsoft's
+[application creation API](https://learn.microsoft.com/en-us/graph/api/application-post-applications?view=graph-rest-1.0),
+[consent guidance](https://learn.microsoft.com/en-us/entra/identity-platform/v2-admin-consent),
+and [MSAL interactive PKCE prerequisites](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens#interactive-vs-silent).
 
 ## Operator settings
 
