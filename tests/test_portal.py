@@ -716,6 +716,32 @@ def test_setup_bundle_reports_missing_template_after_authorization(
         assert client.get("/api/client-bundle", headers=headers(org, key)).status_code == 503
 
 
+def test_deployed_bundle_is_found_outside_the_function_worker_directory(
+    app, org, key, monkeypatch, tmp_path
+):
+    site = tmp_path / "wwwroot"
+    site.mkdir()
+    (site / "client-bundle.zip").write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.delenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", raising=False)
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.__file__", str(site / "claude_foundry/portal/app.py")
+    )
+    worker = tmp_path / "azure-functions-host"
+    worker.mkdir()
+    monkeypatch.chdir(worker)
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["bundle_ready"] is True
+        response = client.get("/api/client-bundle", headers=headers(org, key))
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert (
+                json.loads(archive.read("claude-foundry/client.json"))["gateway_url"]
+                == org["gateway_url"]
+            )
+        (site / "client-bundle.zip").rename(site / "previous-client-bundle.zip")
+        assert client.get("/api/health").json()["bundle_ready"] is False
+
+
 @pytest.mark.parametrize("route", ["/api/client-profile", "/api/client-bundle"])
 def test_unconfigured_client_selector_never_downloads_the_wrong_application(app, org, key, route):
     with TestClient(app) as client:
@@ -1536,6 +1562,7 @@ def test_shared_portal_lists_both_providers_and_exports_correct_profiles(unified
             "status": "ok",
             "setup_ready": True,
             "client_types": ["claude", "codex"],
+            "bundle_ready": False,
         }
         data = client.get("/api/state", headers=auth).json()
         assert data["client_types"] == ["claude", "codex"]
