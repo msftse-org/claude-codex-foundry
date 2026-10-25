@@ -928,6 +928,43 @@ def test_apim_never_caches_admission_or_semantic_answers(org, provider):
     assert root.find("outbound/set-header[@name='Cache-Control']/value").text == "no-store"
 
 
+@pytest.mark.parametrize("existing", [False, True])
+def test_budget_gateway_uses_full_put_for_create_and_rerun(org, existing):
+    from claude_foundry.azure import AzureError
+    from claude_foundry.budget_gateway import deploy
+
+    calls = []
+    marker = "Managed by claude-codex-foundry budget gateway preview."
+
+    class FakeAzure:
+        def request(self, method, path, body=None, version="2024-05-01"):
+            calls.append((method, path, body))
+            if method == "GET":
+                if existing:
+                    return {"properties": {"description": marker}}
+                raise AzureError(404, "missing")
+            return {}
+
+    deploy(
+        org,
+        FakeAzure(),
+        "https://budget-test.azurewebsites.net",
+        "api://" + str(uuid4()),
+        "openai",
+        "codex-governed",
+        "codex-governed",
+    )
+    api_writes = [call for call in calls if call[1].endswith("/apis/codex-governed")]
+    assert api_writes[0][0] == "GET"
+    assert api_writes[1][0] == ("PATCH" if existing else "PUT")
+    if existing:
+        assert "apiType" not in api_writes[1][2]["properties"]
+    else:
+        assert api_writes[1][2]["properties"]["apiType"] == "http"
+    assert api_writes[-1][0] == "PATCH"
+    assert api_writes[-1][2] == {"properties": {"subscriptionRequired": False}}
+
+
 @pytest.mark.parametrize("result", ["hit", "miss"])
 def test_shared_snapshot_cache_is_verified_and_reused_locally(policy, snapshot_store, result):
     shared = SimpleNamespace(get=lambda digest: (json.dumps(policy).encode(), result))

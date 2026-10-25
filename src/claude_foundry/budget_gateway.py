@@ -135,7 +135,13 @@ def deploy(config, azure, budget_url, audience, provider, api_id, api_route):
         "serviceUrl": budget_url,
         "subscriptionRequired": True,
     }
-    azure.request("PUT" if existing is None else "PATCH", base, {"properties": properties})
+    if existing is None:
+        azure.request("PUT", base, {"properties": properties})
+    else:
+        # APIM rejects apiType on partial updates. Keep PATCH for owned reruns so
+        # fields this tool does not manage remain untouched.
+        update = {key: value for key, value in properties.items() if key != "apiType"}
+        azure.request("PATCH", base, {"properties": update})
     azure.request(
         "PUT", base + "/policies/policy", {"properties": {"format": "rawxml", "value": policy}}
     )
