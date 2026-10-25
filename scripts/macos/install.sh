@@ -55,6 +55,8 @@ task_codex_app="${CLAUDE_FOUNDRY_CODEX_APP:-/Applications/ChatGPT.app/Contents/R
 task_codex_cli="${CLAUDE_FOUNDRY_CODEX_CLI:-codex}"
 task_signed_in="|"
 task_restore=""
+task_reopen=""
+task_defaults=""
 for task_profile in "${task_profiles[@]}"; do
   task_client="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("client_type", "claude"))' "$task_profile")"
   if [[ "$task_profile" == "$task_optional_codex" && ! -e "$task_codex_app" ]] && ! command -v "$task_codex_cli" >/dev/null 2>&1; then
@@ -65,7 +67,19 @@ for task_profile in "${task_profiles[@]}"; do
     # One sign-in per identity: Claude and Codex profiles normally share it.
     task_identity="$("$task_runtime/bin/python" -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c.get("auth_mode", "azure-cli"), c["tenant_id"], c.get("client_id", ""))' "$task_profile")"
     if [[ "$task_signed_in" != *"|$task_identity|"* ]]; then
-      "$task_runtime/bin/claude-foundry" login --config "$task_profile"
+      if ! "$task_runtime/bin/claude-foundry" login --config "$task_profile"; then
+        task_auth="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("auth_mode", "azure-cli"))' "$task_profile")"
+        echo >&2
+        echo "SETUP DID NOT COMPLETE. $task_client was not configured, so restarting it will not activate this organization." >&2
+        if [[ "$task_auth" == msal ]]; then
+          task_tenant="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["tenant_id"])' "$task_profile")"
+          task_client_id="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["client_id"])' "$task_profile")"
+          echo "If Microsoft displayed 'Need admin approval', a tenant administrator must grant consent:" >&2
+          echo "https://login.microsoftonline.com/$task_tenant/adminconsent?client_id=$task_client_id" >&2
+        fi
+        echo "After sign-in is approved, run Install.command again. Restart the app only after this installer prints 'SETUP COMPLETE'." >&2
+        exit 1
+      fi
       task_signed_in="$task_signed_in$task_identity|"
     fi
   fi
@@ -73,9 +87,23 @@ for task_profile in "${task_profiles[@]}"; do
   if [[ "$task_history" == true && "$task_client" == claude ]]; then
     task_install_args+=(--enable-history-import)
   fi
-  "$task_runtime/bin/claude-foundry" "${task_install_args[@]}"
+  if ! "$task_runtime/bin/claude-foundry" "${task_install_args[@]}"; then
+    echo >&2
+    echo "SETUP DID NOT COMPLETE. $task_client was not configured; do not restart it yet." >&2
+    echo "Resolve the sign-in or managed-settings error above, then run Install.command again." >&2
+    exit 1
+  fi
   task_gateway="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["gateway_url"])' "$task_profile")"
+  task_default="$("$task_runtime/bin/python" -c 'import json,sys; c=json.load(open(sys.argv[1])); print(c.get("default_model") or c["models"][0]["name"])' "$task_profile")"
   echo "Configured $task_client. Gateway: $task_gateway"
   task_restore="$task_restore $task_runtime/bin/claude-foundry restore --client $task_client;"
+  task_reopen="${task_reopen}${task_reopen:+ and }$task_client"
+  task_defaults="${task_defaults}${task_defaults:+; }$task_client: $task_default"
 done
-echo "Installed. Reopen the desktop app. Recovery:${task_restore%;}"
+echo
+echo "SETUP COMPLETE. User actions:"
+echo "1. Save active work and fully quit $task_reopen."
+echo "2. Reopen the app. Existing conversations and unrelated settings are preserved."
+echo "3. Start a new local chat and select the approved model ($task_defaults)."
+echo "4. Send a short test message. If sign-in is requested, complete it with your Microsoft work account."
+echo "Recovery:${task_restore%;}"
