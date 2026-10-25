@@ -199,6 +199,16 @@ def _selection(current, configuration):
     return current if current in names or not names else configuration["default_model"]
 
 
+def _preflight():
+    client.check_managed_preferences()
+    codex_client.check_managed_preferences()
+    if (
+        os.environ.get("CODEX_HOME")
+        and Path(os.environ["CODEX_HOME"]).resolve() != (Path.home() / ".codex").resolve()
+    ):
+        raise ConfigurationError("Review custom CODEX_HOME before enrolling or refreshing.")
+
+
 def _legacy_profile(directory, descriptor, gateway_url):
     value, _ = _object_file(directory / "client.json")
     if value.get("tenant_id") != descriptor.tenant_id or value.get("gateway_url") != gateway_url:
@@ -483,6 +493,8 @@ def enroll(
     migrate_existing=False,
 ):
     """Explicit sign-in; repeat only for the same descriptor and enrolled user."""
+    if home is None:
+        _preflight()
     home = home or Path.home()
     descriptor_value, _ = _object_file(descriptor_path)
     descriptor = EnrollmentDescriptor.parse(descriptor_value)
@@ -543,6 +555,8 @@ def enroll(
 
 def refresh(*, home=None, login=False):
     """Noninteractive unless login is explicit; failed fetches preserve settings."""
+    if home is None:
+        _preflight()
     home = home or Path.home()
     binding, original, descriptor = _binding(home)
     paths = _paths(home, descriptor)

@@ -20,7 +20,7 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-Registration, consent, deployment wiring and background scheduling are subsequent
+Registration, consent and deployment wiring are subsequent
 increments. Do not reuse the portal application to enable this endpoint.
 
 ## Operator settings
@@ -196,12 +196,14 @@ path instead where endpoint policy prohibits it.
 
 The CLI now connects the reader, isolated credentials and recoverable settings
 updates. This is a manual pilot entrypoint for a reviewed descriptor, not a
-stable-link bootstrap or a scheduled installer:
+stable-link bootstrap installer:
 
 ```bash
 claude-foundry enroll --descriptor /path/to/reviewed-organization.json
 claude-foundry refresh
 claude-foundry configuration-status
+claude-foundry enable-refresh
+claude-foundry disable-refresh
 ```
 
 Use repeated `--client claude` / `--client codex` options to select clients.
@@ -220,6 +222,24 @@ Migration checks the recorded tenant and gateway, recognizes the existing
 installer-owned helper/catalog and preserves unrelated preferences and history.
 Unknown routes, remote Codex catalogs, custom `CODEX_HOME`, MDM ownership and
 unrecognized installations stop for review. Legacy profiles are retained.
+
+After successful enrollment, `enable-refresh` explicitly installs a per-user
+macOS LaunchAgent. It performs one noninteractive attempt at login and roughly
+every 15 minutes, with up to 60 seconds of jitter. The computer is not woken;
+macOS may defer attempts while asleep or logged out. There is no retry loop,
+background login prompt, client restart or server-provided job definition.
+`disable-refresh` unloads the job and retains its disabled definition and
+ownership record; it does not remove client settings or credentials. Enabling
+again resumes it. Unknown or locally modified jobs stop for review.
+
+If the job is saved but macOS cannot load it, the command reports that failure;
+retry `enable-refresh` explicitly from the user's GUI session. Routine job
+output is discarded. `configuration-status` retains the last successful time
+and, after a failed background attempt, a safe error code and attempt time.
+`sign_in_required` needs foreground `refresh --login`; `access_unavailable`
+needs organization access review. Neither failure clears working settings nor
+lets those settings authorize inference. This component has offline coverage;
+real macOS job execution remains a release qualification check.
 
 Refresh updates only model selections, installer-owned Claude family aliases,
 the enrolled Claude Desktop model list and the local Codex catalog. It preserves

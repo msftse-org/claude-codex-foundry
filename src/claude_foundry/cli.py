@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -16,6 +15,7 @@ from . import (
     codex_models,
     codex_verify,
     configuration_refresh,
+    configuration_schedule,
     gateway,
     models,
 )
@@ -66,6 +66,9 @@ def parser():
         "enrolled-token", help="Print the enrolled user's inference token; never sign in"
     )
     actions.add_parser("configuration-status", help="Show the last successful enrolled refresh")
+    actions.add_parser("enable-refresh", help="Enable the enrolled per-user background refresh job")
+    actions.add_parser("disable-refresh", help="Pause automatic refresh without removing settings")
+    actions.add_parser("refresh-background", help="Run one quiet noninteractive refresh attempt")
     restore = actions.add_parser(
         "restore", help="Restore managed settings while preserving subsequent edits"
     )
@@ -173,18 +176,17 @@ def main():
                     "Bring existing work: Settings → Import & export → Import… in Claude Desktop."
                 )
                 print("Review the source and import summary. Original conversations stay in place.")
-        elif args.action in {"enroll", "refresh", "enrolled-token", "configuration-status"}:
+        elif args.action in {
+            "enroll",
+            "refresh",
+            "enrolled-token",
+            "configuration-status",
+            "enable-refresh",
+            "disable-refresh",
+            "refresh-background",
+        }:
             if sys.platform != "darwin":
                 raise RuntimeError("Organization enrollment currently supports macOS only")
-            if args.action in {"enroll", "refresh"}:
-                client.check_managed_preferences()
-                codex_client.check_managed_preferences()
-                if (
-                    os.environ.get("CODEX_HOME")
-                    and Path(os.environ["CODEX_HOME"]).resolve()
-                    != (Path.home() / ".codex").resolve()
-                ):
-                    raise RuntimeError("Review custom CODEX_HOME before enrolling or refreshing")
             if args.action == "enroll":
                 result = configuration_refresh.enroll(
                     args.descriptor,
@@ -197,6 +199,10 @@ def main():
             elif args.action == "enrolled-token":
                 print(configuration_refresh.inference_token())
                 return 0
+            elif args.action == "refresh-background":
+                return configuration_schedule.run()
+            elif args.action in {"enable-refresh", "disable-refresh"}:
+                result = configuration_schedule.configure(enabled=args.action == "enable-refresh")
             else:
                 result = configuration_refresh.status()
             print(json.dumps(result, indent=2))
