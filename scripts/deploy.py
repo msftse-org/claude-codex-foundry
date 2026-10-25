@@ -81,7 +81,7 @@ def load_settings(path):
     s.setdefault("apim_sku", "BasicV2")
     if s["apim_sku"] not in {"BasicV2", "StandardV2"}:
         raise DeployError("apim_sku must be BasicV2 or StandardV2")
-    s.setdefault("auth_mode", "msal")
+    s.setdefault("auth_mode", "azure-cli")
     if s["auth_mode"] not in {"msal", "azure-cli"}:
         raise DeployError("auth_mode must be msal or azure-cli")
     s.setdefault("grant_admin_consent", True)
@@ -731,7 +731,7 @@ class Deployment:
             raise DeployError(
                 "Portal upgrade requires the existing private portal parameter and Entra registration files"
             )
-        client_id = self.state.get("desktop_client_id")
+        client_id = self.state.get("desktop_client_id") if self.s["auth_mode"] == "msal" else None
         if self.s["auth_mode"] == "msal" and not client_id:
             raise DeployError(
                 "Record the existing desktop_client_id before upgrading; no sign-in application will be replaced"
