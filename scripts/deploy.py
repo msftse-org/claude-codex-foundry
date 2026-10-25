@@ -789,12 +789,14 @@ def verify_portal_setup(url, expected_clients):
         raise DeployError(
             "The portal's client setup could not be verified; check its deployment."
         ) from None
-    if status.get("setup_ready") is not True or set(status.get("client_types", [])) != set(
-        expected_clients
+    if (
+        status.get("setup_ready") is not True
+        or status.get("bundle_ready") is not True
+        or set(status.get("client_types", [])) != set(expected_clients)
     ):
         raise DeployError(
             "The portal is online, but client setup is not connected to every enabled gateway. "
-            "Complete the portal deployment with the same settings before distributing installers. "
+            "Deploy the complete portal package with the same settings before distributing installers. "
             "Uploading code alone does not configure gateway connections."
         )
 

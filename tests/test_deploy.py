@@ -550,6 +550,12 @@ def test_upgrade_refuses_to_replace_a_live_ledger(unified_job):
         {"status": "ok"},
         {"status": "ok", "setup_ready": False, "client_types": ["claude", "codex"]},
         {"status": "ok", "setup_ready": True, "client_types": ["claude"]},
+        {
+            "status": "ok",
+            "setup_ready": True,
+            "client_types": ["claude", "codex"],
+            "bundle_ready": False,
+        },
     ],
 )
 def test_healthy_code_without_gateway_configuration_is_not_a_complete_deployment(
@@ -565,7 +571,12 @@ def test_healthy_code_without_gateway_configuration_is_not_a_complete_deployment
 
 
 def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
-    status = {"status": "ok", "setup_ready": True, "client_types": ["codex", "claude"]}
+    status = {
+        "status": "ok",
+        "setup_ready": True,
+        "client_types": ["codex", "claude"],
+        "bundle_ready": True,
+    }
     monkeypatch.setattr(
         deploy.urllib.request,
         "urlopen",
