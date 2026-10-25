@@ -125,7 +125,7 @@ Audit the pinned runtime dependencies when changing packages:
 
 ```bash
 uv export --frozen --extra portal --no-dev --no-hashes --no-emit-project \
-  --format requirements-txt --output /tmp/claude-foundry-runtime.txt
+  --format requirements-txt --output-file /tmp/claude-foundry-runtime.txt
 uvx pip-audit --no-deps --disable-pip --requirement /tmp/claude-foundry-runtime.txt
 npm --prefix portal/web audit --omit=dev
 ```
