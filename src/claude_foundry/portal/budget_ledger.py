@@ -134,6 +134,36 @@ def policy_digest(policy):
     ).hexdigest()
 
 
+def configured_limit(value, unlimited=False):
+    """Only an explicit owner-reviewed flag removes a cap; missing values fail closed."""
+    if unlimited is True and value is None:
+        return None
+    if unlimited or value is None:
+        raise BudgetDenied(
+            "Hard budget limits have not been configured for this organization/group"
+        )
+    return micros(value)
+
+
+def organization_limit(policy):
+    settings = policy["settings"]
+    if not settings.get("budget_enforcement"):
+        raise BudgetDenied("Hard budget enforcement is not enabled")
+    return configured_limit(
+        settings.get("spend_limit_usd"), settings.get("spend_limit_unlimited", False)
+    )
+
+
+def group_limit(group):
+    ceiling = configured_limit(
+        group.get("spend_ceiling_usd"), group.get("spend_ceiling_unlimited", False)
+    )
+    operating = group.get("spend_limit_usd")
+    if operating is None:
+        return ceiling
+    return micros(operating) if ceiling is None else min(ceiling, micros(operating))
+
+
 def limits_for(policy, principal):
     member = next(
         (m for m in policy["members"] if m["id"] == principal and m["status"] == "active"), None
@@ -141,22 +171,16 @@ def limits_for(policy, principal):
     if not member:
         raise BudgetDenied("Your organization has not granted active gateway access")
     group = next(g for g in policy["groups"] if g["id"] == member["group_id"])
-    org_limit = policy["settings"].get("spend_limit_usd")
-    ceiling = group.get("spend_ceiling_usd")
-    if not policy["settings"].get("budget_enforcement") or org_limit is None or ceiling is None:
-        raise BudgetDenied(
-            "Hard budget limits have not been configured for this organization/group"
-        )
-    operating = group.get("spend_limit_usd")
-    group_limit = min(
-        micros(ceiling), micros(operating) if operating is not None else micros(ceiling)
-    )
+    org_limit = organization_limit(policy)
+    effective_group_limit = group_limit(group)
     user_limit = member.get("spend_limit_usd")
     # No role bypass, including the organization owner.
     limits = {
-        "org": micros(org_limit),
-        "group-" + group["id"]: group_limit,
-        "user-" + principal: micros(user_limit) if user_limit is not None else group_limit,
+        "org": org_limit,
+        "group-" + group["id"]: effective_group_limit,
+        "user-" + principal: micros(user_limit)
+        if user_limit is not None
+        else effective_group_limit,
     }
     return member, group, limits
 
@@ -178,15 +202,9 @@ class Ledger:
         if expected is not None and (meta.get("digest") or "") != expected:
             raise Contended("The published budget policy changed")
         month = (at or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m")
-        limits = {"org": micros(policy["settings"]["spend_limit_usd"])}
-        groups = {g["id"]: g for g in policy["groups"]}
-        for g in groups.values():
-            limits["group-" + g["id"]] = min(
-                micros(g["spend_ceiling_usd"]),
-                micros(g["spend_limit_usd"])
-                if g.get("spend_limit_usd") is not None
-                else micros(g["spend_ceiling_usd"]),
-            )
+        limits = {"org": organization_limit(policy)}
+        for g in policy["groups"]:
+            limits["group-" + g["id"]] = group_limit(g)
         for m in policy["members"]:
             limits["user-" + m["id"]] = (
                 micros(m["spend_limit_usd"])
@@ -195,7 +213,7 @@ class Ledger:
             )
         for scope, limit in limits.items():
             counter, _ = self.rows.read(month + "-" + scope)
-            if counter.get("spent", 0) + counter.get("reserved", 0) > limit:
+            if limit is not None and counter.get("spent", 0) + counter.get("reserved", 0) > limit:
                 raise BudgetDenied(
                     "A new limit cannot be below this month's spent plus reserved amount"
                 )
@@ -238,7 +256,7 @@ class Ledger:
                 counter_key = month + "-" + scope
                 counter, etag = self.rows.read(counter_key)
                 counter = counter or {"spent": 0, "reserved": 0}
-                if counter["spent"] + counter["reserved"] + amount > limit:
+                if limit is not None and counter["spent"] + counter["reserved"] + amount > limit:
                     raise BudgetDenied(
                         "Monthly "
                         + scope.split("-")[0]
@@ -334,7 +352,9 @@ class Ledger:
                     "limit_micro_usd": limit,
                     "spent_micro_usd": spent,
                     "reserved_micro_usd": reserved,
-                    "remaining_micro_usd": max(0, limit - spent - reserved),
+                    "remaining_micro_usd": None
+                    if limit is None
+                    else max(0, limit - spent - reserved),
                 }
             )
         return {"month": month, "currency": "USD", "scopes": result}

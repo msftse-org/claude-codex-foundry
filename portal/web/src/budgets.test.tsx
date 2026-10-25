@@ -308,3 +308,49 @@ describe("budget table refresh", () => {
         expect(within(table()).queryByText("Organization")).toBeNull();
     });
 });
+
+describe("explicit unlimited policy", () => {
+    it("renders unlimited scope allowances while preserving recorded spend", async () => {
+        reads.push(
+            Promise.resolve({
+                ...balance,
+                scopes: balance.scopes.map((s) => ({
+                    ...s,
+                    limit_micro_usd: null,
+                    remaining_micro_usd: null,
+                })),
+            }),
+        );
+        render(<BudgetPanel state={state} busy={false} save={save} />);
+        await screen.findAllByText("Unlimited");
+        expect(within(table()).getAllByText("Unlimited")).toHaveLength(6);
+        expect(within(table()).getAllByText("$0.93842")).toHaveLength(3);
+    });
+    it("saves the owner's explicit unlimited choice without a hidden finite cap", async () => {
+        reads.push(Promise.resolve(balance));
+        save.mockResolvedValueOnce(true);
+        render(<BudgetPanel state={state} busy={false} save={save} />);
+        await screen.findByText("$0.06158");
+        fireEvent.click(
+            screen.getByRole("button", { name: "Organization limit" }),
+        );
+        fireEvent.click(
+            screen.getByRole("checkbox", {
+                name: "No organization spending limit",
+            }),
+        );
+        expect(
+            screen.getByRole<HTMLInputElement>("spinbutton", {
+                name: "Monthly USD limit",
+            }).disabled,
+        ).toBe(true);
+        fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+        expect(save).toHaveBeenCalledWith(
+            "settings",
+            expect.objectContaining({
+                spend_limit_unlimited: true,
+                spend_limit_usd: null,
+            }),
+        );
+    });
+});

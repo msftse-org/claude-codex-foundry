@@ -213,3 +213,5 @@ See [troubleshooting](troubleshooting.md), [operations](operations.md), and the 
 ## Prompt and response logs
 
 Owners and administrators can use **Prompt & response logs** when the platform team has enabled capture. Filter by date/time, API, developer object ID, model, or request ID, then inspect a record in a drawer. An access reason is audited before its captured prompt and response are displayed. Billing, auditors, and developers cannot open this workspace. Capture is off by default and cannot recover earlier chats. See [setup, retention and permission boundaries](content-logs.md).
+
+An owner can choose **No organization spending limit** in the organization spending drawer and **No group spending ceiling** in a group editor. Leave the group operating limit and personal limit blank to inherit an unlimited parent. Finite group and personal limits still apply under an unlimited organization. Spent and reserved amounts remain recorded, and returning to a finite cap below their sum is rejected at publication.

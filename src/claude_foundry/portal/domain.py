@@ -43,10 +43,13 @@ class Group(StrictModel):
         default=None, ge=0, le=1_000_000_000, decimal_places=6
     )
     spend_limit_usd: Decimal | None = Field(default=None, ge=0, le=1_000_000_000, decimal_places=6)
+    spend_ceiling_unlimited: bool = False
     delegated_models: list[str] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def default_allowed(self):
+        if self.spend_ceiling_unlimited and self.spend_ceiling_usd is not None:
+            raise ValueError("An unlimited group ceiling cannot also have a dollar value")
         if self.default_model and self.default_model not in self.model_ids:
             raise ValueError("The default model must be allowed for the group")
         if (
@@ -61,11 +64,18 @@ class Group(StrictModel):
 class Settings(StrictModel):
     name: str = Field(min_length=1, max_length=100)
     budget_enforcement: bool = False
+    spend_limit_unlimited: bool = False
     spend_limit_usd: Decimal | None = Field(default=None, ge=0, le=1_000_000_000, decimal_places=6)
     monthly_budget_usd: float = Field(default=0, ge=0, le=1_000_000_000)
     monthly_tokens: int = Field(default=0, ge=0, le=1_000_000_000_000)
     member_tokens_per_minute: int = Field(default=0, ge=0, le=100_000_000)
     member_requests_per_minute: int = Field(default=0, ge=0, le=100_000)
+
+    @model_validator(mode="after")
+    def consistent_limit(self):
+        if self.spend_limit_unlimited and self.spend_limit_usd is not None:
+            raise ValueError("An unlimited organization limit cannot also have a dollar value")
+        return self
 
 
 class Change(StrictModel):
@@ -271,12 +281,11 @@ def apply_change(state, change, actor, model_ids):
 
         else:
             grants = item["model_ids"]
-            for owner_field in ("spend_ceiling_usd", "delegated_models"):
-                previous = (
-                    old.get(owner_field, [] if owner_field == "delegated_models" else None)
-                    if old
-                    else ([] if owner_field == "delegated_models" else None)
+            for owner_field in ("spend_ceiling_usd", "spend_ceiling_unlimited", "delegated_models"):
+                default = {"delegated_models": [], "spend_ceiling_unlimited": False}.get(
+                    owner_field
                 )
+                previous = old.get(owner_field, default) if old else default
                 if role != "owner" and item[owner_field] != previous:
                     raise PermissionError(
                         "Only the organization owner can change group ceilings or delegated model allowances"
@@ -298,8 +307,8 @@ def apply_change(state, change, actor, model_ids):
         value = Settings.model_validate(value).model_dump(mode="json")
         before = Settings.model_validate(state["settings"]).model_dump(mode="json")
         if role != "owner" and any(
-            value[k] != before.get(k, False if k == "budget_enforcement" else None)
-            for k in ("budget_enforcement", "spend_limit_usd")
+            value[k] != before[k]
+            for k in ("budget_enforcement", "spend_limit_usd", "spend_limit_unlimited")
         ):
             raise PermissionError(
                 "Only the organization owner can change the organization spending limit or enforcement mode"

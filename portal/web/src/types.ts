@@ -25,6 +25,7 @@ export interface Group {
     monthly_tokens: number;
     budget_usd: number;
     spend_ceiling_usd?: string | null;
+    spend_ceiling_unlimited?: boolean;
     spend_limit_usd?: string | null;
     delegated_models?: string[];
 }
@@ -39,6 +40,7 @@ export interface Settings {
     monthly_budget_usd: number;
     spend_limit_usd?: string | null;
     budget_enforcement?: boolean;
+    spend_limit_unlimited?: boolean;
     monthly_tokens: number;
     member_tokens_per_minute: number;
     member_requests_per_minute: number;

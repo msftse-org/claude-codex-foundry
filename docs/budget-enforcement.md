@@ -4,7 +4,7 @@
 
 Start with [How a budgeted request travels through Azure](budget-architecture.md) for the service diagram, identity checks, storage map and request-by-request walkthrough. This page specifies the hierarchy, monetary semantics and release requirements.
 
-The agreed hierarchy is **organization → group → developer**, in **USD per UTC calendar month**. Every model request must fit all three limits, including requests made by an organization owner. Child limits are ceilings, not prepaid allocations: their sum can exceed the parent, but aggregate admitted usage cannot.
+The agreed hierarchy is **organization → group → developer**, in **USD per UTC calendar month**. Every model request must fit all configured finite limits, including requests made by an organization owner. Only the owner can explicitly remove the organization ceiling or a group ceiling. Blank values without that explicit choice remain unconfigured and block publication. Accounting and access checks continue for unlimited scopes. Child limits are ceilings, not prepaid allocations: their sum can exceed the parent, but aggregate admitted usage cannot.
 
 | Role | Authority |
 | --- | --- |
@@ -49,8 +49,8 @@ Both Anthropic Messages and OpenAI Responses debit the same counters. A group mo
 
 ## Monetary semantics and conservative reservations
 
-- `settings.spend_limit_usd`: finite organization ceiling when enforcement is enabled.
-- `group.spend_ceiling_usd`: owner-controlled group maximum. Required before publication.
+- `settings.spend_limit_usd`: finite organization ceiling when enforcement is enabled, or `null` with owner-controlled `settings.spend_limit_unlimited: true`.
+- `group.spend_ceiling_usd`: owner-controlled group maximum, or `null` with owner-controlled `group.spend_ceiling_unlimited: true`. An explicit choice is required before publication.
 - `group.spend_limit_usd`: operating allowance; blank inherits the ceiling, otherwise it cannot exceed the ceiling.
 - `member.spend_limit_usd`: personal allowance; blank inherits the group allowance.
 - **Zero means blocked**, unlike the legacy token fields where zero means no extra token quota. Suspending a member also blocks new requests after publication.
