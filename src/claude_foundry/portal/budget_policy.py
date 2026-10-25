@@ -1,5 +1,6 @@
 """Immutable reviewed snapshots; publication and admission share a ledger barrier."""
 
+import hashlib
 import json
 import threading
 from collections import OrderedDict
@@ -11,6 +12,26 @@ from azure.storage.blob import ContainerClient
 from .budget_ledger import policy_digest
 from .budget_pricing import BudgetPrice
 from .domain import Group, Member, Settings
+
+
+def draft_impact(config, state):
+    """Describe an incomplete shared draft without compiling a Claude-only policy."""
+    payload = json.dumps(
+        {k: state[k] for k in ("settings", "groups", "members", "budget_prices")},
+        sort_keys=True,
+        default=str,
+    ).encode()
+    return {
+        "revision": state["revision"],
+        "policy_hash": hashlib.sha256(payload).hexdigest(),
+        "policy_bytes": len(payload),
+        "groups": len(state["groups"]),
+        "active_members": sum(m["status"] == "active" for m in state["members"]),
+        "suspended_members": sum(m["status"] == "suspended" for m in state["members"]),
+        "managed_identity": True,
+        "monthly_tokens": state["settings"]["monthly_tokens"],
+        "note": "Shared provider access and USD limits take effect after reviewed budget publication. Legacy token limits are not enforced by the shared runtime.",
+    }
 
 
 def portal_seed(initial, ledger, snapshots, owner_id):

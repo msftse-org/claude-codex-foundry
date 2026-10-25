@@ -68,3 +68,16 @@ def test_cost_breakdown_limit_preserves_full_totals_and_marks_truncation(org, mo
     assert result["totals"][0]["input_tokens"] == 9000
     assert len(result["breakdown"]) == 2500
     assert result["truncated"] is True
+
+
+def test_shared_cost_scope_includes_exactly_the_server_configured_apis(org):
+    config = {
+        **org,
+        "reporting_apis": [{"api_id": "claude-governed"}, {"api_id": "codex-governed"}],
+    }
+    query = build_query(config, CostQuery(start="2024-03-01", end="2024-03-02"), [])
+    assert 'dynamic(["claude-governed", "codex-governed"])' in query
+    assert json.dumps(org["apim_name"]) in query
+    assert '== "claude-foundry"' not in query
+    with pytest.raises(ValidationError):
+        CostQuery(start="2024-03-01", end="2024-03-02", api_ids=["other-api"])

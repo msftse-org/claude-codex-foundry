@@ -60,8 +60,27 @@ def policy_xml(tenant_id, budget_url, audience, provider):
     element(
         trace,
         "metadata",
+        name="model",
+        value='@{ try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? ""; } catch { return ""; } }',
+    )
+    element(
+        trace,
+        "metadata",
         name="principal_id",
         value='@(((Jwt)context.Variables["callerJwt"]).Claims.GetValueOrDefault("oid", ""))',
+    )
+    inference = element(
+        element(inbound, "choose"),
+        "when",
+        condition='@(context.Operation.Id == "messages" || context.Operation.Id == "responses")',
+    )
+    metric = element(inference, "llm-emit-token-metric", namespace="ClaudeCodexFoundry")
+    element(metric, "dimension", name="API ID")
+    element(
+        metric,
+        "dimension",
+        name="Model",
+        value='@{ try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? "Unknown"; } catch { return "Unknown"; } }',
     )
     backend = element(root, "backend")
     element(backend, "forward-request", timeout="240", **{"buffer-response": "false"})

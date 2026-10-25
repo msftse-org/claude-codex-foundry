@@ -359,12 +359,12 @@ function App() {
         Number(dirty) +
         openRequests.length +
         Number(!state.settings.monthly_tokens);
-    const downloadProfile = async (groupId?: string) => {
+    const downloadProfile = async (groupId?: string, client = "claude") => {
         try {
             download(
-                "client.json",
+                `${client}-client.json`,
                 await api(
-                    `/api/client-profile${groupId ? "?group_id=" + encodeURIComponent(groupId) : ""}`,
+                    `/api/client-profile?client=${client}${groupId ? "&group_id=" + encodeURIComponent(groupId) : ""}`,
                 ),
             );
             notify("Client profile downloaded.");
@@ -1805,7 +1805,7 @@ function App() {
                 <>
                     <PageHead
                         title="Developer onboarding"
-                        description="A repeatable path from an organization account to Claude Desktop and Claude Code."
+                        description="Set up Claude Desktop, Claude Code and Codex with your organization’s published access."
                     />
                     <div className="settings">
                         <Notice>
@@ -1844,44 +1844,104 @@ function App() {
                                     local settings.
                                 </p>
                                 <div className="actions">
-                                    {admin ? (
-                                        state.groups.map((g) => (
-                                            <button
-                                                key={g.id}
-                                                className="button"
-                                                onClick={() =>
-                                                    downloadProfile(g.id)
-                                                }
-                                            >
-                                                <DownloadSimple />
-                                                {g.name}
-                                            </button>
-                                        ))
-                                    ) : (
-                                        <button
-                                            className="button"
-                                            onClick={() => downloadProfile()}
-                                        >
-                                            <DownloadSimple />
-                                            My client profile
-                                        </button>
-                                    )}
+                                    {admin
+                                        ? state.groups.flatMap((g) =>
+                                              (
+                                                  state.client_types || [
+                                                      "claude",
+                                                  ]
+                                              ).map((client) => (
+                                                  <button
+                                                      key={`${g.id}-${client}`}
+                                                      className="button"
+                                                      onClick={() =>
+                                                          downloadProfile(
+                                                              g.id,
+                                                              client,
+                                                          )
+                                                      }
+                                                  >
+                                                      <DownloadSimple />
+                                                      {g.name} ·{" "}
+                                                      {client === "codex"
+                                                          ? "Codex"
+                                                          : "Claude"}
+                                                  </button>
+                                              )),
+                                          )
+                                        : (
+                                              state.client_types || ["claude"]
+                                          ).map((client) => (
+                                              <button
+                                                  key={client}
+                                                  className="button"
+                                                  onClick={() =>
+                                                      downloadProfile(
+                                                          undefined,
+                                                          client,
+                                                      )
+                                                  }
+                                              >
+                                                  <DownloadSimple />
+                                                  My{" "}
+                                                  {client === "codex"
+                                                      ? "Codex"
+                                                      : "Claude"}{" "}
+                                                  profile
+                                              </button>
+                                          ))}
                                 </div>
                             </div>
                         </div>
+                        {admin && state.budget_configured && (
+                            <div className="onboardingstep">
+                                <span className="stepnumber">✓</span>
+                                <div>
+                                    <h2>Complete model verification</h2>
+                                    <p>
+                                        After reviewing enforcement prices in
+                                        Budgets &amp; limits, give this model
+                                        policy to your deployment administrator
+                                        to verify the pinned deployments before
+                                        publishing access.
+                                    </p>
+                                    <button
+                                        className="button"
+                                        onClick={async () => {
+                                            try {
+                                                download(
+                                                    "model-policy.json",
+                                                    await api(
+                                                        "/api/model-policy",
+                                                    ),
+                                                );
+                                            } catch (e) {
+                                                notify(
+                                                    (e as Error).message,
+                                                    true,
+                                                );
+                                            }
+                                        }}
+                                    >
+                                        <DownloadSimple />
+                                        Download model policy
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         <div className="onboardingstep">
                             <span className="stepnumber">3</span>
                             <div>
                                 <h2>Prepare the Mac installer</h2>
                                 <p>
-                                    Use the repository’s bundle builder with the
-                                    exported profile. Send the resulting ZIP
-                                    through your organization’s software
-                                    distribution channel.
+                                    Use the repository’s bundle builder with
+                                    each exported provider profile. Send the
+                                    resulting ZIP through your organization’s
+                                    software distribution channel.
                                 </p>
                                 <pre className="codewell">
                                     {
-                                        "uv run python scripts/build_client_bundle.py \\\n  --profile /path/to/client.json \\\n  --output dist/claude-foundry-macos.zip"
+                                        "uv run python scripts/build_client_bundle.py \\\n  --profile /path/to/claude-client.json \\\n  --profile /path/to/codex-client.json \\\n  --output dist/claude-codex-macos.zip"
                                     }
                                 </pre>
                                 <a

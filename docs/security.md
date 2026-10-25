@@ -4,7 +4,7 @@
 
 [← README](../README.md) · [Identity and permission reference](identity-and-permissions.md) · [Report a vulnerability](../SECURITY.md) · [Operations](operations.md)
 
-Claude & Codex on Azure has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The portal deployment workflow attaches to the same Claude API by default without publishing governance automatically. An isolated preview API is an explicit option for testing. Reviewed publication changes inference authorization on the selected route.
+Claude & Codex on Azure has two gateway authorization modes. Choose deliberately: switching from the baseline user-token path to portal governance changes which identity Foundry authorizes. The default deployer uses the shared managed-identity runtime described in [unified administration](unified-administration.md). The legacy manual workflow below attaches to the Claude API without publishing governance automatically. An isolated preview API is an explicit option for testing. Reviewed publication changes inference authorization on the selected route.
 
 ![Hosted preview showing Entra sign-in, published gateway policy, connected reporting, and no portal conversation storage](images/portal-security-status.jpg)
 

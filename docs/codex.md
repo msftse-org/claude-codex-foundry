@@ -2,7 +2,7 @@
 
 Connect local Codex work to OpenAI models deployed in your organization's Azure Foundry resource, through a dedicated API on **standard Azure API Management**. Users authenticate with Microsoft Entra ID. Claude can use the same foundation through its separate API.
 
-**Feature preview, included in `main`:** review and pilot it before a customer rollout. The baseline administration portal policy governs Claude; it does **not** publish Codex access policies or budgets. Codex uses the baseline Entra/RBAC gateway described below. The separately deployed [budget gateway preview](budget-architecture.md) supports shared Claude/Codex permissions, reviewed enforcement rates and USD limits.
+**Default shared administration:** the standard deployer now connects Claude and Codex to one portal through the shared runtime. Follow [unified administration](unified-administration.md), including price/capacity verification and owner publication. This guide’s manual baseline Entra/RBAC gateway remains available for an explicitly selected legacy installation. Review and pilot the documented acceptance checks before customer rollout.
 
 ## What is supported
 
@@ -196,6 +196,6 @@ API diagnostics disable request/response body and header capture, mask credentia
 | Configuration/catalog parsing error | Confirm client versions and rerun the installer to generate matching metadata. Do not copy another user's cache. |
 | 429 or slow Pro response | Inspect per-model allocation, retry headers, latency and token use; size a measured pilot. |
 | Desktop still uses the old provider | Save work, fully reopen the app, start a new local chat and verify APIM traffic. Existing chats can retain their original provider. |
-| No Codex portal costs or budgets | The portal's current publisher and pricing features are Claude-only. Use APIM/Application Insights and Azure Cost Management for this preview. |
+| No Codex portal costs or budgets | Check the deployment mode. Legacy baseline portals cover Claude only; use the [portal-only upgrade](unified-administration.md#upgrade-an-existing-standard-installation) for shared administration. |
 
 Official references: [client setup](https://learn.chatgpt.com/docs/enterprise/connect-to-a-gateway), [gateway rollout](https://learn.chatgpt.com/docs/enterprise/roll-out-a-gateway), [compatibility checklist](https://learn.chatgpt.com/docs/enterprise/gateway-compatibility), and [Azure Responses API](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses).

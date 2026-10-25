@@ -177,6 +177,8 @@ Displayed times use the browser's timezone; JSON details retain UTC. State and a
 
 ## Developer onboarding
 
+Unified installations provide separate **Claude** and **Codex** choices for each group or developer, using published grants and the correct provider endpoint. The Codex profile contains only qualified OpenAI models. Owners can also download the reviewed model-policy draft for the deployment administrator to verify pinned runtime bounds before publication. See [unified setup and upgrades](unified-administration.md). The older screenshot below illustrates the legacy single-provider flow.
+
 After granting and publishing access, export the group-specific client profile from **Developer onboarding**. Developers can download their own profile. A profile contains connection settings and model choices, not credentials; each person signs in separately.
 
 ![Developer onboarding steps for granting access and exporting a client profile](images/portal-onboarding.jpg)

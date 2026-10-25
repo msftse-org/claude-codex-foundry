@@ -15,6 +15,7 @@ param entraClientId string
 param desktopClientId string = ''
 param claudeGatewayUrl string
 param additionalModels array = []
+param providerConfigs object = {}
 param insightsName string
 param insightsResourceGroup string
 @description('Optional dedicated content workspace. Empty leaves content access disabled.')
@@ -108,6 +109,7 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_ORGANIZATION_ID', value: organizationId }
         { name: 'BUDGET_CLAUDE_GATEWAY_URL', value: claudeGatewayUrl }
         { name: 'PORTAL_BUDGET_MODELS_JSON', value: string(additionalModels) }
+        { name: 'PORTAL_PROVIDER_CONFIGS_JSON', value: string(providerConfigs) }
         { name: 'BUDGET_POLICY_CACHE_AUDIENCE', value: policyCacheAudience }
         { name: 'BUDGET_POLICY_CACHE_APIM_PRINCIPAL_ID', value: policyCacheApimPrincipalId }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }

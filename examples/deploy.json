@@ -12,7 +12,19 @@
     "industry": "technology"
   },
   "developer_group_id": "",
-  "claude": {"enabled": true, "models": [], "capacity": 10, "sku": "GlobalStandard"},
-  "codex": {"enabled": true, "models": [], "capacity": 10},
-  "portal": {"enabled": true}
+  "claude": {
+    "enabled": true,
+    "models": [],
+    "capacity": 10,
+    "sku": "GlobalStandard"
+  },
+  "codex": {
+    "enabled": true,
+    "models": [],
+    "capacity": 10
+  },
+  "portal": {
+    "enabled": true,
+    "mode": "unified"
+  }
 }

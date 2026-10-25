@@ -34,6 +34,7 @@ def settings(tmp_path):
         subscription_id=SUBSCRIPTION,
         suffix="contoso1",
         accept_marketplace_terms=True,
+        portal={"enabled": True, "mode": "baseline"},
     )
     path.write_text(json.dumps(value))
     return path
@@ -392,3 +393,199 @@ def test_script_exits_cleanly_on_errors(deploy, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["deploy.py", "--settings", str(missing)])
     assert deploy.main() == 1
     assert "rerun the same command" in capsys.readouterr().err
+
+
+def test_unified_is_default_and_codex_only_portal_is_supported(deploy, settings):
+    value = json.loads(settings.read_text())
+    value.pop("portal")
+    value["claude"]["enabled"] = False
+    settings.write_text(json.dumps(value))
+    result = deploy.load_settings(settings)
+    assert result["portal"] == {"enabled": True, "mode": "unified"}
+
+
+class UnifiedRunner(FakeRunner):
+    def az(self, args):
+        joined = " ".join(args)
+        if joined.startswith("deployment group create") and "admin-portal" in args:
+            return {"identityObjectId": {"value": PORTAL_APP}}
+        if joined.startswith("ad app list"):
+            return []
+        if joined.startswith("ad app create"):
+            return {"appId": PORTAL_APP}
+        if joined.startswith("ad sp list"):
+            return []
+        return super().az(args)
+
+    def tool(self, command, capture):
+        result = super().tool(command, capture)
+        if command[:1] == ["admin"]:
+            path = Path(command[2])
+            if command[3] == "init-codex":
+                from claude_foundry.codex_models import initialize
+
+                write_json(Path(command[5]), initialize(self.org))
+            if command[3] == "sync-models":
+                data = json.loads(path.read_text())
+                if data.get("client_type") == "codex":
+                    data["models"] = [{"name": "gpt-test", "model": "gpt-test", "qualified": True}]
+                    data["default_model"] = "gpt-test"
+                else:
+                    data["models"] = [
+                        {
+                            "name": "claude-test",
+                            "anthropicFamilyTier": "sonnet",
+                            "labelOverride": "Claude test",
+                            "isFamilyDefault": True,
+                        }
+                    ]
+                write_json(path, data)
+        return result
+
+
+@pytest.fixture
+def unified_job(deploy, settings, tmp_path, org, monkeypatch):
+    value = json.loads(settings.read_text())
+    value["portal"] = {"enabled": True}
+    settings.write_text(json.dumps(value))
+    runner = UnifiedRunner(organization(org))
+    cloud = []
+
+    class FakeAzure:
+        def __init__(self, subscription):
+            pass
+
+        def request(self, method, path, body=None, **kwargs):
+            cloud.append((method, path, body))
+            if path.endswith("/config/appsettings/list") or path.endswith("/policies/policy"):
+                raise AzureError(404, "missing")
+            return {"identity": {"principalId": GROUP}}
+
+    monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    monkeypatch.setattr(
+        "claude_foundry.budget_gateway.deploy",
+        lambda *args: cloud.append(("route", args[-2], args[-1])),
+    )
+    monkeypatch.setattr("claude_foundry.gateway.configure_observability", lambda *args, **kw: None)
+    job = deploy.Deployment(
+        deploy.load_settings(settings), tmp_path / ".local", tmp_path / "dist", runner, FakeAzure
+    )
+    return job, runner, cloud
+
+
+def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=True)
+    params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
+    assert set(params["providerConfigs"]["value"]) == {"claude", "codex"}
+    assert params["budgetStorageAccount"]["value"] == job.state["budget_storage"]
+    assert params["providerConfigs"]["value"]["codex"]["gateway_url"].endswith("/codex-governed/v1")
+    assert [(c[1], c[2]) for c in cloud if c[0] == "route"] == [
+        ("claude-governed", "claude-governed"),
+        ("codex-governed", "codex-governed"),
+    ]
+    assert len([c for c in runner.calls if "unified-runtime" in c]) == 1
+    main = json.loads((job.local / "parameters.json").read_text())["parameters"]
+    assert main["inferencePrincipals"]["value"] == [{"id": USER, "type": "User"}]
+    assert all(
+        "unified/" in c[c.index("--config") + 1] for c in runner.calls if "export-client" in c
+    )
+    assert not any(c[3:4] == ["verify"] for c in runner.calls)
+    assert any("closed until" in w for w in job.warnings)
+    assert job.state["governance_mode"] == "unified"
+
+
+def test_upgrade_does_not_redeploy_foundation_models_or_replace_owner(unified_job):
+    job, runner, _ = unified_job
+    job.deploy(verify=False)
+    path = job.local / "portal/parameters.json"
+    params = json.loads(path.read_text())
+    params["parameters"]["ownerObjectId"]["value"] = GROUP
+    params["parameters"]["storageAccountName"] = {"value": "preservedportalstore"}
+    path.write_text(json.dumps(params))
+    runner.calls.clear()
+    job.upgrade_portal()
+    seen = commands(runner)
+    assert not any("claude-foundation" in c or "sync-models" in c or "qualify" in c for c in seen)
+    assert not any("ad group member" in c or "register_client_app" in c for c in seen)
+    params = json.loads(path.read_text())["parameters"]
+    assert params["ownerObjectId"]["value"] == GROUP
+    assert params["storageAccountName"]["value"] == "preservedportalstore"
+
+
+def test_upgrade_refuses_to_replace_a_live_ledger(unified_job):
+    job, runner, _ = unified_job
+    job.deploy(verify=False)
+    original = job.azure
+
+    class OtherLedger(original):
+        def request(self, method, path, body=None, **kwargs):
+            if path.endswith("/config/appsettings/list"):
+                return {
+                    "properties": {
+                        "BUDGET_STORAGE_ACCOUNT": "otherledger",
+                        "BUDGET_ORGANIZATION_ID": SUBSCRIPTION,
+                    }
+                }
+            return super().request(method, path, body, **kwargs)
+
+    job.azure = OtherLedger
+    runner.calls.clear()
+    with pytest.raises(Exception, match="different.*ledger"):
+        job.upgrade_portal()
+    assert not any("deployment group create" in c for c in commands(runner))
+
+
+def test_unified_mode_cannot_be_downgraded(unified_job):
+    job, runner, _ = unified_job
+    job.deploy(verify=False)
+    job.s["portal"]["mode"] = "baseline"
+    runner.calls.clear()
+    with pytest.raises(Exception, match="downgraded"):
+        job.deploy()
+    assert runner.calls == []
+
+
+def test_codex_only_default_deployment_keeps_portal(unified_job):
+    job, runner, cloud = unified_job
+    job.s["claude"]["enabled"] = False
+    job.deploy(verify=False)
+    params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
+    assert set(params["providerConfigs"]["value"]) == {"codex"}
+    assert [(c[1], c[2]) for c in cloud if c[0] == "route"] == [
+        ("codex-governed", "codex-governed")
+    ]
+
+
+def test_missing_local_manifest_recovers_existing_runtime_bounds(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=False)
+    original = job.azure
+    from claude_foundry.unified_deployment import prepare
+
+    settings = json.loads((job.local / "unified/portal-settings.json").read_text())
+    manifest = {
+        "kept": {
+            "version": "1",
+            "provider": "openai",
+            "max_input_tokens": 1000,
+            "max_output_tokens": 1000,
+        }
+    }
+
+    class ExistingRuntime(original):
+        def request(self, method, path, body=None, **kwargs):
+            if "/sites/ccf-budget-" in path and path.endswith("/config/appsettings/list"):
+                return {
+                    "properties": {
+                        "BUDGET_STORAGE_ACCOUNT": settings["budgetStorageAccount"],
+                        "BUDGET_ORGANIZATION_ID": SUBSCRIPTION,
+                        "BUDGET_TENANT_ID": TENANT,
+                        "BUDGET_DEPLOYMENTS_JSON": json.dumps(manifest),
+                    }
+                }
+            return super().request(method, path, body, **kwargs)
+
+    job.azure = ExistingRuntime
+    (job.local / "unified/runtime-models.json").unlink()
+    assert prepare(job)[2] == manifest
