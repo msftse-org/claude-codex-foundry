@@ -731,9 +731,7 @@ class Deployment:
             raise DeployError(
                 "Portal upgrade requires the existing private portal parameter and Entra registration files"
             )
-        client_id = (
-            self.state.get("desktop_client_id") if self.s["auth_mode"] == "msal" else None
-        )
+        client_id = self.state.get("desktop_client_id") if self.s["auth_mode"] == "msal" else None
         if self.s["auth_mode"] == "msal" and not client_id:
             raise DeployError(
                 "Record the existing desktop_client_id before upgrading; no sign-in application will be replaced"
