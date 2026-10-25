@@ -467,6 +467,7 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
         lambda *args: cloud.append(("route", args[-2], args[-1])),
     )
     monkeypatch.setattr("claude_foundry.gateway.configure_observability", lambda *args, **kw: None)
+    monkeypatch.setattr("claude_foundry.unified_deployment.wait_for_route", lambda url: None)
     job = deploy.Deployment(
         deploy.load_settings(settings), tmp_path / ".local", tmp_path / "dist", runner, FakeAzure
     )

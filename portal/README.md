@@ -20,7 +20,7 @@ This is a customer-owned control plane for the existing standard APIM gateway. I
 - Cost analysis with custom UTC ranges (up to 93 days), previous-period comparisons, combined model/group/developer filters, drill-downs, daily charts/tables, and CSV exports. Totals are aggregated in Application Insights; breakdowns are capped at 2,500 dimensions across both periods and explicitly marked when truncated.
 - Forms in responsive drawers with persistent actions and unsaved-change protection.
 - Model planning rates with source/date/notes and dollar estimates, with missing-rate and threshold notices. Dollar budgets do not stop inference or reconcile Azure invoices.
-- Client profile export for the existing Mac installer. Supply the separate desktop public-client ID for MSAL onboarding without Azure CLI.
+- Complete Mac setup ZIP downloads with a scoped client profile, gateway details, installer, and instructions for Codex-assisted setup. The profile-only export remains available for existing installers. Supply the separate desktop public-client ID for MSAL onboarding without Azure CLI.
 
 The portal does not replace Entra account lifecycle, Conditional Access, device management, Claude conversation controls, Azure Cost Management, or an immutable compliance archive. It does not claim Anthropic enterprise certification, SCIM support, invoice management, or legal/compliance guarantees.
 

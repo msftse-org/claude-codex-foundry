@@ -149,6 +149,8 @@ For **enforced budgets**, complete the [unified acceptance procedure](unified-ad
 
 ## Verify and hand over
 
+For the default unified setup, follow [shared acceptance](unified-administration.md#acceptance-and-handover). Use `claude-foundry verify --config .local/client.json --budgeted` for Claude and `claude-foundry verify --config .local/codex-client.json` for Codex after owner publication. The legacy governed-verifier examples below apply only to `portal.mode=baseline`.
+
 Check the command's final status, model/qualification reports and any consent warnings. Gateway verification uses the deployer's Azure CLI identity; it does not prove a developer's MSAL sign-in, Conditional Access or desktop installation works.
 
 For a baseline deployment, the explicit checks are:

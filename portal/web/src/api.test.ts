@@ -66,6 +66,49 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+it("downloads ZIP bytes with authentication and refreshes a rejected read once", async () => {
+    identity.getActiveAccount.mockReturnValue({ homeAccountId: "account" });
+    const blob = new Blob(["synthetic ZIP bytes"], { type: "application/zip" });
+    const click = vi.fn();
+    const anchor = { click, href: "", download: "" };
+    vi.stubGlobal("document", { createElement: vi.fn(() => anchor) });
+    const createObjectURL = vi.fn(() => "blob:setup");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal(
+        "URL",
+        class extends URL {
+            static createObjectURL = createObjectURL;
+            static revokeObjectURL = revokeObjectURL;
+        },
+    );
+    vi.mocked(fetch)
+        .mockResolvedValueOnce({
+            ok: true,
+            json: async () => configuration,
+        } as Response)
+        .mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+        .mockResolvedValueOnce({
+            ok: true,
+            blob: async () => blob,
+        } as Response);
+    const { downloadFile } = await import("./api");
+    await downloadFile(
+        "/api/client-bundle?group_id=team",
+        "claude-foundry-macos.zip",
+    );
+    expect(identity.acquireTokenSilent).toHaveBeenLastCalledWith(
+        expect.objectContaining({ forceRefresh: true }),
+    );
+    const [, options] = vi.mocked(fetch).mock.calls[2];
+    expect(new Headers(options?.headers).get("Authorization")).toBe(
+        "Bearer synthetic-token",
+    );
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchor.download).toBe("claude-foundry-macos.zip");
+    expect(click).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:setup");
+});
+
 describe("portal sign-in recovery", () => {
     it("keeps a denied sign-in on the portal without restarting authentication", async () => {
         identity.handleRedirectPromise.mockRejectedValue(

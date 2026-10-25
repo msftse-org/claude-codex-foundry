@@ -15,6 +15,25 @@ UNATTRIBUTED = "__unattributed__"
 BREAKDOWN_LIMIT = 2500
 
 
+def planning_prices(state):
+    """Use explicit planning rates first, then reviewed enforcement ceilings."""
+    prices = list(state.get("prices", []))
+    explicit = {p["model"] for p in prices}
+    for value in state.get("budget_prices", []):
+        if value["model"] not in explicit:
+            prices.append(
+                {
+                    "model": value["model"],
+                    "input_per_million": float(value["input_ceiling_per_million"]),
+                    "output_per_million": float(value["output_ceiling_per_million"]),
+                    "source_url": value["source_url"],
+                    "verified_on": value["verified_at"][:10],
+                    "note": "Planning estimate at reviewed enforcement ceilings; not an Azure invoice.",
+                }
+            )
+    return prices
+
+
 class CostQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     start: date

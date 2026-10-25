@@ -81,3 +81,26 @@ def test_shared_cost_scope_includes_exactly_the_server_configured_apis(org):
     assert '== "claude-foundry"' not in query
     with pytest.raises(ValidationError):
         CostQuery(start="2024-03-01", end="2024-03-02", api_ids=["other-api"])
+
+
+def test_shared_planning_rates_fall_back_to_reviewed_ceilings_without_overwriting():
+    from claude_foundry.portal.costs import planning_prices
+
+    explicit = {"model": "claude-test", "input_per_million": 2, "output_per_million": 3}
+    state = {
+        "prices": [explicit],
+        "budget_prices": [
+            {
+                "model": m,
+                "input_ceiling_per_million": "5",
+                "output_ceiling_per_million": "8",
+                "source_url": "https://example.com",
+                "verified_at": "2026-10-25T00:00:00Z",
+            }
+            for m in ["claude-test", "gpt-test"]
+        ],
+    }
+    rates = planning_prices(state)
+    assert rates[0] == explicit and rates[1]["model"] == "gpt-test"
+    assert rates[1]["input_per_million"] == 5 and "not an Azure invoice" in rates[1]["note"]
+    assert state["prices"] == [explicit]

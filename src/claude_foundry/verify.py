@@ -40,7 +40,7 @@ def request(c, path, token=None, data=None):
         return error.code, dict(error.headers), error.read().decode()
 
 
-def verify(c, all_models=False, *, governed=False):
+def verify(c, all_models=False, *, governed=False, budgeted=False):
     for label, token in [("missing token", None), ("invalid token", "not-a-token")]:
         status, _, _ = request(c, "/v1/models", token)
         if status != 401:
@@ -51,7 +51,8 @@ def verify(c, all_models=False, *, governed=False):
     if status != 200:
         raise RuntimeError(f"Catalog failed: {status} {body}")
     actual = {m["id"] for m in json.loads(body)["data"]}
-    if actual != {m["name"] for m in c["models"]}:
+    configured = {m["name"] for m in c["models"]}
+    if not configured <= actual or (not budgeted and actual != configured):
         raise RuntimeError("Gateway catalog and client profile differ; export a fresh profile")
     print("PASS authenticated model catalog", flush=True)
     models = c["models"] if all_models else c["models"][:1]
@@ -62,7 +63,8 @@ def verify(c, all_models=False, *, governed=False):
             "messages": [{"role": "user", "content": "Reply exactly APIM_OK. No explanation."}],
         }
         status, headers, body = request(c, "/v1/messages", token, payload)
-        if status != 200 or "APIM_OK" not in body or not headers.get("x-claude-gateway"):
+        gateway_header = "x-budget-request-id" if budgeted else "x-claude-gateway"
+        if status != 200 or "APIM_OK" not in body or not headers.get(gateway_header):
             raise RuntimeError(f"{model['name']} failed: {status} {body}")
         print("PASS inference", model["name"], flush=True)
     payload = {
@@ -87,7 +89,7 @@ def verify(c, all_models=False, *, governed=False):
     print("PASS token counting", flush=True)
     payload["model"] = "not-an-allowed-deployment"
     status, _, _ = request(c, "/v1/messages", token, payload)
-    expected = 403 if governed else 400
+    expected = 403 if governed or budgeted else 400
     if status != expected:
         hint = {
             403: " A 403 usually means portal governance is published; rerun with --governed.",

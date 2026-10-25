@@ -475,7 +475,13 @@ class Deployment:
         args = []
         for profile in profiles:
             args += ["--profile", profile]
-        self.script("build_client_bundle.py", *args, "--output", bundle)
+        self.script(
+            "build_client_bundle.py",
+            *args,
+            *(["--budgeted"] if self.unified else []),
+            "--output",
+            bundle,
+        )
         self.save(bundle=str(bundle))
         return profiles
 

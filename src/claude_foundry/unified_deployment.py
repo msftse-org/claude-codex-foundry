@@ -2,13 +2,33 @@
 
 import hashlib
 import json
+import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 from claude_foundry.azure import AzureError, account_path, api_path
 from claude_foundry.config import read_json, write_json
 from claude_foundry.models import CS_VERSION
 from claude_foundry.unified import provider_configs, reviewed_deployments
+
+
+def wait_for_route(url, attempts=30, delay=10):
+    """Wait for the new APIM operation's authentication guard, without inference."""
+    for _ in range(attempts):
+        try:
+            with urlopen(url, timeout=15):
+                pass
+        except HTTPError as error:
+            if error.code == 401:
+                return
+        except (URLError, TimeoutError):
+            pass
+        time.sleep(delay)
+    raise RuntimeError(
+        "The governed APIM route is not ready; reconcile its operations and policy before distributing profiles"
+    )
 
 
 def prepare(job):
@@ -196,5 +216,8 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity):
         from claude_foundry.gateway import configure_observability
 
         configure_observability(config, azure, enable_dimensions=True)
+        wait_for_route(
+            config["gateway_url"].rstrip("/") + ("/models" if client == "codex" else "/v1/models")
+        )
         write_json(job.local / f"unified/{client}-organization.json", config)
     job.save(governance_mode="unified", budget_storage=settings["budgetStorageAccount"])

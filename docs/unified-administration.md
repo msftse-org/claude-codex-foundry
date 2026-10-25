@@ -2,6 +2,8 @@
 
 The standard deployment uses `portal.mode=unified` (the default). It connects every enabled provider to the same member/group policy and budget ledger. The portal shows both model catalogs, exports separate Claude and Codex profiles, and queries the configured APIs for usage and estimated costs. It supports Claude-only and Codex-only installations too.
 
+Cost estimates prefer explicit planning rates and otherwise use reviewed enforcement ceilings. They are not Azure invoices.
+
 The shared runtime, Table/Blob storage and private endpoints are deployed automatically. This adds Azure resources and charges compared with the legacy Claude portal. The runtime's [release acceptance checks](budget-enforcement.md#release-acceptance) still apply; selecting the default does not certify a customer rollout.
 
 ## Fresh installation
@@ -12,7 +14,7 @@ The shared runtime, Table/Blob storage and private endpoints are deployed automa
 4. Under **Onboarding**, download **model-policy.json**. This is a draft price/capacity manifest, not an access publication. The deployment administrator must independently review it, confirm that every referenced deployment has succeeded, and pin those exact versions with `versionUpgradeOption=NoAutoUpgrade` in Azure. Keep the file under this customer's ignored `.local/` directory.
 5. Set `portal.model_policy_file` to `.local/model-policy.json` in the same deployment settings. Rerun the same deploy command, or use the portal-only command below to avoid redeploying the foundation/models. The deployer validates the manifest against live qualified, pinned deployments and configures the runtime bounds. An unknown, expired, unqualified, duplicate or mismatched model stops the update.
 6. The owner reviews prices, organization/group/user limits (or explicitly chooses unlimited where supported), enables enforcement and publishes the shared policy. Publishing access and deploying model bounds are separate checks. Every granted model needs a current reviewed price.
-7. Export the intended user's or group's **Claude** and **Codex** profiles. Build a combined installer with both `--profile` arguments, or use the deployer's combined ZIP after reviewing the catalogs. An export uses published grants; an unpublished draft cannot grant access.
+7. Under **Onboarding**, choose the group/application and download its complete Mac setup ZIP. It includes the scoped profile, installer, gateway README and instructions for the customer’s coding assistant. Use **Copy setup prompt for Codex** for guided local setup. Advanced profile-only downloads and combined installers remain available; when building a shared-runtime bundle manually, use both `--profile` arguments and `--budgeted`. An export uses published grants; an unpublished draft cannot grant access.
 
 Without reviewed model bounds and a valid published policy, governed inference stays closed. Deployment health and installer generation do not prove that developers can make requests. Existing portal state, published policy, spend, reservations and audit history survive reruns; a missing new price file never clears an established runtime manifest.
 
@@ -48,7 +50,7 @@ Complete steps 2–7 above. Once the intended pilot clients pass the checks belo
 
 - Verify both providers in the portal catalog and in group/member model selection. Existing groups retain their previous grants; adding a provider does not automatically grant it to every group.
 - Verify each exported profile's tenant, provider, published model subset, default and governed endpoint. Codex profiles must end in `/v1`, contain only qualified OpenAI models, and contain no Claude models. A group administrator cannot export another group's grants.
-- Using the customer's exported profiles, verify model listing, JSON and streaming inference for each provider. Run a real local file tool and a history follow-up with the approved native Codex and Claude clients. Test Codex compaction with its required output allowance. Keep synthetic evidence private.
+- Using the customer's exported profiles, run `claude-foundry verify --config CLAUDE_PROFILE --budgeted` for Claude and `claude-foundry verify --config CODEX_PROFILE` for Codex. These are small billable checks. Verify model listing, JSON and streaming inference for each provider. Run a real local file tool and a history follow-up with the approved native Codex and Claude clients. Test Codex compaction with its required output allowance. Keep synthetic evidence private.
 - Check `/v1/budget` on each governed route and confirm usage settlement. Test a separate constrained identity, cross-group denials and suspension/publication. Follow the full [acceptance procedure](budget-enforcement.md#release-acceptance); do not exhaust real customer allowances as a test.
 - Verify usage/cost queries include exactly the configured API IDs on the intended APIM service. Azure metric ingestion is delayed and streaming metrics can be estimates. Unattributed metrics are not evidence of team spend and are excluded from group-scoped reports. The ledger controls admission independently of monitoring.
 - Verify old client routes and direct Foundry permissions can no longer bypass policy after cutover. Record any retained paths and unfinished checks in the handover.

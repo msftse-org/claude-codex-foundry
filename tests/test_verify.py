@@ -90,3 +90,31 @@ def test_ambiguous_or_persistent_failures_are_not_hidden(monkeypatch, kind):
     with pytest.raises(URLError):
         module.open_url("request", 120)
     assert len(attempts) == (3 if kind == "refused-every-time" else 1)
+
+
+def test_shared_runtime_verifier_uses_budget_headers_and_denials(org, monkeypatch):
+    monkeypatch.setattr("claude_foundry.verify.credential", lambda c: "token")
+    monkeypatch.setattr(
+        "claude_foundry.verify.request",
+        Mock(
+            side_effect=[
+                (401, {}, ""),
+                (401, {}, ""),
+                (200, {}, json.dumps({"data": [{"id": org["models"][0]["name"]}]})),
+                (200, {"x-budget-request-id": "synthetic"}, "APIM_OK"),
+                (200, {}, "event: content_block_delta\nevent: message_stop"),
+                (200, {}, '{"input_tokens": 1}'),
+                (403, {}, ""),
+            ]
+        ),
+    )
+    verify(org, budgeted=True)
+
+
+def test_cli_passes_shared_runtime_verification_mode(org, monkeypatch):
+    monkeypatch.setattr("claude_foundry.cli.auth.installed_config", lambda: org)
+    check = Mock()
+    monkeypatch.setattr("claude_foundry.cli.verify", check)
+    monkeypatch.setattr("sys.argv", ["claude-foundry", "verify", "--budgeted"])
+    assert main() == 0
+    check.assert_called_once_with(org, False, governed=False, budgeted=True)

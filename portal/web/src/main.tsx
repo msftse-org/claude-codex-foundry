@@ -4,6 +4,7 @@ import { CostAnalysis } from "./CostAnalysis";
 import { ContentLogs } from "./ContentLogs";
 import { Spend } from "./Spend";
 import { SignInScreen } from "./SignIn";
+import { Onboarding } from "./Onboarding";
 import { UsageChart } from "./UsageChart";
 import {
     MemberEditor,
@@ -359,19 +360,6 @@ function App() {
         Number(dirty) +
         openRequests.length +
         Number(!state.settings.monthly_tokens);
-    const downloadProfile = async (groupId?: string, client = "claude") => {
-        try {
-            download(
-                `${client}-client.json`,
-                await api(
-                    `/api/client-profile?client=${client}${groupId ? "&group_id=" + encodeURIComponent(groupId) : ""}`,
-                ),
-            );
-            notify("Client profile downloaded.");
-        } catch (e) {
-            notify((e as Error).message, true);
-        }
-    };
     const filteredMembers = state.members.filter((m) =>
         `${m.name} ${m.email} ${roleName(m.role)} ${groupById(m.group_id)?.name}`
             .toLowerCase()
@@ -1802,178 +1790,11 @@ function App() {
             );
         if (currentPage === "onboarding")
             return (
-                <>
-                    <PageHead
-                        title="Developer onboarding"
-                        description="Set up Claude Desktop, Claude Code and Codex with your organization’s published access."
-                    />
-                    <div className="settings">
-                        <Notice>
-                            The client profile contains connection settings, not
-                            credentials. Every developer signs in with their own
-                            Microsoft Entra account.
-                        </Notice>
-                        <div className="onboardingstep">
-                            <span className="stepnumber">1</span>
-                            <div>
-                                <h2>Grant access</h2>
-                                <p>
-                                    Add the developer’s Entra object ID, assign
-                                    their primary group, and publish the
-                                    reviewed gateway policy.
-                                </p>
-                                {manager && (
-                                    <button
-                                        className="button"
-                                        onClick={() => nav("members")}
-                                    >
-                                        Manage members
-                                        <ArrowRight />
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                        <div className="onboardingstep">
-                            <span className="stepnumber">2</span>
-                            <div>
-                                <h2>Export the client profile</h2>
-                                <p>
-                                    The profile lists only the models allowed
-                                    for the selected group. The gateway still
-                                    enforces access, even if a user edits their
-                                    local settings.
-                                </p>
-                                <div className="actions">
-                                    {admin
-                                        ? state.groups.flatMap((g) =>
-                                              (
-                                                  state.client_types || [
-                                                      "claude",
-                                                  ]
-                                              ).map((client) => (
-                                                  <button
-                                                      key={`${g.id}-${client}`}
-                                                      className="button"
-                                                      onClick={() =>
-                                                          downloadProfile(
-                                                              g.id,
-                                                              client,
-                                                          )
-                                                      }
-                                                  >
-                                                      <DownloadSimple />
-                                                      {g.name} ·{" "}
-                                                      {client === "codex"
-                                                          ? "Codex"
-                                                          : "Claude"}
-                                                  </button>
-                                              )),
-                                          )
-                                        : (
-                                              state.client_types || ["claude"]
-                                          ).map((client) => (
-                                              <button
-                                                  key={client}
-                                                  className="button"
-                                                  onClick={() =>
-                                                      downloadProfile(
-                                                          undefined,
-                                                          client,
-                                                      )
-                                                  }
-                                              >
-                                                  <DownloadSimple />
-                                                  My{" "}
-                                                  {client === "codex"
-                                                      ? "Codex"
-                                                      : "Claude"}{" "}
-                                                  profile
-                                              </button>
-                                          ))}
-                                </div>
-                            </div>
-                        </div>
-                        {admin && state.budget_configured && (
-                            <div className="onboardingstep">
-                                <span className="stepnumber">✓</span>
-                                <div>
-                                    <h2>Complete model verification</h2>
-                                    <p>
-                                        After reviewing enforcement prices in
-                                        Budgets &amp; limits, give this model
-                                        policy to your deployment administrator
-                                        to verify the pinned deployments before
-                                        publishing access.
-                                    </p>
-                                    <button
-                                        className="button"
-                                        onClick={async () => {
-                                            try {
-                                                download(
-                                                    "model-policy.json",
-                                                    await api(
-                                                        "/api/model-policy",
-                                                    ),
-                                                );
-                                            } catch (e) {
-                                                notify(
-                                                    (e as Error).message,
-                                                    true,
-                                                );
-                                            }
-                                        }}
-                                    >
-                                        <DownloadSimple />
-                                        Download model policy
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                        <div className="onboardingstep">
-                            <span className="stepnumber">3</span>
-                            <div>
-                                <h2>Prepare the Mac installer</h2>
-                                <p>
-                                    Use the repository’s bundle builder with
-                                    each exported provider profile. Send the
-                                    resulting ZIP through your organization’s
-                                    software distribution channel.
-                                </p>
-                                <pre className="codewell">
-                                    {
-                                        "uv run python scripts/build_client_bundle.py \\\n  --profile /path/to/claude-client.json \\\n  --profile /path/to/codex-client.json \\\n  --output dist/claude-codex-macos.zip"
-                                    }
-                                </pre>
-                                <a
-                                    href="https://github.com/msftse-org/claude-codex-foundry/blob/main/docs/macos.md"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                >
-                                    Open the installation guide{" "}
-                                    <ArrowSquareOut />
-                                </a>
-                            </div>
-                        </div>
-                        <div className="onboardingstep">
-                            <span className="stepnumber">4</span>
-                            <div>
-                                <h2>Sign in and start working</h2>
-                                <p>
-                                    The developer opens Install.command, signs
-                                    in to Microsoft, and restarts Claude. The
-                                    installer preserves the previous
-                                    configuration and provides a restore
-                                    command.
-                                </p>
-                                <p className="footnote">
-                                    This preview does not push device policies
-                                    or track installation status. Use your MDM
-                                    platform for managed rollout.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </>
+                <Onboarding
+                    state={state}
+                    onMembers={() => nav("members")}
+                    notify={notify}
+                />
             );
         return (
             <PageHead

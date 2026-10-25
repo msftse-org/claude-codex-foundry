@@ -61,3 +61,21 @@ def test_reviewed_manifest_requires_the_actual_pinned_version_and_current_prices
             reviewed_deployments({"claude": org}, [price], [bad])
     with pytest.raises(ValueError):
         reviewed_deployments({"claude": org}, [price, price], [deployment])
+
+
+def test_route_readiness_waits_for_the_authentication_guard(monkeypatch):
+    from urllib.error import HTTPError
+
+    from claude_foundry import unified_deployment
+
+    outcomes = [
+        HTTPError("https://example.com", 404, "Not found", {}, None),
+        HTTPError("https://example.com", 401, "Unauthorized", {}, None),
+    ]
+
+    def response(*args, **kwargs):
+        raise outcomes.pop(0)
+
+    monkeypatch.setattr(unified_deployment, "urlopen", response)
+    unified_deployment.wait_for_route("https://example.com", attempts=2, delay=0)
+    assert not outcomes

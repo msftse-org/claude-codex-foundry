@@ -1,9 +1,12 @@
 """Authorization, policy compilation, and publication failure boundaries."""
 
 import copy
+import io
 import json
 import time
 import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from claude_foundry.client_bundle import build_template
 from claude_foundry.portal.app import create_app
 from claude_foundry.portal.auth import Authenticator
 from claude_foundry.portal.domain import Change, apply_change, import_members, seed
@@ -666,6 +670,99 @@ def test_profile_is_scoped_and_has_valid_defaults(app, org, key, monkeypatch):
         data["groups"][0].update(model_ids=[], default_model="")
         app.state.store.save(data, etag)
         assert client.get("/api/client-profile", headers=headers(org, key)).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "role", ["owner", "admin", "group_admin", "developer", "auditor", "billing"]
+)
+def test_setup_bundle_has_same_profile_and_scope_as_export(
+    app, org, key, monkeypatch, tmp_path, role
+):
+    template = tmp_path / "client-bundle.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    data, etag = app.state.store.read()
+    member = add_member(data, role)
+    app.state.store.save(data, etag)
+    auth = headers(org, key, member["id"])
+    with TestClient(app) as client:
+        assert client.get("/api/client-bundle").status_code == 401
+        response = client.get("/api/client-bundle", headers=auth)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["cache-control"] == "no-store"
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            profile = json.loads(archive.read("claude-foundry/client.json"))
+            assert profile == client.get("/api/client-profile", headers=auth).json()
+            assert profile["gateway_url"] in archive.read("claude-foundry/README.md").decode()
+            assert " --governed" in archive.read("claude-foundry/README.md").decode()
+            assert archive.getinfo("claude-foundry/Install.command").external_attr >> 16 & 0o111
+        assert client.get(
+            "/api/client-bundle", params={"group_id": member["group_id"]}, headers=auth
+        ).status_code == (200 if role in {"owner", "admin", "group_admin"} else 403)
+        data, etag = app.state.store.read()
+        member = next(m for m in data["members"] if m["id"] == member["id"])
+        member["status"] = "suspended"
+        app.state.store.save(data, etag)
+        assert client.get("/api/client-bundle", headers=auth).status_code == 403
+
+
+def test_setup_bundle_reports_missing_template_after_authorization(
+    app, org, key, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(tmp_path / "missing.zip"))
+    with TestClient(app) as client:
+        assert client.get("/api/client-bundle").status_code == 401
+        assert client.get("/api/client-bundle", headers=headers(org, key)).status_code == 503
+
+
+@pytest.mark.parametrize("route", ["/api/client-profile", "/api/client-bundle"])
+def test_unconfigured_client_selector_never_downloads_the_wrong_application(app, org, key, route):
+    with TestClient(app) as client:
+        assert (
+            client.get(route, params={"client": "codex"}, headers=headers(org, key)).status_code
+            == 409
+        )
+        assert (
+            client.get(route, params={"client": "unknown"}, headers=headers(org, key)).status_code
+            == 422
+        )
+
+
+def test_budget_setup_bundle_uses_published_gateway_and_access(
+    org, state, key, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    template = tmp_path / "client-bundle.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    monkeypatch.setenv("PORTAL_CLIENT_ID", CLIENT)
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda *args: SimpleNamespace(key=key.public_key()),
+    )
+    published = copy.deepcopy(state)
+    store = LocalStore(tmp_path / "state.json", state)
+    budget = (
+        SimpleNamespace(active=lambda: "published"),
+        SimpleNamespace(get=lambda _: copy.deepcopy(published)),
+    )
+    app = create_app(org, store=store, credential=object(), local=False, budget=budget)
+    gateway = "https://test-apim.azure-api.net/claude-budget-preview"
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        assert client.get("/api/client-bundle", headers=auth).status_code == 409
+        monkeypatch.setenv("BUDGET_CLAUDE_GATEWAY_URL", gateway)
+        response = client.get("/api/client-bundle", headers=auth)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert json.loads(archive.read("claude-foundry/client.json"))["gateway_url"] == gateway
+            assert gateway in archive.read("claude-foundry/README.md").decode()
+        published["groups"][0].update(model_ids=[], default_model="")
+        assert client.get("/api/client-bundle", headers=auth).status_code == 409
 
 
 def test_publication_timeout_restores_every_attempt_even_when_first_restore_fails(org, state):
@@ -1510,3 +1607,57 @@ def test_shared_reporting_uses_both_fixed_api_scopes(unified_app, org, key, monk
             "claude-governed",
             "codex-governed",
         }
+
+
+def test_shared_setup_zips_match_published_provider_profiles(
+    unified_app, org, key, monkeypatch, tmp_path
+):
+    import io
+    import zipfile
+    from pathlib import Path
+
+    from claude_foundry.client_bundle import build_template
+
+    app, ledger, snapshots, admin, developer, outsider = unified_app
+    template = tmp_path / "template.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    with TestClient(app) as client:
+        auth = headers(org, key, developer["id"])
+        for provider in ["claude", "codex"]:
+            profile = client.get(
+                "/api/client-profile", params={"client": provider}, headers=auth
+            ).json()
+            response = client.get("/api/client-bundle", params={"client": provider}, headers=auth)
+            assert response.status_code == 200, (
+                response.text[:100] if response.status_code != 200 else ""
+            )
+            with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+                assert json.loads(archive.read("claude-foundry/client.json")) == profile
+                readme = archive.read("claude-foundry/README.md").decode()
+                assert profile["gateway_url"] in readme
+                assert "claude-foundry/AGENTS.md" in archive.namelist()
+                assert "claude-foundry/Install.command" in archive.namelist()
+                if provider == "codex":
+                    assert profile["client_type"] == "codex"
+                    assert profile["default_model"] in {m["name"] for m in profile["models"]}
+                    assert profile["gateway_url"].endswith("/codex-governed/v1")
+                    assert "Codex Desktop / CLI" in readme
+                else:
+                    assert "--budgeted" in readme and "--governed" not in readme
+            denied = client.get(
+                "/api/client-bundle",
+                params={"client": provider, "group_id": outsider["group_id"]},
+                headers=auth,
+            )
+            assert (
+                denied.status_code == 403
+                and denied.headers.get("content-type") == "application/json"
+            )
+        assert client.get("/api/client-bundle?client=codex").status_code == 401
+        assert (
+            client.get(
+                "/api/client-bundle?client=codex", headers=headers(org, key, outsider["id"])
+            ).status_code
+            == 409
+        )

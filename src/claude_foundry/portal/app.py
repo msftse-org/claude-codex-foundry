@@ -12,10 +12,11 @@ from uuid import UUID
 
 from azure.identity import AzureCliCredential, ManagedIdentityCredential
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
+from ..client_bundle import build_bundle, build_template
 from ..config import export_client, load_org
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator
@@ -24,7 +25,7 @@ from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
 from .budget_policy import Snapshots, draft_impact, group_publication, portal_seed, snapshot
 from .budget_proxy import GatewayIdentity
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
-from .costs import CostQuery, cost_analysis
+from .costs import CostQuery, cost_analysis, planning_prices
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
 from .policy_cache import MAX_SHARED_BYTES
@@ -272,6 +273,8 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             tenant_id=config["tenant_id"],
             policy_hash=policy_impact(config, data)["policy_hash"],
         )
+        if budget is not None:
+            data["prices"] = planning_prices(data)
         if member["role"] == "developer":
             data.update(
                 members=[member],
@@ -441,7 +444,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             body = body.model_copy(update={"group_ids": [member["group_id"]]})
         else:
             administrative(member)
-        prices = data["prices"]
+        prices = planning_prices(data) if budget is not None else data["prices"]
         key = body.model_dump_json() + json.dumps(prices, sort_keys=True)
         cached = app.state.cost_cache.get(key)
         if cached and (datetime.now(UTC) - cached[0]).total_seconds() < 60:
@@ -461,12 +464,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         app.state.cost_cache[key] = (datetime.now(UTC), result)
         return result
 
-    @app.get("/api/client-profile")
-    def client_profile(
-        group_id: str | None = None,
-        client: Literal["claude", "codex"] = "claude",
-        access=actor_dependency,
-    ):
+    def client_config(group_id, access, client="claude"):
         data, _, member = access
         profile_actor = member
         profile_config = config
@@ -539,13 +537,46 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         desktop_client_id = os.getenv("PORTAL_DESKTOP_CLIENT_ID")
         if desktop_client_id:
             desktop_client_id = str(UUID(desktop_client_id))
+        return export_client(
+            {**profile_config, "models": models},
+            auth_mode="msal" if desktop_client_id else "azure-cli",
+            client_id=desktop_client_id,
+        )
+
+    @app.get("/api/client-profile")
+    def client_profile(
+        group_id: str | None = None,
+        client: Literal["claude", "codex"] = "claude",
+        access=actor_dependency,
+    ):
         return JSONResponse(
-            export_client(
-                {**profile_config, "models": models},
-                auth_mode="msal" if desktop_client_id else "azure-cli",
-                client_id=desktop_client_id,
-            ),
+            client_config(group_id, access, client),
             headers={"Content-Disposition": f'attachment; filename="{client}-client.json"'},
+        )
+
+    @app.get("/api/client-bundle")
+    def client_bundle(
+        group_id: str | None = None,
+        client: Literal["claude", "codex"] = "claude",
+        access=actor_dependency,
+    ):
+        profile = client_config(group_id, access, client)
+        template_path = Path(os.getenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", "client-bundle.zip"))
+        try:
+            template = (
+                build_template(Path(__file__).resolve().parents[3])
+                if local and not template_path.exists()
+                else template_path.read_bytes()
+            )
+        except OSError:
+            raise HTTPException(
+                503,
+                "The setup bundle is unavailable. Ask your administrator to redeploy the portal package.",
+            ) from None
+        return Response(
+            build_bundle(profile, template, governed=budget is None, budgeted=budget is not None),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="claude-foundry-macos.zip"'},
         )
 
     @app.get("/api/model-policy")
