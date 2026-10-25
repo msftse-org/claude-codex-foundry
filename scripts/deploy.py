@@ -502,7 +502,7 @@ class Deployment:
             from claude_foundry.unified_deployment import prepare
 
             primary, unified_settings, runtime_models = prepare(self)
-            write_json(config, primary)
+            write_json(config, next(iter(unified_settings["providerConfigs"].values())))
             # Verify the live app before ARM can replace app settings. An existing
             # ledger is never replaced by an empty deterministic-name account.
             app_scope = f"/subscriptions/{self.s['subscription_id']}/resourceGroups/{self.n['portal_resource_group']}/providers/Microsoft.Web/sites/{self.n['portal']}"

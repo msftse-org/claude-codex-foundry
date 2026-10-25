@@ -83,12 +83,13 @@ def reviewed_deployments(providers, prices, deployed):
             raise ValueError(
                 "Reviewed model policy must match unique qualified, succeeded, pinned deployments"
             )
+        upstream_name = model.get("model", {}).get("name", price.model)
         result[price.model] = {
             "provider": provider,
             "version": price.deployment_version,
             "max_input_tokens": price.max_input_tokens,
             "max_output_tokens": price.max_output_tokens,
-            "supports_reasoning": not price.model.startswith("gpt-4")
-            and price.model != "gpt-chat-latest",
+            "supports_reasoning": not upstream_name.startswith("gpt-4")
+            and upstream_name != "gpt-chat-latest",
         }
     return result

@@ -23,7 +23,17 @@ export function Onboarding({
     const admin = ["owner", "admin"].includes(state.viewer.role);
     const manager = admin || state.viewer.role === "group_admin";
     const clientTypes = state.client_types || ["claude"];
-    const [clientType, setClientType] = useState(clientTypes[0]);
+    const preferredClient = (id: string) => {
+        const group = state.groups.find((g) => g.id === id);
+        const modelId = group?.default_model || group?.model_ids?.[0];
+        const model = state.models?.find((m) => m.name === modelId);
+        const preferred =
+            model?.anthropicFamilyTier === "openai" ? "codex" : "claude";
+        return clientTypes.includes(preferred) ? preferred : clientTypes[0];
+    };
+    const [clientType, setClientType] = useState(
+        preferredClient(state.viewer.group_id),
+    );
     const [groupId, setGroupId] = useState(state.viewer.group_id);
     const scope = admin ? groupId : "";
     const query = `?client=${clientType}${scope ? `&group_id=${encodeURIComponent(scope)}` : ""}`;
@@ -149,9 +159,12 @@ export function Onboarding({
                                 Group
                                 <select
                                     value={groupId}
-                                    onChange={(event) =>
-                                        setGroupId(event.target.value)
-                                    }
+                                    onChange={(event) => {
+                                        setGroupId(event.target.value);
+                                        setClientType(
+                                            preferredClient(event.target.value),
+                                        );
+                                    }}
                                     disabled={busy}
                                 >
                                     {state.groups.map((group) => (

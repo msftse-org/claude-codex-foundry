@@ -50,6 +50,23 @@ def test_reviewed_manifest_requires_the_actual_pinned_version_and_current_prices
     }
     result = reviewed_deployments({"claude": org}, [price], [deployment])
     assert result[name]["version"] == "1" and result[name]["max_input_tokens"] == 1000
+    alias = "company-fast"
+    alias_price = {**price, "model": alias, "provider": "openai"}
+    aliased = {
+        "name": alias,
+        "properties": {
+            "provisioningState": "Succeeded",
+            "model": {"name": "gpt-4.1", "version": "1", "format": "OpenAI"},
+            "versionUpgradeOption": "NoAutoUpgrade",
+        },
+    }
+    assert (
+        reviewed_deployments({"codex": {"models": [{"name": alias}]}}, [alias_price], [aliased])[
+            alias
+        ]["supports_reasoning"]
+        is False
+    )
+
     for change in [
         {"versionUpgradeOption": "OnceNewDefaultVersionAvailable"},
         {"model": {"version": "2", "format": "Anthropic"}},

@@ -53,12 +53,12 @@ The script creates billable Azure resources and makes small billable verificatio
 
 1. Selects the subscription and registers the required resource providers.
 2. Creates or reuses the developer group and adds you to it so you can verify access.
-3. Deploys Foundry, API Management, Application Insights and Log Analytics, granting the group inference access.
+3. Deploys Foundry, API Management, Application Insights and Log Analytics. Unified mode grants qualification inference to the deploying operator; explicit baseline mode grants it to the developer group.
 4. Deploys Claude models, publishes **Claude via Azure Foundry** and connects observability.
 5. Creates **Codex via Azure Foundry**, deploys and qualifies OpenAI models, and publishes only those that pass.
 6. Registers the developer sign-in application (public client, no secret), requests tenant-wide admin consent and exports client profiles. If you cannot grant consent, the script finishes and prints the command for an Entra administrator; developers can sign in once consent is granted.
 7. Builds one installer ZIP for Claude and Codex in `dist/`.
-8. Deploys the administration portal and its application package, then waits for it to report healthy.
+8. Deploys the administration portal, shared runtime/private ledger and governed routes in unified mode, then packages the application.
 9. Reports the model-verification and owner-publication steps needed to activate shared inference. Explicit baseline mode runs its final gateway verifier unless `--skip-verify` is set. Codex qualification makes billable requests in either mode.
 
 If a step fails, fix the reported problem and run the same command again. Existing resources, deployments, the group and the app registrations are reused; IDs and the deployment target are kept in `.local/deploy-state.json`. Use a separate checkout for each customer: changing the tenant, subscription or resource names while retaining this state is rejected before Azure changes. To change models later, edit `.local/deploy.json`, rerun the command and redistribute the new ZIP.

@@ -479,6 +479,7 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     job.deploy(verify=True)
     params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
     assert set(params["providerConfigs"]["value"]) == {"claude", "codex"}
+    assert params["organization"]["value"]["gateway_url"].endswith("/claude-governed")
     assert params["budgetStorageAccount"]["value"] == job.state["budget_storage"]
     assert params["providerConfigs"]["value"]["codex"]["gateway_url"].endswith("/codex-governed/v1")
     assert [(c[1], c[2]) for c in cloud if c[0] == "route"] == [
