@@ -44,3 +44,49 @@ def test_cli_passes_governance_mode_explicitly(org, monkeypatch):
     monkeypatch.setattr("sys.argv", ["claude-foundry", "verify", "--governed"])
     assert main() == 0
     check.assert_called_once_with(org, False, governed=True)
+
+
+def test_failures_before_delivery_are_retried(monkeypatch):
+    import socket
+    from urllib.error import URLError
+
+    from claude_foundry import verify as module
+
+    attempts = []
+
+    def opener(req, timeout):
+        attempts.append(timeout)
+        if len(attempts) == 1:
+            raise URLError(ConnectionRefusedError(61, "Connection refused"))
+        if len(attempts) == 2:
+            raise URLError(socket.gaierror(8, "nodename nor servname provided"))
+        return "response"
+
+    monkeypatch.setattr(module, "urlopen", opener)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    assert module.open_url("request", 120) == "response"
+    assert attempts == [120, 120, 120]
+
+
+@pytest.mark.parametrize("kind", ["timeout", "http", "refused-every-time"])
+def test_ambiguous_or_persistent_failures_are_not_hidden(monkeypatch, kind):
+    from urllib.error import HTTPError, URLError
+
+    from claude_foundry import verify as module
+
+    errors = {
+        "timeout": URLError(TimeoutError("timed out")),
+        "http": HTTPError("https://gateway", 502, "Bad Gateway", {}, None),
+        "refused-every-time": URLError(ConnectionRefusedError(61, "Connection refused")),
+    }
+    attempts = []
+
+    def opener(req, timeout):
+        attempts.append(1)
+        raise errors[kind]
+
+    monkeypatch.setattr(module, "urlopen", opener)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: None)
+    with pytest.raises(URLError):
+        module.open_url("request", 120)
+    assert len(attempts) == (3 if kind == "refused-every-time" else 1)

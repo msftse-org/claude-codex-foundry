@@ -36,6 +36,7 @@ For external contributions, fork the repository and push your branch to your for
 | React interface and frontend tests | `portal/web/src/` |
 | Foundation and portal infrastructure | `infra/` |
 | Mac bootstrap, packaging, Entra setup, live verification | `scripts/` |
+| One-command deployment and developer access | `scripts/deploy.py`, `scripts/onboard_users.py`, `examples/deploy.json` |
 | Offline Python tests and fixtures | `tests/` |
 | Customer guides and screenshots | `docs/` |
 

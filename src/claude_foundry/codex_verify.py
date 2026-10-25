@@ -3,9 +3,10 @@
 import json
 import time
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from .auth import credential
+from .verify import open_url
 
 
 def response(c, payload, token=None, timeout=180):
@@ -18,7 +19,7 @@ def response(c, payload, token=None, timeout=180):
         },
     )
     try:
-        with urlopen(req, timeout=timeout) as r:
+        with open_url(req, timeout) as r:
             if payload.get("stream"):
                 events = []
                 for line in r:

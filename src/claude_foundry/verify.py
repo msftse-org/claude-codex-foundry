@@ -1,10 +1,29 @@
 """Small live checks against the customer's configured gateway."""
 
 import json
-from urllib.error import HTTPError
+import socket
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .auth import credential
+
+
+def open_url(req, timeout, attempts=3):
+    """Open a request, retrying only failures that occur before it is delivered."""
+    for attempt in range(attempts):
+        try:
+            return urlopen(req, timeout=timeout)
+        except HTTPError:
+            raise
+        except URLError as error:
+            # A refused connection or failed DNS lookup sent nothing; timeouts are ambiguous.
+            if (
+                not isinstance(error.reason, (ConnectionRefusedError, socket.gaierror))
+                or attempt == attempts - 1
+            ):
+                raise
+            time.sleep(2**attempt)
 
 
 def request(c, path, token=None, data=None):
@@ -15,7 +34,7 @@ def request(c, path, token=None, data=None):
         c["gateway_url"] + path, data=json.dumps(data).encode() if data else None, headers=headers
     )
     try:
-        with urlopen(req, timeout=120) as response:
+        with open_url(req, 120) as response:
             return response.status, dict(response.headers), response.read().decode()
     except HTTPError as error:
         return error.code, dict(error.headers), error.read().decode()
