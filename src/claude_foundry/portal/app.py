@@ -33,6 +33,16 @@ from .service import ManagedAzure, publish, telemetry
 from .store import BlobStore, Conflict, LocalStore
 
 
+def bundle_template_path():
+    # Azure's worker may run outside wwwroot. Resolve beside the deployed package.
+    return Path(
+        os.getenv(
+            "PORTAL_CLIENT_BUNDLE_TEMPLATE",
+            str(Path(__file__).resolve().parents[2] / "client-bundle.zip"),
+        )
+    )
+
+
 def create_app(config=None, store=None, credential=None, local=None, budget=None):
     config = config or (
         json.loads(os.environ["PORTAL_ORGANIZATION_JSON"])
@@ -562,7 +572,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         access=actor_dependency,
     ):
         profile = client_config(group_id, access, client)
-        template_path = Path(os.getenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", "client-bundle.zip"))
+        template_path = bundle_template_path()
         try:
             template = (
                 build_template(Path(__file__).resolve().parents[3])
@@ -759,6 +769,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             or bool(providers)
             or bool(os.getenv("BUDGET_CLAUDE_GATEWAY_URL")),
             "client_types": list(providers) or [config.get("client_type", "claude")],
+            "bundle_ready": local or bundle_template_path().is_file(),
         }
 
     static = Path(os.getenv("PORTAL_STATIC_DIR", "portal/web/dist")).resolve()
