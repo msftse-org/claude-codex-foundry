@@ -43,6 +43,14 @@ def bundle_template_path():
     )
 
 
+def bundle_template_ready():
+    try:
+        with bundle_template_path().open("rb") as source:
+            return source.read(4) == b"PK\x03\x04"
+    except OSError:
+        return False
+
+
 def create_app(config=None, store=None, credential=None, local=None, budget=None):
     config = config or (
         json.loads(os.environ["PORTAL_ORGANIZATION_JSON"])
@@ -579,7 +587,10 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 if local and not template_path.exists()
                 else template_path.read_bytes()
             )
-        except OSError:
+        except OSError as error:
+            logging.getLogger(__name__).warning(
+                "Client setup template unavailable (%s).", type(error).__name__
+            )
             raise HTTPException(
                 503,
                 "The setup bundle is unavailable. Ask your administrator to redeploy the portal package.",
@@ -769,7 +780,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             or bool(providers)
             or bool(os.getenv("BUDGET_CLAUDE_GATEWAY_URL")),
             "client_types": list(providers) or [config.get("client_type", "claude")],
-            "bundle_ready": local or bundle_template_path().is_file(),
+            "bundle_ready": local or bundle_template_ready(),
         }
 
     static = Path(os.getenv("PORTAL_STATIC_DIR", "portal/web/dist")).resolve()

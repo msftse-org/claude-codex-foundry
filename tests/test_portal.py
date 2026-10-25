@@ -742,6 +742,17 @@ def test_deployed_bundle_is_found_outside_the_function_worker_directory(
         assert client.get("/api/health").json()["bundle_ready"] is False
 
 
+def test_bundle_readiness_detects_an_unreadable_template(app, monkeypatch):
+    def denied(*args, **kwargs):
+        raise PermissionError("different runtime user")
+
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.bundle_template_path", lambda: SimpleNamespace(open=denied)
+    )
+    with TestClient(app) as client:
+        assert client.get("/api/health").json()["bundle_ready"] is False
+
+
 @pytest.mark.parametrize("route", ["/api/client-profile", "/api/client-bundle"])
 def test_unconfigured_client_selector_never_downloads_the_wrong_application(app, org, key, route):
     with TestClient(app) as client:

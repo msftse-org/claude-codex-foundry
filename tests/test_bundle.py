@@ -153,3 +153,22 @@ def test_shared_runtime_bundle_has_matching_verification_instructions(org):
         readme = archive.read("claude-foundry/README.md").decode()
         assert "--budgeted" in readme and "--governed" not in readme
         assert "codex/client.json" in readme
+
+
+def test_portal_template_is_readable_by_a_separate_runtime_user(tmp_path, monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "portal_builder", root / "scripts/build_portal.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module.subprocess, "check_output", lambda *args, **kwargs: b"locked requirements"
+    )
+    output = module.build(tmp_path / "portal.zip", root)
+    with zipfile.ZipFile(output) as package:
+        template = package.getinfo("client-bundle.zip")
+        assert template.external_attr >> 16 & 0o444 == 0o444
+        with zipfile.ZipFile(io.BytesIO(package.read(template))) as archive:
+            assert "claude-foundry/Install.command" in archive.namelist()

@@ -19,7 +19,11 @@ def build(output, root):
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         bundle.writestr("requirements.txt", requirements)
-        bundle.writestr("client-bundle.zip", build_template(root))
+        template = zipfile.ZipInfo("client-bundle.zip")
+        template.create_system = 3
+        template.compress_type = zipfile.ZIP_DEFLATED
+        template.external_attr = 0o100644 << 16
+        bundle.writestr(template, build_template(root))
         for filename in ["function_app.py", "host.json"]:
             bundle.write(root / "portal/functions" / filename, filename)
         for path in sorted((root / "src/claude_foundry").rglob("*.py")):
