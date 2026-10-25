@@ -6,6 +6,8 @@ This guide takes an Azure administrator from an empty resource group (or existin
 
 ## Before you begin
 
+For an assistant-led fresh customer installation, start with the [LLM deployment and onboarding runbook](llm-onboarding.md). It collects customer inputs and covers infrastructure, user import, governance, verification and handover using the commands below.
+
 For the Codex Desktop/CLI feature preview, deploy the shared foundation using this guide, then follow [Codex on Azure](codex.md) to create a separate `codex-foundry` API and OpenAI model profile. Codex-only onboarding skips Anthropic Marketplace attestation/model deployment. The portal currently publishes Claude policies only.
 
 Install Git, [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli), and [uv](https://docs.astral.sh/uv/). Clone the repository and run every command below from its root:

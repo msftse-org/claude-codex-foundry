@@ -4,6 +4,8 @@
 
 This path deploys a complete, standard installation from one settings file, then grants developers access by email. It runs the same documented commands as the [administrator guide](administrator.md) in order and prints each one. Use the detailed guides when you need to change a single step.
 
+For a customer assistant to carry out the process, use the [LLM deployment and onboarding runbook](llm-onboarding.md), including its copyable prompt, required inputs, CSV import and handover checklist.
+
 ## What you need
 
 | Who | Permission |
