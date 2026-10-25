@@ -1,7 +1,7 @@
 # Client configuration refresh — experimental components
 
 These are opt-in server/client increments of automatic configuration refresh,
-not yet a working end-to-end installer. The API is disabled by default. Existing
+not yet qualified for rollout. The API and enrollment page are disabled by default. Existing
 JSON installations and inference authentication are unchanged unless a user
 explicitly enrolls or migrates.
 
@@ -35,6 +35,8 @@ or downloaded refresh response:
 | `PORTAL_CONFIGURATION_CLIENT_IDS_JSON` | JSON array of 1–10 distinct authorized public-client UUIDs |
 | `BUDGET_ORGANIZATION_ID` | Stable organization UUID, already used by the shared runtime |
 | `PORTAL_CONFIGURATION_DEPLOYMENTS_JSON` | Reviewed deployment map matching the budget runtime's bounds |
+| `PORTAL_CLIENT_ENROLLMENT_ENABLED` | Exactly `1` enables the experimental link/ZIP onboarding page; `0` by default |
+| `PORTAL_ENROLLMENT_ORIGIN` | Reviewed canonical HTTPS portal origin, without path, query or trailing slash |
 
 The deployment map has this shape, with no additional fields:
 
@@ -194,9 +196,8 @@ path instead where endpoint policy prohibits it.
 
 ## Explicit macOS pilot enrollment
 
-The CLI now connects the reader, isolated credentials and recoverable settings
-updates. This is a manual pilot entrypoint for a reviewed descriptor, not a
-stable-link bootstrap installer:
+The CLI connects the reader, isolated credentials and recoverable settings
+updates. A reviewed descriptor can be used directly:
 
 ```bash
 claude-foundry enroll --descriptor /path/to/reviewed-organization.json
@@ -263,7 +264,34 @@ health guarantee. Stale data cannot restore server-revoked access or bypass
 current budget admission. Routine status output contains no account identifiers
 or tokens. Never capture `enrolled-token` output in support logs.
 
-Qualification still required: stable-link packaging, background scheduling,
-Entra consent/Conditional Access, real model-publish/revocation/budget tests,
-all four native client surfaces and recovery/uninstall. Offline temporary-home
-tests do not establish any of those live results.
+## Opt-in organization-link onboarding
+
+With both flags enabled and the credential client explicitly allowed, the portal's
+`/?page=onboarding` link becomes the stable entrypoint. It uses the existing browser
+Entra sign-in. A developer sees only applications with current published access,
+not a group selector. The downloaded ZIP contains reviewed installer code,
+`enrollment.json` trust anchors, and `installation.json` application choices; it
+contains no personal grants or credentials. Group changes and new models come
+from the authenticated own-user API after installation.
+
+`GET /api/client-enrollment` and `GET /api/client-enrollment-bundle?client=claude`
+(or `codex` / `both`) require portal authentication and current published access.
+They cannot target another user or override group membership. Their responses
+are private/no-store. The deployment supplies the pinned origin; incoming Host
+headers and forwarded headers cannot select token destinations.
+
+Users review the connection details in the ZIP, install their approved applications,
+and run `bash Install.command`. The installer explicitly signs in, verifies
+access, and prints `SETUP COMPLETE` only after the selected apps are configured.
+A missing selected Codex app, failed sign-in, or settings conflict is not silently
+skipped. Matching existing installations need explicit `--migrate-existing`.
+Automatic refresh is enabled separately with `claude-foundry enable-refresh`,
+or explicitly with `bash Install.command --enable-refresh`. No background job is
+installed merely by downloading a ZIP. Save active work and fully quit/reopen the
+apps after setup; live picker refresh is not promised.
+
+This packaging does not close the authentication release gate above. Do not
+enable it for users until encrypted credentials, Entra consent/Conditional Access,
+actual macOS scheduling, model publication/revocation/budget admission, all four
+native client surfaces and recovery/uninstall have been qualified. Offline
+temporary-home and browser-component tests do not establish those live results.

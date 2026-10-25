@@ -1762,6 +1762,158 @@ def configuration_headers(org, key, oid=OWNER, **overrides):
     }
 
 
+@pytest.fixture
+def enrollment_app(configuration_app, org, monkeypatch, tmp_path):
+    from claude_foundry.enrollment_auth import AZURE_CLI_CLIENT_ID
+
+    application, ledger, snapshots, *members = configuration_app
+    for name, value in {
+        "PORTAL_CONFIGURATION_CLIENT_IDS_JSON": json.dumps([CONFIG_CLIENT, AZURE_CLI_CLIENT_ID]),
+        "PORTAL_CLIENT_ENROLLMENT_ENABLED": "1",
+        "PORTAL_ENROLLMENT_ORIGIN": "https://portal.example.com",
+    }.items():
+        monkeypatch.setenv(name, value)
+    template = tmp_path / "template.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    application = create_app(
+        org, application.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    return application, ledger, snapshots, *members
+
+
+def test_enrollment_is_opt_in_and_requires_browser_identity(configuration_app, org, key):
+    app, *_ = configuration_app
+    with TestClient(app) as client:
+        assert not client.get("/api/state", headers=headers(org, key)).json()[
+            "client_enrollment_enabled"
+        ]
+        assert client.get("/api/client-enrollment", headers=headers(org, key)).status_code == 404
+        assert client.get("/api/client-enrollment").status_code == 401
+        assert (
+            client.get(
+                "/api/client-enrollment", headers=configuration_headers(org, key)
+            ).status_code
+            == 401
+        )
+
+
+def test_enrollment_uses_own_published_grants_and_fixed_origin(enrollment_app, org, key):
+    app, ledger, snapshots, admin, developer, outsider = enrollment_app
+    before, draft = copy.deepcopy(ledger.rows.rows), app.state.store.read()
+    with TestClient(app) as client:
+        auth = {**headers(org, key, developer["id"]), "Host": "hostile.example.com"}
+        response = client.get("/api/client-enrollment", headers=auth)
+        assert response.status_code == 200, response.text
+        value = response.json()
+        assert value["clients"] == ["claude", "codex"]
+        assert value["onboarding_url"] == "https://portal.example.com/?page=onboarding"
+        assert (
+            value["descriptor"]["configuration_url"] == "https://portal.example.com" + CONFIG_PATH
+        )
+        assert value["descriptor"]["organization_id"] == CONFIG_ORGANIZATION
+        assert set(value["descriptor"]) == {
+            "schema_version",
+            "organization_id",
+            "tenant_id",
+            "configuration_url",
+            "configuration_resource_id",
+            "routes",
+        }
+        assert "hostile" not in response.text and developer["id"] not in response.text
+        assert "models" not in response.text and "budget" not in response.text
+        assert response.headers["cache-control"] == "no-store"
+        denied = client.get("/api/client-enrollment?group_id=" + outsider["group_id"], headers=auth)
+        assert denied.status_code == 400
+        # Outsider has published Claude access only; no selector can supply Codex grants.
+        own = client.get("/api/client-enrollment", headers=headers(org, key, outsider["id"]))
+        assert own.status_code == 200 and own.json()["clients"] == ["claude"]
+        for selection in ["codex", "both"]:
+            assert (
+                client.get(
+                    "/api/client-enrollment-bundle?client=" + selection,
+                    headers=headers(org, key, outsider["id"]),
+                ).status_code
+                == 409
+            )
+        assert (
+            client.get("/api/client-enrollment-bundle?client=both", headers=auth).status_code == 200
+        )
+    assert ledger.rows.rows == before and app.state.store.read() == draft
+
+
+def test_enrollment_bundle_is_not_a_user_specific_authorization_artifact(enrollment_app, org, key):
+    app, _, _, _, developer, _ = enrollment_app
+    with TestClient(app) as client:
+        descriptors = []
+        for oid in [OWNER, developer["id"]]:
+            response = client.get(
+                "/api/client-enrollment-bundle?client=claude", headers=headers(org, key, oid)
+            )
+            assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+            with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+                descriptors.append(json.loads(bundle.read("claude-foundry/enrollment.json")))
+                assert json.loads(bundle.read("claude-foundry/installation.json")) == {
+                    "schema_version": 1,
+                    "clients": ["claude"],
+                }
+                assert "claude-foundry/client.json" not in bundle.namelist()
+                assert oid.encode() not in bundle.read("claude-foundry/enrollment.json")
+        assert descriptors[0] == descriptors[1]
+        for query in ["client=claude&group_id=platform", "client=claude&client=codex"]:
+            assert (
+                client.get(
+                    "/api/client-enrollment-bundle?" + query, headers=headers(org, key)
+                ).status_code
+                == 400
+            )
+        assert client.get("/api/client-enrollment-bundle?client=claude").status_code == 401
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://portal.example.com",
+        "https://portal.example.com/",
+        "https://portal.example.com/path",
+        "https://169.254.169.254",
+        "https://portal.example.com?url=",
+    ],
+)
+def test_enrollment_rejects_unsafe_or_noncanonical_origins(
+    enrollment_app, org, monkeypatch, origin
+):
+    app, ledger, snapshots, *_ = enrollment_app
+    monkeypatch.setenv("PORTAL_ENROLLMENT_ORIGIN", origin)
+    with pytest.raises(ValueError):
+        create_app(
+            org, app.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+        )
+
+
+def test_enrollment_requires_its_credential_client_to_be_allowed(
+    configuration_app, org, monkeypatch
+):
+    app, ledger, snapshots, *_ = configuration_app
+    monkeypatch.setenv("PORTAL_CLIENT_ENROLLMENT_ENABLED", "1")
+    with pytest.raises(ValueError, match="Azure CLI configuration"):
+        create_app(
+            org, app.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+        )
+
+
+def test_enrollment_fails_closed_during_pause_or_revocation(enrollment_app, org, key):
+    app, ledger, snapshots, _, developer, _ = enrollment_app
+    policy = copy.deepcopy(snapshots.get(ledger.active()))
+    member = next(m for m in policy["members"] if m["id"] == developer["id"])
+    member["status"] = "suspended"
+    snapshots.put(policy)
+    ledger.activate(policy)
+    with TestClient(app) as client:
+        for path in ["/api/client-enrollment", "/api/client-enrollment-bundle?client=claude"]:
+            assert client.get(path, headers=headers(org, key, developer["id"])).status_code == 403
+
+
 def test_configuration_feed_own_user_only_data_and_no_mutation(configuration_app, org, key):
     app, ledger, snapshots, admin, developer, outsider = configuration_app
     before = copy.deepcopy(ledger.rows.rows)

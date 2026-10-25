@@ -5,8 +5,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from test_configuration_client import descriptor_value
 
-from claude_foundry.client_bundle import build_bundle, build_template
+from claude_foundry.client_bundle import build_bundle, build_enrollment_bundle, build_template
 from claude_foundry.config import export_client, write_json
 
 
@@ -172,3 +173,44 @@ def test_portal_template_is_readable_by_a_separate_runtime_user(tmp_path, monkey
         assert template.external_attr >> 16 & 0o444 == 0o444
         with zipfile.ZipFile(io.BytesIO(package.read(template))) as archive:
             assert "claude-foundry/Install.command" in archive.namelist()
+
+
+@pytest.mark.parametrize("clients", [["claude"], ["codex"], ["codex", "claude"]])
+def test_enrollment_bundle_contains_only_trust_anchors_and_app_selection(clients):
+    descriptor = descriptor_value()
+    template = build_template(Path(__file__).resolve().parents[1])
+    with zipfile.ZipFile(
+        io.BytesIO(build_enrollment_bundle(descriptor, template, clients=clients))
+    ) as archive:
+        assert json.loads(archive.read("claude-foundry/enrollment.json")) == descriptor
+        assert json.loads(archive.read("claude-foundry/installation.json")) == {
+            "schema_version": 1,
+            "clients": sorted(clients),
+        }
+        assert "claude-foundry/client.json" not in archive.namelist()
+        assert "claude-foundry/codex-client.json" not in archive.namelist()
+        assert "claude-foundry/docs/client-configuration-refresh.md" in archive.namelist()
+        assert archive.getinfo("claude-foundry/Install.command").external_attr >> 16 & 0o111
+        readme = archive.read("claude-foundry/README.md").decode()
+        assert descriptor["configuration_url"] in readme
+        assert "--migrate-existing" in readme and "enable-refresh" in readme
+        assert "SETUP COMPLETE" in readme and "last good local configuration" in readme
+        assert "plaintext" in readme  # Do not conceal the current pilot's release blocker.
+        assert not any("/.local/" in name or "/.git/" in name for name in archive.namelist())
+
+
+@pytest.mark.parametrize("clients", [[], ["claude", "claude"], ["unknown"], [None], "claude"])
+def test_enrollment_bundle_rejects_invalid_selection(clients):
+    with pytest.raises(ValueError, match="Choose clients"):
+        build_enrollment_bundle(descriptor_value(), b"", clients=clients)
+
+
+@pytest.mark.parametrize(
+    "name", ["client.json", "enrollment.json", "installation.json", "README.md"]
+)
+def test_enrollment_bundle_refuses_a_preconfigured_template(name):
+    source = io.BytesIO()
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("claude-foundry/" + name, "{}")
+    with pytest.raises(ValueError, match="unconfigured"):
+        build_enrollment_bundle(descriptor_value(), source.getvalue(), clients=["claude"])

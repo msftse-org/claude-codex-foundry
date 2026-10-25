@@ -203,3 +203,128 @@ it("starts with Codex setup when the group's default is an OpenAI model", async 
         "claude-foundry-macos.zip",
     );
 });
+
+const enrollment = {
+    clients: ["claude", "codex"],
+    onboarding_url: "https://portal.example.com/?page=onboarding",
+    descriptor: {
+        configuration_url:
+            "https://portal.example.com/api/v1/me/client-configuration",
+        routes: {},
+    },
+};
+const enrolledState = { ...state, client_enrollment_enabled: true } as State;
+
+it("offers one stable enrollment link and only an application choice", async () => {
+    vi.mocked(api).mockResolvedValue(enrollment);
+    render(
+        <Onboarding
+            state={enrolledState}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    await screen.findByText(enrollment.onboarding_url);
+    expect(api).toHaveBeenCalledWith("/api/client-enrollment");
+    expect(screen.queryByLabelText("Group")).toBeNull();
+    expect(screen.getByLabelText("Application")).toHaveProperty(
+        "value",
+        "both",
+    );
+    fireEvent.click(
+        screen.getByRole("button", {
+            name: "Copy organization onboarding link",
+        }),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        enrollment.onboarding_url,
+    );
+    fireEvent.change(screen.getByLabelText("Application"), {
+        target: { value: "codex" },
+    });
+    fireEvent.click(
+        screen.getByRole("button", { name: "Download enrollment setup ZIP" }),
+    );
+    await waitFor(() =>
+        expect(downloadFile).toHaveBeenCalledWith(
+            "/api/client-enrollment-bundle?client=codex",
+            "claude-foundry-enrollment-macos.zip",
+        ),
+    );
+    fireEvent.click(
+        screen.getByRole("button", {
+            name: "Copy enrollment prompt for Codex",
+        }),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining(enrollment.descriptor.configuration_url),
+    );
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+        expect.stringContaining("Ask me before migrating"),
+    );
+});
+
+it("enrollment failures offer retry without a partial ZIP or a group override", async () => {
+    vi.mocked(api).mockRejectedValueOnce(
+        new Error("Publish model access first"),
+    );
+    vi.mocked(api).mockResolvedValueOnce({ ...enrollment, clients: ["codex"] });
+    render(
+        <Onboarding
+            state={{
+                ...enrolledState,
+                viewer: { ...state.viewer, role: "developer" },
+            }}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    await screen.findByText("Publish model access first");
+    expect(
+        screen.queryByRole("button", { name: "Download enrollment setup ZIP" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage members" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText(enrollment.onboarding_url);
+    expect(screen.getByLabelText("Application")).toHaveProperty(
+        "value",
+        "codex",
+    );
+    expect(screen.queryByRole("option", { name: "Claude" })).toBeNull();
+    expect(api).toHaveBeenLastCalledWith("/api/client-enrollment");
+});
+
+it("discards a pending enrollment response when published state changes", async () => {
+    let resolveOld!: (value: unknown) => void;
+    vi.mocked(api).mockReturnValueOnce(
+        new Promise((resolve) => {
+            resolveOld = resolve;
+        }),
+    );
+    vi.mocked(api).mockResolvedValueOnce({ ...enrollment, clients: ["codex"] });
+    const view = render(
+        <Onboarding
+            state={enrolledState}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    view.rerender(
+        <Onboarding
+            state={{ ...enrolledState, revision: 2 }}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    await screen.findByText(enrollment.onboarding_url);
+    resolveOld(enrollment);
+    await waitFor(() =>
+        expect(screen.getByLabelText("Application")).toHaveProperty(
+            "value",
+            "codex",
+        ),
+    );
+    expect(
+        screen.queryByRole("option", { name: "Claude and Codex" }),
+    ).toBeNull();
+});

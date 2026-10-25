@@ -33,7 +33,15 @@ def codex(org, **changes):
     return profile
 
 
-def install(tmp_path, profiles, args=(), codex_installed=False, fail_login=False):
+def install(
+    tmp_path,
+    profiles,
+    args=(),
+    codex_installed=False,
+    fail_login=False,
+    fail_command="",
+    expected_code=0,
+):
     bundle = tmp_path / "bundle"
     (bundle / "scripts/macos").mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/macos/install.sh", bundle / "scripts/macos/install.sh")
@@ -51,19 +59,25 @@ def install(tmp_path, profiles, args=(), codex_installed=False, fail_login=False
         f'  ln -sf "{sys.executable}" "$runtime/bin/python"\n'
         f'  printf \'#!/bin/bash\\necho "$*" >> {log}\\n\' > "$runtime/bin/claude-foundry"\n'
         '  if [[ "${FAIL_LOGIN:-}" == 1 ]]; then printf \'if [[ "$1" == login ]]; then echo "admin approval required" >&2; exit 1; fi\\n\' >> "$runtime/bin/claude-foundry"; fi\n'
+        '  printf \'if [[ "$1" == "${FAIL_COMMAND:-}" ]]; then exit 1; fi\\n\' >> "$runtime/bin/claude-foundry"\n'
         '  chmod +x "$runtime/bin/claude-foundry"\n'
         "fi\n"
     )
     uv.chmod(0o755)
+    az = home / ".local/bin/az"
+    az.write_text("#!/bin/bash\nexit 99\n")
+    az.chmod(0o755)  # The installer must delegate sign-in, never run az itself.
     codex_app = tmp_path / "codex"
     if codex_installed:
         codex_app.write_text("")
+        codex_app.chmod(0o755)
     env = {
         "HOME": str(home),
         "PATH": "/usr/bin:/bin",
         "CLAUDE_FOUNDRY_CODEX_APP": str(codex_app),
         "CLAUDE_FOUNDRY_CODEX_CLI": "codex-absent-in-test",
         "FAIL_LOGIN": "1" if fail_login else "0",
+        "FAIL_COMMAND": fail_command,
     }
     result = subprocess.run(
         ["/bin/bash", str(bundle / "Install.command"), *args],
@@ -72,8 +86,11 @@ def install(tmp_path, profiles, args=(), codex_installed=False, fail_login=False
         text=True,
         timeout=60,
     )
-    assert result.returncode == 0, result.stderr
-    calls = [line.replace(str(bundle) + "/", "") for line in log.read_text().splitlines()]
+    assert result.returncode == expected_code, result.stderr
+    calls = [
+        line.replace(str(bundle) + "/", "")
+        for line in (log.read_text().splitlines() if log.exists() else [])
+    ]
     return calls, result
 
 
@@ -169,3 +186,85 @@ def test_failed_login_explains_that_setup_did_not_complete(org, tmp_path):
     assert "restarting it will not activate this organization" in result.stderr
     assert "adminconsent?client_id=" in result.stderr
     assert "Restart the app only after this installer prints 'SETUP COMPLETE'" in result.stderr
+
+
+def enrollment_files(clients=None):
+    return {
+        "enrollment.json": {"sentinel": "validated by the real enrollment command"},
+        "installation.json": {"schema_version": 1, "clients": clients or ["claude"]},
+    }
+
+
+def test_enrollment_installer_uses_fixed_entrypoint_and_explicit_background_choice(tmp_path):
+    calls, result = install(tmp_path, enrollment_files())
+    assert calls == ["enroll --descriptor enrollment.json --client claude"]
+    assert "SETUP COMPLETE" in result.stdout
+    assert "To enable automatic model updates" in result.stdout
+    assert "restore --client" not in result.stdout
+
+
+def test_enrollment_installer_both_apps_migration_and_scheduler_are_explicit(tmp_path):
+    calls, result = install(
+        tmp_path,
+        enrollment_files(["codex", "claude"]),
+        args=["--migrate-existing", "--enable-refresh"],
+        codex_installed=True,
+    )
+    assert calls == [
+        "enroll --descriptor enrollment.json --client claude --client codex "
+        f"--codex-binary {tmp_path}/codex --migrate-existing",
+        "enable-refresh",
+    ]
+    assert "SETUP COMPLETE" in result.stdout
+    assert "To enable automatic" not in result.stdout
+
+
+@pytest.mark.parametrize("flag", ["--no-login", "--enable-history-import"])
+def test_enrollment_cannot_skip_signin_or_enable_history(tmp_path, flag):
+    calls, _ = install(tmp_path, enrollment_files(), args=[flag], expected_code=2)
+    assert calls == []
+
+
+def test_ambiguous_bundle_never_selects_enrollment_or_legacy_implicitly(org, tmp_path):
+    calls, result = install(
+        tmp_path,
+        {**enrollment_files(), "client.json": export_client(org)},
+        expected_code=2,
+    )
+    assert calls == [] and "Ambiguous bundle" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"schema_version": True, "clients": ["claude"]},
+        {"schema_version": 1, "clients": ["claude", "claude"]},
+        {"schema_version": 1, "clients": ["claude"], "command": "unexpected"},
+    ],
+)
+def test_invalid_installation_selection_never_runs_enrollment(tmp_path, selection):
+    calls, result = install(
+        tmp_path, {**enrollment_files(), "installation.json": selection}, expected_code=1
+    )
+    assert calls == [] and "SETUP DID NOT COMPLETE" in result.stderr
+
+
+def test_selected_missing_codex_is_not_silently_skipped(tmp_path):
+    calls, result = install(tmp_path, enrollment_files(["codex"]), expected_code=1)
+    assert calls == [] and "approved Codex" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["enroll", "enable-refresh"])
+def test_enrollment_and_scheduler_failure_never_reports_setup_complete(tmp_path, command):
+    calls, result = install(
+        tmp_path,
+        enrollment_files(),
+        args=["--enable-refresh"],
+        fail_command=command,
+        expected_code=1,
+    )
+    assert len(calls) == (1 if command == "enroll" else 2)
+    assert "SETUP COMPLETE" not in result.stdout
+    assert (
+        "SETUP DID NOT COMPLETE" if command == "enroll" else "ENROLLMENT COMPLETE"
+    ) in result.stderr

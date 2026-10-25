@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowRight, Copy, DownloadSimple } from "@phosphor-icons/react";
 import { api, download, downloadFile } from "./api";
 import { Notice, PageHead } from "./components";
+import { EnrollmentOnboarding } from "./EnrollmentOnboarding";
 import type { State } from "./types";
 
 interface ClientProfile {
@@ -12,6 +13,26 @@ interface ClientProfile {
 }
 
 export function Onboarding({
+    state,
+    onMembers,
+    notify,
+}: {
+    state: State;
+    onMembers: () => void;
+    notify: (message: string, error?: boolean) => void;
+}) {
+    return state.client_enrollment_enabled ? (
+        <EnrollmentOnboarding
+            state={state}
+            onMembers={onMembers}
+            notify={notify}
+        />
+    ) : (
+        <LegacyOnboarding state={state} onMembers={onMembers} notify={notify} />
+    );
+}
+
+function LegacyOnboarding({
     state,
     onMembers,
     notify,

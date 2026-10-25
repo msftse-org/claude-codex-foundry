@@ -16,8 +16,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
-from ..client_bundle import build_bundle, build_template
+from ..client_bundle import build_bundle, build_enrollment_bundle, build_template
 from ..config import export_client, load_org
+from ..configuration_client import ConfigurationError, EnrollmentDescriptor
+from ..enrollment_auth import AZURE_CLI_CLIENT_ID
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator, ConfigurationAuthenticator
 from .boundary import RequestBoundary
@@ -122,6 +124,30 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         configuration_deployments = deployment_bounds(
             json.loads(os.environ["PORTAL_CONFIGURATION_DEPLOYMENTS_JSON"])
         )
+    enrollment_descriptor = None
+    enrollment_enabled = os.getenv("PORTAL_CLIENT_ENROLLMENT_ENABLED", "0")
+    if enrollment_enabled not in {"0", "1"}:
+        raise ValueError("Client enrollment enablement must be 0 or 1")
+    if enrollment_enabled == "1":
+        if configuration_auth is None or AZURE_CLI_CLIENT_ID not in authorized_clients:
+            raise ValueError("Client enrollment requires the enabled Azure CLI configuration API")
+        # Never trust Host/X-Forwarded-Host to choose a future credential destination.
+        origin = os.environ["PORTAL_ENROLLMENT_ORIGIN"]
+        enrollment_descriptor = {
+            "schema_version": 1,
+            "organization_id": configuration_organization,
+            "tenant_id": config["tenant_id"],
+            "configuration_url": origin + CONFIGURATION_PATH,
+            "configuration_resource_id": resource_id,
+            "routes": {
+                name: {"route_id": provider["api_id"], "gateway_url": provider["gateway_url"]}
+                for name, provider in providers.items()
+            },
+        }
+        try:
+            EnrollmentDescriptor.parse(enrollment_descriptor)
+        except ConfigurationError:
+            raise ValueError("Configure a safe canonical enrollment origin and routes") from None
     reporting = reporting_config(config, providers) if providers else config
     # Separate machine-only origin for APIM's immutable snapshot cache. This
     # portal always reads Blob directly on a miss, preventing cache recursion.
@@ -185,14 +211,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
 
     actor_dependency = Depends(actor)
 
-    @app.get(CONFIGURATION_PATH)
-    def current_client_configuration(request: Request):
-        if configuration_auth is None:
-            raise HTTPException(404, "Client configuration refresh is not enabled.")
-        # Deliberately independent of the browser's actor/local-owner dependency.
-        oid = configuration_auth.identity(request.headers.get("authorization"))
-        if request.query_params:
-            raise HTTPException(400, "Client configuration accepts no query parameters.")
+    def published_client_configuration(oid):
         try:
             digest = budget[0].active()
             policy = budget[1].get(digest)
@@ -215,6 +234,17 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 "Client configuration unavailable (%s).", type(exc).__name__
             )
             raise HTTPException(503, "Client configuration is temporarily unavailable.") from None
+        return value, body, etag
+
+    @app.get(CONFIGURATION_PATH)
+    def current_client_configuration(request: Request):
+        if configuration_auth is None:
+            raise HTTPException(404, "Client configuration refresh is not enabled.")
+        # Deliberately independent of the browser's actor/local-owner dependency.
+        oid = configuration_auth.identity(request.headers.get("authorization"))
+        if request.query_params:
+            raise HTTPException(400, "Client configuration accepts no query parameters.")
+        value, body, etag = published_client_configuration(oid)
         unchanged = request.headers.get("if-none-match") == etag
         logging.getLogger(__name__).info(
             "Client configuration read (%s).", "unchanged" if unchanged else value["state"]
@@ -364,6 +394,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             models=model_catalog,
             budget_configured=budget is not None,
             client_types=list(providers) if providers else [config.get("client_type", "claude")],
+            client_enrollment_enabled=enrollment_descriptor is not None,
             gateway_url=config["gateway_url"],
             tenant_id=config["tenant_id"],
             policy_hash=policy_impact(config, data)["policy_hash"],
@@ -634,9 +665,18 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         access=actor_dependency,
     ):
         profile = client_config(group_id, access, client)
+        return Response(
+            build_bundle(
+                profile, installer_template(), governed=budget is None, budgeted=budget is not None
+            ),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="claude-foundry-macos.zip"'},
+        )
+
+    def installer_template():
         template_path = bundle_template_path()
         try:
-            template = (
+            return (
                 build_template(Path(__file__).resolve().parents[3])
                 if local and not template_path.exists()
                 else template_path.read_bytes()
@@ -649,10 +689,48 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 503,
                 "The setup bundle is unavailable. Ask your administrator to redeploy the portal package.",
             ) from None
+
+    def enrollment_access(member):
+        if enrollment_descriptor is None:
+            raise HTTPException(404, "Client enrollment is not enabled.")
+        value, _, _ = published_client_configuration(member["id"])
+        clients = [name for name, data in value["clients"].items() if data["models"]]
+        if not clients:
+            raise HTTPException(409, "Publish model access before enrolling this account.")
+        return clients
+
+    @app.get("/api/client-enrollment")
+    def client_enrollment(request: Request, access=actor_dependency):
+        if request.query_params:
+            raise HTTPException(400, "Enrollment accepts no account or group selectors.")
+        clients = enrollment_access(access[2])
+        return {
+            "descriptor": enrollment_descriptor,
+            "clients": clients,
+            "onboarding_url": os.environ["PORTAL_ENROLLMENT_ORIGIN"] + "/?page=onboarding",
+        }
+
+    @app.get("/api/client-enrollment-bundle")
+    def client_enrollment_bundle(
+        request: Request,
+        client: Literal["claude", "codex", "both"],
+        access=actor_dependency,
+    ):
+        if (
+            set(request.query_params) != {"client"}
+            or len(request.query_params.getlist("client")) != 1
+        ):
+            raise HTTPException(400, "Enrollment accepts only one application selection.")
+        eligible = enrollment_access(access[2])
+        selected = ["claude", "codex"] if client == "both" else [client]
+        if not set(selected) <= set(eligible):
+            raise HTTPException(409, "Publish model access for this application before enrolling.")
         return Response(
-            build_bundle(profile, template, governed=budget is None, budgeted=budget is not None),
+            build_enrollment_bundle(enrollment_descriptor, installer_template(), clients=selected),
             media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="claude-foundry-macos.zip"'},
+            headers={
+                "Content-Disposition": 'attachment; filename="claude-foundry-enrollment-macos.zip"'
+            },
         )
 
     @app.get("/api/model-policy")

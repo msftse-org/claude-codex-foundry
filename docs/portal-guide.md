@@ -191,6 +191,22 @@ The **Advanced: connection profile only** section retains the JSON export for an
 
 Users follow the [Mac installation guide](macos.md). For MSAL without Azure CLI, the portal deployment must be configured with the separate desktop public-client ID. The portal does not push device policies or track installation completion; use your MDM platform for managed rollout.
 
+### Experimental organization-link onboarding
+
+An operator can opt into the separate [configuration-refresh pilot](client-configuration-refresh.md).
+It replaces this page's group/profile export flow with one stable organization
+link, the user's own Entra sign-in, and a choice of eligible applications.
+The setup ZIP pins connection details, not model grants; future model selections
+come from the active published policy. The screenshot above shows the existing
+JSON flow, not the pilot.
+
+The pilot requires explicit enrollment and opt-in background refresh. Existing
+installations require explicit migration, and open apps may need reopening to
+show new picker entries. It is disabled by default and is not release-qualified:
+encrypted credential storage, native-client behavior and recovery remain gates
+before rollout. Gateway access and spending policy continue to be enforced
+server-side even when local files are stale.
+
 ## Organization settings and navigation
 
 **Organization** shows the portal display name, connected sign-in provider, gateway, and captured-data scope. Owners/administrators can change the display name in a drawer. Infrastructure endpoints and tenant connections are deployment configuration, not editable here.

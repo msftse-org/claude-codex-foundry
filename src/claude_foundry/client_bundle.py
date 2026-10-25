@@ -6,6 +6,7 @@ import json
 import zipfile
 
 from .config import validate_client
+from .configuration_client import EnrollmentDescriptor
 
 CLIENT_FIELDS = {
     "schema_version",
@@ -35,6 +36,7 @@ def build_template(root):
             "docs/conversation-migration.md",
             "docs/codex.md",
             "docs/codex-validation.md",
+            "docs/client-configuration-refresh.md",
         )
     ]
     files += sorted((root / "src/claude_foundry").glob("*.py"))
@@ -44,6 +46,115 @@ def build_template(root):
             if path.is_symlink():
                 raise ValueError(f"Symlinks are not accepted: {path}")
             bundle.write(path, "claude-foundry/" + str(path.relative_to(root)))
+    return output.getvalue()
+
+
+def build_enrollment_bundle(descriptor, template, *, clients):
+    """Initial, trusted bootstrap only; published grants are fetched after sign-in."""
+    parsed = EnrollmentDescriptor.parse(descriptor)
+    if (
+        not isinstance(clients, list)
+        or not clients
+        or any(not isinstance(name, str) for name in clients)
+        or len(set(clients)) != len(clients)
+        or set(clients) - {route.client for route in parsed.routes}
+    ):
+        raise ValueError("Choose clients included in the enrollment descriptor")
+    target = (
+        "Claude and Codex Desktop / CLI"
+        if len(clients) == 2
+        else "Codex Desktop / CLI"
+        if clients == ["codex"]
+        else "Claude Desktop / Claude Code"
+    )
+    gateways = "\n".join(
+        f"- {route.client.title()} gateway: `{route.gateway_url}`"
+        for route in parsed.routes
+        if route.client in clients
+    )
+    readme = f"""# Enroll {target}
+
+This experimental Mac setup connects to your organization once, then refreshes your published
+model access without another JSON download. It contains no model grants, user identity or tokens.
+Download this installer only from your trusted organization portal.
+
+## Before installing
+
+Review these trusted connection details with your platform team:
+
+- Configuration service: `{parsed.configuration_url}`
+- Microsoft tenant: `{parsed.tenant_id}`
+- Application: {target}
+{gateways}
+
+`enrollment.json` pins the organization, tenant, configuration resource and gateway routes.
+`installation.json` selects the applications only. Neither file grants access. The signed-in
+user's current published policy determines the available models and server-side budget.
+
+## Install
+
+1. Install your organization's approved {target} and Azure CLI.
+2. Save active work, extract the ZIP, open the `claude-foundry` folder, then run
+   `bash Install.command` (or double-click it).
+3. Review the connection details and complete Microsoft work-account sign-in and MFA.
+4. Follow the installer's result; reopen the app only after `SETUP COMPLETE`.
+5. To receive future published model changes, explicitly enable background refresh:
+   `~/.local/share/claude-foundry/runtime/bin/claude-foundry enable-refresh`.
+
+Background refresh runs about every 15 minutes while you are logged into this Mac. Reopen an
+already-running client to reload its model picker. Refresh cannot grant access or bypass the
+gateway's current policy; failed/offline refresh keeps the last good local configuration.
+
+Existing JSON installations require an explicit migration:
+`bash Install.command --migrate-existing`. Unrelated settings and conversations are preserved.
+Unexpected routing changes or managed preferences stop setup for review.
+
+## Status and recovery
+
+Use `~/.local/share/claude-foundry/runtime/bin/claude-foundry configuration-status` for status,
+`refresh` for a noninteractive update, or `refresh --login` when explicit sign-in is needed.
+Use `disable-refresh` to stop the background job. Do not use the legacy `restore` command on an
+enrolled installation; see [the pilot guide](docs/client-configuration-refresh.md) for limitations.
+
+Azure CLI stores its isolated authentication cache in a user-private directory. On macOS this
+cache may be plaintext: your organization's endpoint-security review is required before this
+pilot is offered to users. This installer does not claim an encrypted cache or change Azure
+resources. Never paste tokens into a chat or send them to your administrator.
+"""
+    instructions = """# Installation assistant instructions
+
+Read README.md, enrollment.json and installation.json first. Use bash Install.command from this
+folder for the user's requested local setup. Do not invent a gateway, change the enrollment
+descriptor, or substitute a legacy client profile. Azure CLI is required for this pilot.
+
+Let the user complete explicit Microsoft sign-in. Never print, request or copy access tokens.
+Existing JSON migration and enabling background refresh each require the user's explicit choice.
+Do not work around managed settings or routing-conflict errors. Report a setup failure honestly;
+only report success after SETUP COMPLETE. Preserve unrelated settings and conversations.
+"""
+    output = io.BytesIO()
+    with (
+        zipfile.ZipFile(io.BytesIO(template)) as source,
+        zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as bundle,
+    ):
+        for entry in source.infolist():
+            if entry.filename in {
+                "claude-foundry/client.json",
+                "claude-foundry/codex-client.json",
+                "claude-foundry/enrollment.json",
+                "claude-foundry/installation.json",
+                "claude-foundry/README.md",
+                "claude-foundry/AGENTS.md",
+            }:
+                raise ValueError("Enrollment requires an unconfigured installer template")
+            bundle.writestr(entry, source.read(entry))
+        bundle.writestr("claude-foundry/README.md", readme)
+        bundle.writestr("claude-foundry/AGENTS.md", instructions)
+        bundle.writestr("claude-foundry/enrollment.json", json.dumps(descriptor, indent=2) + "\n")
+        bundle.writestr(
+            "claude-foundry/installation.json",
+            json.dumps({"schema_version": 1, "clients": sorted(clients)}, indent=2) + "\n",
+        )
     return output.getvalue()
 
 
