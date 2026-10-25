@@ -33,7 +33,7 @@ def codex(org, **changes):
     return profile
 
 
-def install(tmp_path, profiles, args=(), codex_installed=False):
+def install(tmp_path, profiles, args=(), codex_installed=False, fail_login=False):
     bundle = tmp_path / "bundle"
     (bundle / "scripts/macos").mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/macos/install.sh", bundle / "scripts/macos/install.sh")
@@ -50,6 +50,7 @@ def install(tmp_path, profiles, args=(), codex_installed=False):
         '  runtime="${@: -1}"; mkdir -p "$runtime/bin"\n'
         f'  ln -sf "{sys.executable}" "$runtime/bin/python"\n'
         f'  printf \'#!/bin/bash\\necho "$*" >> {log}\\n\' > "$runtime/bin/claude-foundry"\n'
+        '  if [[ "${FAIL_LOGIN:-}" == 1 ]]; then printf \'if [[ "$1" == login ]]; then echo "admin approval required" >&2; exit 1; fi\\n\' >> "$runtime/bin/claude-foundry"; fi\n'
         '  chmod +x "$runtime/bin/claude-foundry"\n'
         "fi\n"
     )
@@ -62,6 +63,7 @@ def install(tmp_path, profiles, args=(), codex_installed=False):
         "PATH": "/usr/bin:/bin",
         "CLAUDE_FOUNDRY_CODEX_APP": str(codex_app),
         "CLAUDE_FOUNDRY_CODEX_CLI": "codex-absent-in-test",
+        "FAIL_LOGIN": "1" if fail_login else "0",
     }
     result = subprocess.run(
         ["/bin/bash", str(bundle / "Install.command"), *args],
@@ -119,9 +121,51 @@ def test_single_profile_bundle_is_unchanged(org, tmp_path):
     calls, result = install(tmp_path, {"client.json": export_client(org)})
     assert calls == ["login --config client.json", "install --config client.json"]
     assert result.stdout.strip().endswith("restore --client claude")
+    assert "SETUP COMPLETE. User actions:" in result.stdout
+    assert "fully quit claude" in result.stdout
+    assert "Restart the app" not in result.stderr
 
 
 def test_explicit_codex_profile_is_never_skipped(org, tmp_path):
     profiles = {"client.json": export_client(org), "codex.json": codex(org)}
     calls, _ = install(tmp_path, profiles, args=["--config", str(tmp_path / "bundle/codex.json")])
     assert calls == ["login --config codex.json", "install --config codex.json"]
+
+
+def test_failed_login_explains_that_setup_did_not_complete(org, tmp_path):
+    bundle = tmp_path / "bundle"
+    (bundle / "scripts/macos").mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/macos/install.sh", bundle / "scripts/macos/install.sh")
+    shutil.copy2(ROOT / "Install.command", bundle / "Install.command")
+    (bundle / "requirements-auth.lock").write_text("")
+    (bundle / "client.json").write_text(json.dumps(codex(org)))
+    home, log = tmp_path / "home", tmp_path / "calls.log"
+    (home / ".local/bin").mkdir(parents=True)
+    uv = home / ".local/bin/uv"
+    uv.write_text(
+        "#!/bin/bash\n"
+        'if [[ "$1" == venv ]]; then\n'
+        '  runtime="${@: -1}"; mkdir -p "$runtime/bin"\n'
+        f'  ln -sf "{sys.executable}" "$runtime/bin/python"\n'
+        f'  printf \'#!/bin/bash\\necho "$*" >> {log}\\nif [[ "$1" == login ]]; then exit 1; fi\\n\' > "$runtime/bin/claude-foundry"\n'
+        '  chmod +x "$runtime/bin/claude-foundry"\n'
+        "fi\n"
+    )
+    uv.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/bash", str(bundle / "Install.command")],
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin",
+            "CLAUDE_FOUNDRY_CODEX_APP": str(tmp_path / "codex"),
+            "CLAUDE_FOUNDRY_CODEX_CLI": "codex-absent-in-test",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 1
+    assert "SETUP DID NOT COMPLETE" in result.stderr
+    assert "restarting it will not activate this organization" in result.stderr
+    assert "adminconsent?client_id=" in result.stderr
+    assert "Restart the app only after this installer prints 'SETUP COMPLETE'" in result.stderr
