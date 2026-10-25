@@ -51,7 +51,7 @@ Mark the installation incomplete if a required acceptance check has not passed.
 | Contact and terms | APIM publisher name/email. For Claude: legal organization name, two-letter country code, industry and explicit authorization to accept the paid Anthropic Marketplace terms. |
 | Clients and models | Claude, Codex or both; an approved model list and capacity for each, plus SKU if required. Empty model lists attempt every eligible model with quota. Capacity is not a spending limit. |
 | Access mode | Unified Claude/Codex administration by default. Identify the owner, administrators, approved spend policy and reviewed model prices/capacities. Explicit legacy mode is optional. |
-| Sign-in | `msal` for developer Macs without Azure CLI, with app registration and consent; or the customer's approved `azure-cli` alternative. |
+| Sign-in | `azure-cli` is the default and avoids a separate app registration or consent; select `msal` explicitly for developer Macs without Azure CLI, with app registration and any consent required by tenant policy. |
 | Developer group | Existing group object ID, or authorization to create a group. Use a customer-specific `developer_group_name` if several installations share a tenant; the default display name can reuse a group. |
 | Initial people | Approved work emails, UPNs or tenant-local user object IDs. Include guest users only after they exist in the target tenant. Keep the CSV under `.local/`. |
 | Operating owner | Person/team receiving the installer, monitoring and billing alerts, rollout decisions, and private configuration backups. |

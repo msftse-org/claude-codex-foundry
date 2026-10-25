@@ -168,6 +168,9 @@ def commands(runner):
 def test_full_deployment_runs_documented_steps_in_order(
     deploy, settings, tmp_path, org, monkeypatch
 ):
+    value = json.loads(settings.read_text())
+    value["auth_mode"] = "msal"
+    settings.write_text(json.dumps(value))
     runner = FakeRunner(organization(org))
     job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
     seen = commands(runner)
@@ -310,6 +313,9 @@ def test_verification_detects_published_claude_governance(
 def test_missing_admin_consent_is_reported_without_stopping(
     deploy, settings, tmp_path, org, monkeypatch
 ):
+    value = json.loads(settings.read_text())
+    value["auth_mode"] = "msal"
+    settings.write_text(json.dumps(value))
     runner = FakeRunner(organization(org), consent_error=deploy.DeployError)
     job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
     assert job.state["desktop_client_id"] == DESKTOP
@@ -404,6 +410,7 @@ def test_unified_is_default_and_codex_only_portal_is_supported(deploy, settings)
     settings.write_text(json.dumps(value))
     result = deploy.load_settings(settings)
     assert result["portal"] == {"enabled": True, "mode": "unified"}
+    assert result["auth_mode"] == "azure-cli"
 
 
 class UnifiedRunner(FakeRunner):
@@ -519,6 +526,19 @@ def test_upgrade_does_not_redeploy_foundation_models_or_replace_owner(unified_jo
     params = json.loads(path.read_text())["parameters"]
     assert params["ownerObjectId"]["value"] == GROUP
     assert params["storageAccountName"]["value"] == "preservedportalstore"
+
+
+def test_azure_cli_upgrade_does_not_export_a_retained_msal_client(unified_job):
+    job, runner, _ = unified_job
+    job.deploy(verify=False)
+    job.save(desktop_client_id=DESKTOP)
+    job.upgrade_portal()
+    params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
+    assert params["desktopClientId"]["value"] == ""
+    exports = [call for call in runner.calls if "export-client" in call]
+    assert exports
+    assert all(call[call.index("--auth-mode") + 1] == "azure-cli" for call in exports)
+    assert all("--client-id" not in call for call in exports)
 
 
 def test_upgrade_refuses_to_replace_a_live_ledger(unified_job):

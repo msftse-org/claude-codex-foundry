@@ -41,7 +41,7 @@ Edit `.local/deploy.json`:
 | `claude`, `codex` | `enabled`, optional `models` list (empty deploys every eligible model with quota), `capacity` per deployment, and `sku`. |
 | `portal.enabled` | Deploys the administration portal on the same Claude route. Governance is not published automatically. |
 
-Optional fields: `apim_sku` (`BasicV2` or `StandardV2`), `auth_mode` (`msal`, the default, needs no Azure CLI on developer Macs; `azure-cli` needs no app registration or consent), `allowed_object_ids`, `profile_name`, `grant_admin_consent`, `add_deployer_to_developers` and `names` overrides. Keep this file and everything the script writes in `.local/`, outside Git.
+Optional fields: `apim_sku` (`BasicV2` or `StandardV2`), `auth_mode` (`azure-cli`, the default, needs no app registration or consent; `msal` is an explicit opt-in for developer Macs without Azure CLI and requires a tenant-owned app registration plus any consent required by tenant policy), `allowed_object_ids`, `profile_name`, `grant_admin_consent`, `add_deployer_to_developers` and `names` overrides. Keep this file and everything the script writes in `.local/`, outside Git.
 
 ## 2. Deploy
 
