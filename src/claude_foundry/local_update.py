@@ -160,14 +160,16 @@ class FileTransaction:
         path = _path(path)
         if self.fd is None or path not in self.allowed or path in self.staged:
             raise ConfigurationError("Invalid or duplicate local update target.")
-        if not isinstance(body, bytes) or len(body) > MAX_FILE_BYTES or mode not in {0o600, 0o700}:
+        if (
+            body is not None and (not isinstance(body, bytes) or len(body) > MAX_FILE_BYTES)
+        ) or mode not in {0o600, 0o700}:
             raise ConfigurationError("Invalid local update content or permissions.")
         before = _read(path)
         if (None if before is None else before[0]) != expected:
             raise ConfigurationError("Settings changed during rendering; update cancelled.")
         if before is not None and before[1] not in {0o600, 0o644, 0o700, 0o755}:
             raise ConfigurationError("Unsupported existing settings permissions.")
-        after = body, mode
+        after = None if body is None else (body, mode)
         if before != after:
             self.staged[path] = before, after
 
@@ -232,7 +234,7 @@ class FileTransaction:
                 if path not in self.allowed or path in files:
                     raise ValueError
                 before, after = _decode(item["before"]), _decode(item["after"])
-                if after is None or after[1] not in {0o600, 0o700}:
+                if before == after or (after is not None and after[1] not in {0o600, 0o700}):
                     raise ValueError
                 files[path] = before, after
             # Check every target before restoring any, preserving post-crash edits.

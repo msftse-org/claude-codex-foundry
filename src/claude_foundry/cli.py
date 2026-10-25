@@ -69,6 +69,10 @@ def parser():
     actions.add_parser("enable-refresh", help="Enable the enrolled per-user background refresh job")
     actions.add_parser("disable-refresh", help="Pause automatic refresh without removing settings")
     actions.add_parser("refresh-background", help="Run one quiet noninteractive refresh attempt")
+    actions.add_parser(
+        "unenroll",
+        help="Pause refresh and restore enrolled settings; retain encrypted credentials and history",
+    )
     restore = actions.add_parser(
         "restore", help="Restore managed settings while preserving subsequent edits"
     )
@@ -184,6 +188,7 @@ def main():
             "enable-refresh",
             "disable-refresh",
             "refresh-background",
+            "unenroll",
         }:
             if sys.platform != "darwin":
                 raise RuntimeError("Organization enrollment currently supports macOS only")
@@ -201,6 +206,8 @@ def main():
                 return 0
             elif args.action == "refresh-background":
                 return configuration_schedule.run()
+            elif args.action == "unenroll":
+                result = configuration_refresh.restore()
             elif args.action in {"enable-refresh", "disable-refresh"}:
                 result = configuration_schedule.configure(enabled=args.action == "enable-refresh")
             else:
@@ -211,6 +218,8 @@ def main():
                     "Model settings updated. Reopen clients if their model picker is already open."
                 )
         elif args.action == "restore":
+            if (Path.home() / configuration_refresh.STATE / "enrollment.json").exists():
+                raise RuntimeError("Use unenroll to restore an enrolled installation.")
             if args.client == "codex":
                 print(codex_client.restore())
             else:

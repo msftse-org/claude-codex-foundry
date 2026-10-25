@@ -101,6 +101,16 @@ def configure(*, enabled, home=None):
     return {"automatic_refresh": enabled, "interval_seconds": INTERVAL_SECONDS}
 
 
+def pause_for_restore(*, home):
+    """No-op only if neither an owned job nor a loaded job exists."""
+    _, plist, record = _paths(home)
+    if _read(plist) is None and _read(record) is None:
+        if _launchctl("print", f"gui/{os.getuid()}/{LABEL}") == 0:
+            raise ConfigurationError("An unowned refresh job is loaded; review before restoring.")
+        return
+    configure(enabled=False, home=home)
+
+
 def _record_failure(home, code):
     try:
         _, _, descriptor = refresh._binding(home)

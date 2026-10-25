@@ -266,9 +266,28 @@ Files under `~/.config/claude-foundry/enrollment` are private (`0700` directory,
 `0600` records; `0700` fixed helper). Each application file is atomically replaced.
 A private journal recovers interrupted multi-file updates on the next run.
 Concurrent runs are locked out, and unexpected later user edits stop recovery
-instead of being overwritten. A private original-settings snapshot is retained
-for future three-way restoration; **enrolled uninstall/restore is not yet
-implemented**. The legacy `restore` command is not an enrollment uninstaller.
+instead of being overwritten. A private original-settings snapshot and the last
+applied settings support three-way restoration, including preferences edited
+before a later refresh.
+
+Run `claude-foundry unenroll` to pause automatic refresh and restore only settings
+still owned by this enrollment. Unknown routing/helper/catalog changes or an
+edited enrolled Desktop library entry stop for review before the job is paused.
+Later user preferences, other Desktop profiles, conversations, installed
+applications, the runtime and encrypted credentials are retained. Untouched
+original settings are restored byte-for-byte. A disabled owned LaunchAgent is
+retained; `unenroll` does not uninstall the runtime or sign the account out.
+The legacy `restore` command refuses an enrolled installation.
+
+The last recovery record is retained as private
+`~/.config/claude-foundry/enrollment/last-restored-settings.json`. It includes
+original local preferences and connection/account metadata, not tokens; treat it
+as private support material and never upload it automatically. Explicit
+reenrollment is required to resume. Failure during restoration rolls client files
+back and leaves the job paused. If a crash removed the binding before the journal
+was cleared, rerun `enroll` with the same reviewed descriptor to recover the
+transaction before authentication; do not delete the journal or hand-edit its
+paths. Post-crash conflicting edits still require review.
 
 Failed authentication, network/schema errors and route drift preserve the last
 successful settings. Status currently reports the last success, not a fresh
@@ -307,3 +326,12 @@ enable it for users until encrypted credentials, Entra consent/Conditional Acces
 actual macOS scheduling, model publication/revocation/budget admission, all four
 native client surfaces and recovery/uninstall have been qualified. Offline
 temporary-home and browser-component tests do not establish those live results.
+
+### Offline recovery qualification — 2026-10-25
+
+678 Python tests passed, including crash recovery, deletion rollback, preservation
+of later preferences across refreshes, modified-route refusal, and pausing the job
+before helper removal. Ruff, shell syntax, package build and whitespace checks
+passed. These tests use isolated homes and mocked scheduling/authentication;
+they do not establish native scheduling, interactive Entra or application UI
+behavior.

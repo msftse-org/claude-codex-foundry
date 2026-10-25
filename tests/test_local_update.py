@@ -231,3 +231,57 @@ def test_all_replacements_fsync_file_and_directory(monkeypatch, tmp_path):
         transaction.commit()
     # Journal file+directory, settings file+directory, journal deletion directory.
     assert len(calls) >= 5 and path.stat().st_mode & 0o777 == 0o700
+
+
+def test_deletions_commit_and_do_not_create_missing_targets(tmp_path):
+    state, one, absent = tmp_path / "state", tmp_path / "one", tmp_path / "absent"
+    one.write_bytes(b"owned")
+    one.chmod(0o600)
+    with update.FileTransaction(state, [one, absent]) as transaction:
+        stage(transaction, one, None)
+        stage(transaction, absent, None)
+        assert one.exists()
+        assert transaction.commit()
+    assert not one.exists() and not absent.exists()
+
+
+def test_failure_after_deletion_restores_original(monkeypatch, tmp_path):
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.write_bytes(b"original")
+    one.chmod(0o644)
+    real_replace = update._replace
+    failed = False
+
+    def fail(path, value):
+        nonlocal failed
+        if path == two and not failed:
+            failed = True
+            raise OSError("disk full")
+        real_replace(path, value)
+
+    monkeypatch.setattr(update, "_replace", fail)
+    with update.FileTransaction(tmp_path / "state", [one, two]) as transaction:
+        stage(transaction, one, None)
+        stage(transaction, two, b"created")
+        with pytest.raises(OSError):
+            transaction.commit()
+    assert one.read_bytes() == b"original" and one.stat().st_mode & 0o777 == 0o644
+    assert not two.exists()
+
+
+@pytest.mark.parametrize("conflict", [False, True])
+def test_interrupted_deletion_recovers_unless_user_recreated_file(tmp_path, conflict):
+    one, state = tmp_path / "one", tmp_path / "state"
+    journal = interrupted(state, [(one, (b"original", 0o644), None)])
+    if conflict:
+        one.write_bytes(b"later user content")
+        one.chmod(0o600)
+        with pytest.raises(ConfigurationError, match="conflicts"):
+            with update.FileTransaction(state, [one]):
+                pass
+        assert one.read_bytes() == b"later user content" and journal.exists()
+    else:
+        with update.FileTransaction(state, [one]):
+            assert one.read_bytes() == b"original"
+            assert one.stat().st_mode & 0o777 == 0o644
+        assert not journal.exists()

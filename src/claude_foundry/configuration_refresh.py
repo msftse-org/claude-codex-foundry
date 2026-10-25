@@ -30,7 +30,7 @@ from .configuration_client import (
     fetch_initial_configuration,
 )
 from .enrollment_auth import EnrolledMsal, _claims
-from .local_update import FileTransaction, _read
+from .local_update import MAX_FILE_BYTES, FileTransaction, _read
 
 STATE = ".config/claude-foundry/enrollment"
 CLAUDE_ROUTING = (
@@ -99,6 +99,7 @@ def _paths(home, descriptor):
         "claude_meta": library / "_meta.json",
         "claude_mode": library.parent / "claude_desktop_config.json",
         "codex": home / ".codex/config.toml",
+        "restored": state / "last-restored-settings.json",
     }
 
 
@@ -171,11 +172,75 @@ def _hash(body):
     return hashlib.sha256(body).hexdigest()
 
 
+def _settings_value(name, body):
+    try:
+        value = (
+            tomlkit.parse((body or b"").decode()).unwrap()
+            if name == "codex"
+            else json.loads(body or b"{}", object_pairs_hook=_pairs)
+        )
+        if not isinstance(value, dict):
+            raise ValueError
+        return value
+    except (ValueError, UnicodeError, RecursionError):
+        raise ConfigurationError("Invalid recovery settings; review before restoring.") from None
+
+
+def _snapshot_body(value):
+    if value is None:
+        return None
+    try:
+        if not isinstance(value, str):
+            raise ValueError
+        body = base64.b64decode(value, validate=True)
+        if len(body) > MAX_FILE_BYTES:
+            raise ValueError
+        return body
+    except (ValueError, TypeError):
+        raise ConfigurationError("Invalid recovery snapshot.") from None
+
+
+def _baseline_with_edits(before, after, baseline, applied):
+    """Adopt user edits that rendering leaves alone; never claim them on refresh."""
+    missing = client._MISSING
+    result = copy.deepcopy(baseline)
+    for key in set(before) | set(after) | set(applied) | set(baseline):
+        now, desired, prior = (
+            before.get(key, missing),
+            after.get(key, missing),
+            applied.get(key, missing),
+        )
+        if isinstance(now, dict) and isinstance(desired, dict):
+            nested = _baseline_with_edits(
+                now,
+                desired,
+                baseline.get(key) if isinstance(baseline.get(key), dict) else {},
+                prior if isinstance(prior, dict) else {},
+            )
+            if nested or key in baseline or (now == {} and now != prior):
+                result[key] = nested
+        elif now == desired and now != prior:
+            if now is missing:
+                result.pop(key, None)
+            else:
+                result[key] = copy.deepcopy(now)
+    return result
+
+
 def _guard(actual, expected):
     if actual != expected:
         raise ConfigurationError(
             "Enrolled routing or a managed file changed locally; review it before refreshing."
         )
+
+
+def _settings_names(binding):
+    names = set()
+    if "claude" in binding["clients"]:
+        names.update(("claude_cli", "claude_profile", "claude_meta", "claude_mode"))
+    if "codex" in binding["clients"]:
+        names.update(("codex", "catalog"))
+    return names
 
 
 def _claude_profile(descriptor, configuration):
@@ -401,9 +466,9 @@ def _apply(home, transaction, paths, binding, verified, *, initial, migrate_exis
         baseline = {}
         previous = {}
     else:
-        if set(ownership) != {"schema_version", "baseline", "installed"}:
+        if set(ownership) != {"schema_version", "baseline", "installed", "applied"}:
             raise ConfigurationError("Invalid enrollment ownership record.")
-        if type(ownership["schema_version"]) is not int or ownership["schema_version"] != 1:
+        if type(ownership["schema_version"]) is not int or ownership["schema_version"] != 2:
             raise ConfigurationError("Unsupported enrollment ownership schema.")
         baseline, previous = ownership["baseline"], ownership["installed"]
         expected_keys = set()
@@ -413,6 +478,7 @@ def _apply(home, transaction, paths, binding, verified, *, initial, migrate_exis
             expected_keys.add("codex_catalog_hash")
         if (
             not isinstance(baseline, dict)
+            or set(baseline) != _settings_names(binding)
             or not isinstance(previous, dict)
             or set(previous) != expected_keys
             or (
@@ -453,6 +519,27 @@ def _apply(home, transaction, paths, binding, verified, *, initial, migrate_exis
             name: None if before is None else base64.b64encode(before).decode()
             for name, (_, before) in changes.items()
         }
+        applied = {}
+    else:
+        applied = ownership["applied"]
+        if not isinstance(applied, dict) or set(applied) != set(baseline):
+            raise ConfigurationError("Invalid applied settings snapshot.")
+        for name, (body, before) in changes.items():
+            if name == "catalog":
+                continue
+            original = _snapshot_body(baseline[name])
+            old = _snapshot_body(applied[name])
+            adjusted = _baseline_with_edits(
+                _settings_value(name, before),
+                _settings_value(name, body),
+                _settings_value(name, original),
+                _settings_value(name, old),
+            )
+            if adjusted != _settings_value(name, original):
+                baseline[name] = base64.b64encode(
+                    tomlkit.dumps(adjusted).encode() if name == "codex" else _json(adjusted)
+                ).decode()
+    applied.update({name: base64.b64encode(body).decode() for name, (body, _) in changes.items()})
     for name, (body, before) in changes.items():
         transaction.stage(paths[name], body, expected=before)
     if initial:
@@ -460,7 +547,9 @@ def _apply(home, transaction, paths, binding, verified, *, initial, migrate_exis
         transaction.stage(paths["binding"], _json(binding), expected=None)
     transaction.stage(
         paths["ownership"],
-        _json({"schema_version": 1, "baseline": baseline, "installed": installed}),
+        _json(
+            {"schema_version": 2, "baseline": baseline, "installed": installed, "applied": applied}
+        ),
         expected=ownership_body,
     )
     cache_before = _read(paths["cache"])
@@ -594,3 +683,120 @@ def status(*, home=None):
     binding, _, _ = _binding(home)
     value, _ = _object_file(home / STATE / "status.json", private=True)
     return {**value, "clients": binding["clients"]}
+
+
+def restore(*, home=None):
+    """Restore owned settings, preserving later edits and encrypted credentials."""
+    from . import configuration_schedule
+
+    if home is None:
+        _preflight()
+    home = home or Path.home()
+    binding, original, descriptor = _binding(home)
+    paths = _paths(home, descriptor)
+    with FileTransaction(home / STATE, paths.values()) as transaction:
+        _, current, _ = _binding(home)
+        _guard(current, original)
+        ownership, _ = _object_file(paths["ownership"], private=True)
+        names = _settings_names(binding)
+        if (
+            set(ownership) != {"schema_version", "baseline", "installed", "applied"}
+            or type(ownership["schema_version"]) is not int
+            or ownership["schema_version"] != 2
+            or not isinstance(ownership["baseline"], dict)
+            or not isinstance(ownership["applied"], dict)
+            or set(ownership["baseline"]) != names
+            or set(ownership["applied"]) != names
+        ):
+            raise ConfigurationError("Invalid enrollment recovery record.")
+        _guard(_read(paths["helper"]), (_helper(binding), 0o700))
+        desired = {}
+        for name in sorted(names):
+            stored = _read(paths[name])
+            before = None if stored is None else stored[0]
+            applied = _snapshot_body(ownership["applied"][name])
+            baseline = _snapshot_body(ownership["baseline"][name])
+            if name == "catalog":
+                _guard(before, applied)
+                desired[name] = baseline, before
+                continue
+            now, ours, old = (_settings_value(name, body) for body in (before, applied, baseline))
+            # Routing changes require review, never delete a helper still in use
+            # by a locally altered provider or command.
+            if name == "claude_cli":
+                if not isinstance(now.get("env", {}), dict) or not isinstance(
+                    ours.get("env", {}), dict
+                ):
+                    raise ConfigurationError("Invalid Claude environment settings.")
+                _guard(now.get("apiKeyHelper"), ours.get("apiKeyHelper"))
+                _guard(
+                    now.get("env", {}).get("ANTHROPIC_BASE_URL"),
+                    ours.get("env", {}).get("ANTHROPIC_BASE_URL"),
+                )
+            elif name == "claude_profile":
+                for key in CLAUDE_ROUTING:
+                    _guard(now.get(key), ours.get(key))
+            elif name == "codex":
+                if not isinstance(now.get("model_providers", {}), dict) or not isinstance(
+                    ours.get("model_providers", {}), dict
+                ):
+                    raise ConfigurationError("Invalid Codex providers.")
+                for key in ("model_provider", "model_catalog_json"):
+                    _guard(now.get(key), ours.get(key))
+                _guard(
+                    now.get("model_providers", {}).get(codex_client.PROVIDER),
+                    ours.get("model_providers", {}).get(codex_client.PROVIDER),
+                )
+            restored = client.revert_managed(now, ours, old)
+            if name == "claude_meta":
+                profile_id = paths["claude_profile"].stem
+                entries = now.get("entries")
+                owned_entries = ours.get("entries")
+                if (
+                    not isinstance(entries, list)
+                    or not isinstance(owned_entries, list)
+                    or any(not isinstance(e, dict) for e in [*entries, *owned_entries])
+                ):
+                    raise ConfigurationError("Invalid Claude profile library.")
+                matching = [e for e in owned_entries if e.get("id") == profile_id]
+                if len(matching) != 1:
+                    raise ConfigurationError("Invalid enrolled profile entry.")
+                owned_entry = matching[0]
+                if any(e.get("id") == profile_id and e != owned_entry for e in entries):
+                    raise ConfigurationError("The enrolled profile entry changed; review recovery.")
+                restored["entries"] = [e for e in entries if e.get("id") != profile_id]
+                if not restored["entries"] and "entries" not in old:
+                    restored.pop("entries", None)
+            body = (
+                baseline
+                if now == ours
+                else None
+                if not restored and baseline is None
+                else tomlkit.dumps(
+                    codex_client.sync_document(tomlkit.parse((before or b"").decode()), restored)
+                ).encode()
+                if name == "codex"
+                else _json(restored)
+            )
+            desired[name] = body, before
+        # Validate all targets before pausing the job. Failure after this point
+        # leaves a safely paused job; retry is explicit, never auto-reenabled.
+        configuration_schedule.pause_for_restore(home=home)
+        for name, (body, before) in desired.items():
+            transaction.stage(paths[name], body, expected=before)
+        archived = _read(paths["restored"])
+        transaction.stage(
+            paths["restored"],
+            _json({"restored_at": datetime.now(UTC).isoformat(), "binding": binding, **ownership}),
+            expected=None if archived is None else archived[0],
+        )
+        for name in ("binding", "ownership", "cache", "status", "helper"):
+            stored = _read(paths[name])
+            transaction.stage(paths[name], None, expected=None if stored is None else stored[0])
+        transaction.commit()
+    return {
+        "state": "restored",
+        "automatic_refresh": False,
+        "credentials": "preserved_in_encrypted_store",
+        "history": "preserved",
+    }
