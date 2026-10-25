@@ -29,7 +29,7 @@ from .configuration_client import (
     fetch_configuration,
     fetch_initial_configuration,
 )
-from .enrollment_auth import EnrolledAzureCli, _claims
+from .enrollment_auth import EnrolledMsal, _claims
 from .local_update import FileTransaction, _read
 
 STATE = ".config/claude-foundry/enrollment"
@@ -69,11 +69,12 @@ def _object_file(path, *, default=None, private=False):
 
 def _descriptor_value(descriptor):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "organization_id": descriptor.organization_id,
         "tenant_id": descriptor.tenant_id,
         "configuration_url": descriptor.configuration_url,
         "configuration_resource_id": descriptor.configuration_resource_id,
+        "public_client_id": descriptor.public_client_id,
         "routes": {
             route.client: {"route_id": route.route_id, "gateway_url": route.gateway_url}
             for route in descriptor.routes
@@ -528,8 +529,8 @@ def enroll(
                 if "codex" in selected
                 else None,
             }
-        auth = EnrolledAzureCli(
-            descriptor, home / STATE / "azure", subject_id=binding["subject_id"]
+        auth = EnrolledMsal(
+            descriptor, home / STATE / "credentials", subject_id=binding["subject_id"]
         )
         token = auth.login()
         verified = fetch_initial_configuration(descriptor, token)
@@ -539,9 +540,9 @@ def enroll(
             _guard(verified.subject_id, binding["subject_id"])
         binding["subject_id"] = verified.subject_id
         # Validate inference credentials before replacing a working installation.
-        EnrolledAzureCli(
-            descriptor, home / STATE / "azure", subject_id=verified.subject_id
-        ).inference_token()
+        EnrolledMsal(
+            descriptor, home / STATE / "credentials", subject_id=verified.subject_id
+        ).inference_token(interactive=True)
         return _apply(
             home,
             transaction,
@@ -563,8 +564,8 @@ def refresh(*, home=None, login=False):
     with FileTransaction(home / STATE, paths.values()) as transaction:
         binding, current, descriptor = _binding(home)
         _guard(current, original)
-        auth = EnrolledAzureCli(
-            descriptor, home / STATE / "azure", subject_id=binding["subject_id"]
+        auth = EnrolledMsal(
+            descriptor, home / STATE / "credentials", subject_id=binding["subject_id"]
         )
         token = auth.login() if login else auth.configuration_token()
         verified = fetch_configuration(
@@ -573,6 +574,8 @@ def refresh(*, home=None, login=False):
             token,
             previous=_cache(paths["cache"], descriptor, binding["subject_id"]),
         )
+        if login:
+            auth.inference_token(interactive=True)
         return _apply(home, transaction, paths, binding, verified, initial=False)
 
 
@@ -580,8 +583,8 @@ def inference_token(*, home=None):
     """Called only by the fixed helper, never grants access from cached model data."""
     home = home or Path.home()
     binding, _, descriptor = _binding(home)
-    return EnrolledAzureCli(
-        descriptor, home / STATE / "azure", subject_id=binding["subject_id"]
+    return EnrolledMsal(
+        descriptor, home / STATE / "credentials", subject_id=binding["subject_id"]
     ).inference_token()
 
 

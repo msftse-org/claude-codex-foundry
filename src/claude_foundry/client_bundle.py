@@ -93,7 +93,7 @@ user's current published policy determines the available models and server-side 
 
 ## Install
 
-1. Install your organization's approved {target} and Azure CLI.
+1. Install your organization's approved {target}. Azure CLI is not required.
 2. Save active work, extract the ZIP, open the `claude-foundry` folder, then run
    `bash Install.command` (or double-click it).
 3. Review the connection details and complete Microsoft work-account sign-in and MFA.
@@ -116,16 +116,17 @@ Use `~/.local/share/claude-foundry/runtime/bin/claude-foundry configuration-stat
 Use `disable-refresh` to stop the background job. Do not use the legacy `restore` command on an
 enrolled installation; see [the pilot guide](docs/client-configuration-refresh.md) for limitations.
 
-Azure CLI stores its isolated authentication cache in a user-private directory. On macOS this
-cache may be plaintext: your organization's endpoint-security review is required before this
-pilot is offered to users. This installer does not claim an encrypted cache or change Azure
-resources. Never paste tokens into a chat or send them to your administrator.
+MSAL stores credentials in macOS Keychain, with no plaintext fallback. A locked or unavailable
+key store stops sign-in/refresh. Background refresh never opens a login window. Conditional
+Access may occasionally require foreground sign-in again, and enrollment may need separate
+configuration and inference consent prompts. This installer does not change Azure resources.
+Never paste tokens into a chat or send them to your administrator.
 """
     instructions = """# Installation assistant instructions
 
 Read README.md, enrollment.json and installation.json first. Use bash Install.command from this
 folder for the user's requested local setup. Do not invent a gateway, change the enrollment
-descriptor, or substitute a legacy client profile. Azure CLI is required for this pilot.
+descriptor, or substitute a legacy client profile. Encrypted credential storage is required.
 
 Let the user complete explicit Microsoft sign-in. Never print, request or copy access tokens.
 Existing JSON migration and enabling background refresh each require the user's explicit choice.

@@ -109,6 +109,7 @@ class EnrollmentDescriptor:
     tenant_id: str
     configuration_url: str
     configuration_resource_id: str
+    public_client_id: str
     routes: tuple[EnrolledRoute, ...]
 
     @classmethod
@@ -121,11 +122,16 @@ class EnrollmentDescriptor:
                 "tenant_id",
                 "configuration_url",
                 "configuration_resource_id",
+                "public_client_id",
                 "routes",
             },
         )
-        if type(value["schema_version"]) is not int or value["schema_version"] != 1:
+        if type(value["schema_version"]) is not int or value["schema_version"] != 2:
             raise ConfigurationError("Unsupported enrollment schema.")
+        resource = _uuid(value["configuration_resource_id"])
+        public_client = _uuid(value["public_client_id"])
+        if public_client in {resource, "04b07795-8ddb-461a-bbee-02f9e1bf7b46"}:
+            raise ConfigurationError("Enrollment requires a separate organization public client.")
         routes = value["routes"]
         if not isinstance(routes, dict) or not routes or set(routes) - {"claude", "codex"}:
             raise ConfigurationError("Invalid enrollment routes.")
@@ -142,7 +148,8 @@ class EnrollmentDescriptor:
             _uuid(value["organization_id"]),
             _uuid(value["tenant_id"]),
             _url(value["configuration_url"], configuration=True),
-            _uuid(value["configuration_resource_id"]),
+            resource,
+            public_client,
             tuple(parsed),
         )
 

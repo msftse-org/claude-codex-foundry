@@ -1,9 +1,8 @@
-"""Isolated Azure CLI credentials for an explicitly enrolled account.
+"""Encrypted, account-bound credentials for an explicitly enrolled user.
 
-JWT payload inspection here is only an account/audience consistency guard.
-The configuration API and governed inference gateway validate the signatures
-and authorize every request. Never use these inspected claims as an access grant.
-Azure CLI's macOS/Linux cache is plaintext; this pilot does not claim otherwise.
+MSAL and the platform key store own token persistence; no plaintext fallback.
+JWT payload inspection is only a consistency guard. The configuration API and
+governed inference gateway verify signatures and authorize the actual request.
 """
 
 import base64
@@ -12,21 +11,24 @@ import math
 import os
 import re
 import stat
-import subprocess
+import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
-from .azure import find_az
 from .config import TOKEN_RESOURCE
 from .configuration_client import (
-    ConfigurationError,
     EnrollmentDescriptor,
     SignInRequired,
     _pairs,
     _uuid,
 )
+from .local_update import _read
 
-AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+SIGN_IN_REQUIRED = (
+    "Organization sign-in is required or the enrolled account changed; "
+    "run foreground refresh --login. Background helpers cannot sign in."
+)
 
 
 def _cache_directory(directory):
@@ -68,50 +70,71 @@ def _claims(token):
         raise SignInRequired("The credential has an unsupported format.") from None
 
 
-class EnrolledAzureCli:
-    """No implicit login, shared cache, account selection or token persistence."""
+def _application(descriptor, directory):
+    """Create encrypted persistence before any authentication request."""
+    import msal
+    from msal_extensions import PersistedTokenCache, build_encrypted_persistence
+
+    location = directory / "token-cache"
+    # MSAL extensions manages its own cross-process lock. Reject substituted
+    # marker/cache/lock files before passing paths to that library.
+    _read(location)
+    _read(location.with_name(location.name + ".lockfile"))
+    persistence = build_encrypted_persistence(str(location))
+    if not persistence.is_encrypted:
+        raise RuntimeError("Encrypted credential storage is required.")
+    return msal.PublicClientApplication(
+        descriptor.public_client_id,
+        authority=f"https://login.microsoftonline.com/{descriptor.tenant_id}",
+        token_cache=PersistedTokenCache(persistence),
+        timeout=10,
+        allow_broker=False,
+        enable_pii_log=False,
+    )
+
+
+@contextmanager
+def _keychain_interaction(interactive):
+    """Suppress macOS key-store dialogs in this short-lived CLI/helper process."""
+    if sys.platform != "darwin" or interactive:
+        yield
+        return
+    import ctypes
+
+    security = ctypes.CDLL("/System/Library/Frameworks/Security.framework/Security")
+    get_allowed = security.SecKeychainGetUserInteractionAllowed
+    get_allowed.argtypes, get_allowed.restype = [ctypes.POINTER(ctypes.c_ubyte)], ctypes.c_int32
+    set_allowed = security.SecKeychainSetUserInteractionAllowed
+    set_allowed.argtypes, set_allowed.restype = [ctypes.c_ubyte], ctypes.c_int32
+    previous = ctypes.c_ubyte()
+    if get_allowed(ctypes.byref(previous)) != 0 or set_allowed(0) != 0:
+        raise RuntimeError("Cannot disable credential dialogs.")
+    try:
+        yield
+    finally:
+        if set_allowed(previous.value) != 0:
+            raise RuntimeError("Cannot restore credential dialog policy.")
+
+
+class EnrolledMsal:
+    """Explicit browser login; silent refresh for one immutable tenant/user."""
 
     def __init__(self, descriptor, directory, *, subject_id=None):
         if not isinstance(descriptor, EnrollmentDescriptor):
             raise SignInRequired("A reviewed enrollment descriptor is required.")
         self.descriptor = descriptor
-        self.directory = _cache_directory(directory)
+        root = _cache_directory(directory)
+        self.directory = _cache_directory(root / descriptor.tenant_id / descriptor.public_client_id)
         self.subject_id = _uuid(subject_id) if subject_id is not None else None
 
-    def _environment(self):
-        return dict(
-            os.environ,
-            AZURE_CONFIG_DIR=str(self.directory),
-            AZURE_CORE_LOGIN_EXPERIENCE_V2="off",
-            AZURE_CORE_COLLECT_TELEMETRY="no",
-        )
-
     def login(self):
-        """Explicit foreground enrollment/reauthentication only; never called by token()."""
-        try:
-            # Leave the browser/device-code instructions visible in this explicit
-            # interactive action. No token is printed or returned by `az login`.
-            result = subprocess.run(
-                [
-                    find_az(),
-                    "login",
-                    "--tenant",
-                    self.descriptor.tenant_id,
-                    "--allow-no-subscriptions",
-                    "--scope",
-                    self.descriptor.scope,
-                    "--only-show-errors",
-                    "--output",
-                    "none",
-                ],
-                env=self._environment(),
-                timeout=360,
-            )
-            if result.returncode:
-                raise SignInRequired("Organization sign-in did not complete.")
-        except (OSError, subprocess.TimeoutExpired):
-            raise SignInRequired("Organization sign-in did not complete.") from None
-        return self.configuration_token()
+        """Foreground only: select an account explicitly, never by cache ordering."""
+        return self._token(
+            self.descriptor.scope,
+            self.descriptor.configuration_resource_id,
+            "configuration.read",
+            interactive=True,
+        )
 
     def configuration_token(self):
         return self._token(
@@ -120,63 +143,72 @@ class EnrolledAzureCli:
             "configuration.read",
         )
 
-    def inference_token(self):
+    def inference_token(self, *, interactive=False):
         if self.subject_id is None:
             raise SignInRequired("Complete organization enrollment before requesting inference.")
-        return self._token(TOKEN_RESOURCE + "/.default", TOKEN_RESOURCE, "user_impersonation")
+        return self._token(
+            TOKEN_RESOURCE + "/.default",
+            TOKEN_RESOURCE,
+            "user_impersonation",
+            interactive=interactive,
+        )
 
-    def _token(self, scope, audience, permission):
+    def _token(self, scope, audience, permission, *, interactive=False):
         try:
-            result = subprocess.run(
-                [
-                    find_az(),
-                    "account",
-                    "get-access-token",
-                    "--tenant",
-                    self.descriptor.tenant_id,
-                    "--scope",
-                    scope,
-                    "--only-show-errors",
-                    "--output",
-                    "json",
-                ],
-                env=self._environment(),
-                text=True,
-                capture_output=True,
-                timeout=30,
+            with _keychain_interaction(interactive):
+                return self._acquire(scope, audience, permission, interactive=interactive)
+        except Exception:
+            # Persistence/network/MSAL exceptions may include account details,
+            # diagnostic URLs and response bodies. Never expose or log them.
+            # An unavailable key store fails closed, including during login.
+            raise SignInRequired(SIGN_IN_REQUIRED) from None
+
+    def _acquire(self, scope, audience, permission, *, interactive):
+        app = _application(self.descriptor, self.directory)
+        accounts = (
+            [
+                account
+                for account in app.get_accounts()
+                if account.get("realm") == self.descriptor.tenant_id
+                and account.get("local_account_id") == self.subject_id
+            ]
+            if self.subject_id is not None
+            else []
+        )
+        if len(accounts) > 1:
+            raise ValueError
+        account = accounts[0] if accounts else None
+        result = app.acquire_token_silent_with_error([scope], account=account) if account else None
+        if interactive and (not result or "access_token" not in result):
+            # MSAL implements the browser/loopback PKCE flow. Deliberately
+            # do not support a background/device-code/password fallback.
+            result = app.acquire_token_interactive(
+                scopes=[scope], prompt="select_account", timeout=300
             )
-            if result.returncode or len(result.stdout) > 32768:
-                raise ValueError
-            response = json.loads(result.stdout, object_pairs_hook=_pairs)
-            token = response["accessToken"]
-            claims = _claims(token)
-            subject = _uuid(claims.get("oid"))
-            if (
-                claims.get("tid") != self.descriptor.tenant_id
-                or claims.get("aud") != audience
-                or (self.subject_id is not None and subject != self.subject_id)
-                or claims.get("azp", claims.get("appid")) != AZURE_CLI_CLIENT_ID
-                or claims.get("idtyp") == "app"
-                or not isinstance(claims.get("scp"), str)
-                or permission not in claims["scp"].split()
-                or type(claims.get("exp")) not in {int, float}
-                or not math.isfinite(claims["exp"])
-                or not claims["exp"] > time.time()
-            ):
-                raise ValueError
-            return token
-        except (
-            KeyError,
-            TypeError,
-            ValueError,
-            RecursionError,
-            OSError,
-            subprocess.TimeoutExpired,
-            ConfigurationError,
+        if not isinstance(result, dict):
+            raise ValueError
+        token = result.get("access_token")
+        claims = _claims(token)
+        subject = _uuid(claims.get("oid"))
+        if (
+            claims.get("tid") != self.descriptor.tenant_id
+            or claims.get("aud") != audience
+            or (self.subject_id is not None and subject != self.subject_id)
+            or claims.get("azp", claims.get("appid")) != self.descriptor.public_client_id
+            or claims.get("idtyp") == "app"
+            or not isinstance(claims.get("scp"), str)
+            or permission not in claims["scp"].split()
+            or type(claims.get("exp")) not in {int, float}
+            or not math.isfinite(claims["exp"])
+            or not claims["exp"] > time.time()
         ):
-            # CLI stderr can contain tenant/account details or diagnostic URLs.
-            # Never echo it, stdout, the token or the underlying exception.
-            raise SignInRequired(
-                "Organization sign-in is required or the enrolled account changed; "
-                "background helpers cannot sign in."
-            ) from None
+            raise ValueError
+        matches = [
+            account
+            for account in app.get_accounts()
+            if account.get("realm") == self.descriptor.tenant_id
+            and account.get("local_account_id") == subject
+        ]
+        if len(matches) != 1:
+            raise ValueError
+        return token

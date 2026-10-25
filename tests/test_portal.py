@@ -1764,11 +1764,9 @@ def configuration_headers(org, key, oid=OWNER, **overrides):
 
 @pytest.fixture
 def enrollment_app(configuration_app, org, monkeypatch, tmp_path):
-    from claude_foundry.enrollment_auth import AZURE_CLI_CLIENT_ID
-
     application, ledger, snapshots, *members = configuration_app
     for name, value in {
-        "PORTAL_CONFIGURATION_CLIENT_IDS_JSON": json.dumps([CONFIG_CLIENT, AZURE_CLI_CLIENT_ID]),
+        "PORTAL_ENROLLMENT_CLIENT_ID": CONFIG_CLIENT,
         "PORTAL_CLIENT_ENROLLMENT_ENABLED": "1",
         "PORTAL_ENROLLMENT_ORIGIN": "https://portal.example.com",
     }.items():
@@ -1812,12 +1810,15 @@ def test_enrollment_uses_own_published_grants_and_fixed_origin(enrollment_app, o
             value["descriptor"]["configuration_url"] == "https://portal.example.com" + CONFIG_PATH
         )
         assert value["descriptor"]["organization_id"] == CONFIG_ORGANIZATION
+        assert value["descriptor"]["schema_version"] == 2
+        assert value["descriptor"]["public_client_id"] == CONFIG_CLIENT
         assert set(value["descriptor"]) == {
             "schema_version",
             "organization_id",
             "tenant_id",
             "configuration_url",
             "configuration_resource_id",
+            "public_client_id",
             "routes",
         }
         assert "hostile" not in response.text and developer["id"] not in response.text
@@ -1896,7 +1897,7 @@ def test_enrollment_requires_its_credential_client_to_be_allowed(
 ):
     app, ledger, snapshots, *_ = configuration_app
     monkeypatch.setenv("PORTAL_CLIENT_ENROLLMENT_ENABLED", "1")
-    with pytest.raises(ValueError, match="Azure CLI configuration"):
+    with pytest.raises(ValueError, match="organization public client"):
         create_app(
             org, app.state.store, credential=object(), local=False, budget=(ledger, snapshots)
         )

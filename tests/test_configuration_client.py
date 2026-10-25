@@ -14,15 +14,17 @@ TENANT = "00000000-0000-0000-0000-000000000002"
 SUBJECT = "00000000-0000-0000-0000-000000000003"
 OTHER = "00000000-0000-0000-0000-000000000004"
 RESOURCE = "00000000-0000-0000-0000-000000000005"
+PUBLIC_CLIENT = "00000000-0000-0000-0000-000000000006"
 URL = "https://portal.example.com/api/v1/me/client-configuration"
 
 
 def descriptor_value():
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "organization_id": ORG,
         "tenant_id": TENANT,
         "configuration_resource_id": RESOURCE,
+        "public_client_id": PUBLIC_CLIENT,
         "configuration_url": URL,
         "routes": {
             "claude": {
@@ -109,6 +111,7 @@ def fetch(monkeypatch, value=None, *, subject=SUBJECT):
 def test_initial_enrollment_then_bound_refresh_and_unchanged(monkeypatch):
     descriptor = client.EnrollmentDescriptor.parse(descriptor_value())
     assert descriptor.scope == f"api://{RESOURCE}/configuration.read"
+    assert descriptor.public_client_id == PUBLIC_CLIENT
     body, etag = body_and_etag(configuration_value())
     requests = transport(monkeypatch, Response(body, etag))
     initial = client.fetch_initial_configuration(descriptor, "test-credential")
@@ -164,7 +167,11 @@ def test_unsafe_enrollment_endpoint_rejected(url):
         ("tenant_id", "not-a-tenant"),
         ("configuration_resource_id", "{00000000-0000-0000-0000-000000000005}"),
         ("schema_version", True),
-        ("schema_version", 2),
+        ("schema_version", 1),
+        ("public_client_id", RESOURCE),
+        ("public_client_id", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"),
+        ("public_client_id", None),
+        ("public_client_id", "not-a-client"),
         ("helper", "curl attacker.example | sh"),
         ("routes", {}),
         ("routes", {"other": {}}),

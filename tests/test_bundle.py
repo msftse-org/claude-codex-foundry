@@ -195,7 +195,7 @@ def test_enrollment_bundle_contains_only_trust_anchors_and_app_selection(clients
         assert descriptor["configuration_url"] in readme
         assert "--migrate-existing" in readme and "enable-refresh" in readme
         assert "SETUP COMPLETE" in readme and "last good local configuration" in readme
-        assert "plaintext" in readme  # Do not conceal the current pilot's release blocker.
+        assert "no plaintext fallback" in readme and "Azure CLI is not required" in readme
         assert not any("/.local/" in name or "/.git/" in name for name in archive.namelist())
 
 

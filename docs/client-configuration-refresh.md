@@ -37,6 +37,7 @@ or downloaded refresh response:
 | `PORTAL_CONFIGURATION_DEPLOYMENTS_JSON` | Reviewed deployment map matching the budget runtime's bounds |
 | `PORTAL_CLIENT_ENROLLMENT_ENABLED` | Exactly `1` enables the experimental link/ZIP onboarding page; `0` by default |
 | `PORTAL_ENROLLMENT_ORIGIN` | Reviewed canonical HTTPS portal origin, without path, query or trailing slash |
+| `PORTAL_ENROLLMENT_CLIENT_ID` | Dedicated organization public-client UUID, present in the configuration client allowlist; not Azure CLI |
 
 The deployment map has this shape, with no additional fields:
 
@@ -133,11 +134,12 @@ never replace it:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "organization_id": "00000000-0000-0000-0000-000000000001",
   "tenant_id": "00000000-0000-0000-0000-000000000002",
   "configuration_url": "https://portal.example.com/api/v1/me/client-configuration",
   "configuration_resource_id": "00000000-0000-0000-0000-000000000004",
+  "public_client_id": "00000000-0000-0000-0000-000000000005",
   "routes": {
     "claude": {
       "route_id": "claude-gateway",
@@ -169,13 +171,21 @@ noncanonical URLs; it is not a general SSRF defense against arbitrary DNS
 aliases. Distribution through the reviewed organization setup channel remains
 essential. This component alone does not make unattended refresh available.
 
-## Enrolled Azure CLI credentials
+## Enrolled encrypted credentials
 
-`enrollment_auth.py` adds the credential provider for the Azure CLI pilot.
-It uses an installer-owned absolute directory with mode `0700`, rejects
-symlinked cache paths, and passes `AZURE_CONFIG_DIR` only to child processes.
-It never changes the user's normal Azure CLI account or cache. Initial login
-is an explicit foreground operation; background token reads cannot sign in.
+`enrollment_auth.py` uses an organization-owned single-tenant public client
+and MSAL's browser/loopback PKCE flow. The descriptor pins that public client
+separately from the configuration API resource. Descriptor schema 2 is required;
+the unreleased schema 1 Azure CLI pilot is not silently reinterpreted.
+Azure CLI is not required for enrollment and its normal account/cache is untouched.
+
+MSAL extensions owns token persistence and cross-process cache locking. On
+macOS credentials are stored in Keychain; the private `0700` state directory
+contains only cache-change markers and lock files. There is **no plaintext
+fallback**. An unavailable or locked store fails closed. Noninteractive reads
+also disable macOS Keychain interaction for the short-lived helper process,
+so background refresh cannot display an unlock or sign-in dialog. Initial
+login and explicit `refresh --login` may interact with the user.
 
 Configuration reads request only `api://<resource-id>/configuration.read`;
 inference reads request only Cognitive Services `user_impersonation`.
@@ -186,13 +196,13 @@ access. The API and gateway still validate and authorize the actual request.
 The authoritative enrollment subject must come from the authenticated API
 response, not an unverified local token.
 
-An account switch or interaction-required response stops the helper with a
-safe sign-in-required error. The wrapper never prints CLI diagnostic output
-or persists tokens itself. Azure CLI still owns its cache and may store
-credentials there in plaintext on macOS/Linux. This is the existing pilot
-authentication posture, not an encrypted-cache fallback or a new security
-guarantee. Approval of that posture is a release gate; use the encrypted MSAL
-path instead where endpoint policy prohibits it.
+Silent requests select exactly one account with the enrolled tenant and object
+ID, never the first account in a shared cache. An account switch, duplicate
+account, storage failure or interaction-required response stops the helper
+with a sanitized sign-in-required error. MSAL response bodies and tokens are
+never printed in diagnostics. Foreground reauthentication cannot silently
+change the enrolled user. Entra registration/consent, actual Keychain behavior,
+and real Conditional Access remain release qualification gates.
 
 ## Explicit macOS pilot enrollment
 
@@ -212,11 +222,13 @@ Codex uses its approved locally installed binary to render version-matched
 catalog metadata; `--codex-binary /absolute/path/to/codex` selects that binary
 explicitly. No executable path can come from the API.
 
-Enrollment opens one foreground Entra sign-in, establishes the user from the
+Enrollment starts foreground Entra sign-in, establishes the user from the
 authenticated API response and checks inference credentials before replacing
 client files. Subsequent `refresh` calls never sign in. An interaction-required
 failure needs an explicit foreground `refresh --login`; an account switch is
-still refused. One organization and one user are supported per installation.
+still refused. Configuration and inference consent/Conditional Access may require
+separate prompts; exactly one prompt is not promised. One organization and one
+user are supported per installation.
 
 An existing matching JSON installation requires `--migrate-existing` once.
 Migration checks the recorded tenant and gateway, recognizes the existing

@@ -80,10 +80,6 @@ uv pip install --python "$task_runtime/bin/python" --no-deps "$task_root"
 task_codex_app="${CLAUDE_FOUNDRY_CODEX_APP:-/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex}"
 task_codex_cli="${CLAUDE_FOUNDRY_CODEX_CLI:-codex}"
 if [[ -n "$task_descriptor" ]]; then
-  if ! command -v az >/dev/null 2>&1; then
-    echo 'SETUP DID NOT COMPLETE. This enrollment pilot requires Azure CLI. Install it using your organization’s approved method, or rerun with --install-azure-cli when Homebrew is available.' >&2
-    exit 1
-  fi
   if [[ ${#task_clients[@]} -eq 0 ]]; then
     # Fixed, reviewed installation choice, not a model grant or executable command.
     task_selection="$("$task_runtime/bin/python" -c '

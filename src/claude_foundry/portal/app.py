@@ -19,7 +19,6 @@ from pydantic import ValidationError
 from ..client_bundle import build_bundle, build_enrollment_bundle, build_template
 from ..config import export_client, load_org
 from ..configuration_client import ConfigurationError, EnrollmentDescriptor
-from ..enrollment_auth import AZURE_CLI_CLIENT_ID
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator, ConfigurationAuthenticator
 from .boundary import RequestBoundary
@@ -129,16 +128,18 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     if enrollment_enabled not in {"0", "1"}:
         raise ValueError("Client enrollment enablement must be 0 or 1")
     if enrollment_enabled == "1":
-        if configuration_auth is None or AZURE_CLI_CLIENT_ID not in authorized_clients:
-            raise ValueError("Client enrollment requires the enabled Azure CLI configuration API")
+        public_client = os.getenv("PORTAL_ENROLLMENT_CLIENT_ID")
+        if configuration_auth is None or public_client not in authorized_clients:
+            raise ValueError("Client enrollment requires an allowed organization public client")
         # Never trust Host/X-Forwarded-Host to choose a future credential destination.
         origin = os.environ["PORTAL_ENROLLMENT_ORIGIN"]
         enrollment_descriptor = {
-            "schema_version": 1,
+            "schema_version": 2,
             "organization_id": configuration_organization,
             "tenant_id": config["tenant_id"],
             "configuration_url": origin + CONFIGURATION_PATH,
             "configuration_resource_id": resource_id,
+            "public_client_id": public_client,
             "routes": {
                 name: {"route_id": provider["api_id"], "gateway_url": provider["gateway_url"]}
                 for name, provider in providers.items()

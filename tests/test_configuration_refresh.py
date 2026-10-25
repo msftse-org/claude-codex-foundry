@@ -60,6 +60,8 @@ def pilot(tmp_path, monkeypatch):
     }
     monkeypatch.setattr(refresh.codex_client, "bundled_catalog", lambda _: native)
     calls = []
+    payload = base64.urlsafe_b64encode(json.dumps({"oid": SUBJECT}).encode()).decode().rstrip("=")
+    login_token = f"header.{payload}.signature"
 
     class Auth:
         def __init__(self, selected, directory, subject_id=None):
@@ -67,25 +69,22 @@ def pilot(tmp_path, monkeypatch):
 
         def login(self):
             calls.append(("login",))
-            payload = (
-                base64.urlsafe_b64encode(json.dumps({"oid": SUBJECT}).encode()).decode().rstrip("=")
-            )
-            return f"header.{payload}.signature"
+            return login_token
 
         def configuration_token(self):
             calls.append(("configuration-token",))
             return "configuration-credential"
 
-        def inference_token(self):
-            calls.append(("inference-token",))
+        def inference_token(self, *, interactive=False):
+            calls.append(("inference-token", interactive))
             return "inference-credential"
 
-    monkeypatch.setattr(refresh, "EnrolledAzureCli", Auth)
+    monkeypatch.setattr(refresh, "EnrolledMsal", Auth)
     monkeypatch.setattr(refresh, "fetch_initial_configuration", lambda *_: verified())
 
     def fetch(selected, subject, token, *, previous):
         assert selected == EnrollmentDescriptor.parse(descriptor_value())
-        assert subject == SUBJECT and token == "configuration-credential"
+        assert subject == SUBJECT and token in {"configuration-credential", login_token}
         assert previous == verified()
         return verified()
 
@@ -112,8 +111,10 @@ def test_initial_enrollment_pins_identity_routes_helpers_and_private_state(pilot
     assert binding["subject_id"] == SUBJECT
     assert binding["descriptor"] == descriptor_value()
     assert [call[0] for call in calls].count("login") == 1
-    assert ("inference-token",) in calls
-    assert all(call[2] == home / refresh.STATE / "azure" for call in calls if call[0] == "auth")
+    assert ("inference-token", True) in calls
+    assert all(
+        call[2] == home / refresh.STATE / "credentials" for call in calls if call[0] == "auth"
+    )
     assert read(paths["claude_cli"])["env"]["ANTHROPIC_BASE_URL"].endswith("/claude")
     desktop = read(paths["claude_profile"])
     assert desktop["inferenceGatewayBaseUrl"].endswith("/claude")
@@ -143,6 +144,36 @@ def test_conditional_refresh_never_logs_in_or_changes_routing(pilot):
     after = settings(paths)
     for key in before.keys() - {"status"}:
         assert after[key] == before[key]
+
+
+def test_explicit_reauthentication_checks_both_audiences_before_applying(pilot):
+    home, _, paths, calls, enroll = pilot
+    enroll()
+    before = settings(paths)
+    calls.clear()
+    refresh.refresh(home=home, login=True)
+    assert ("login",) in calls
+    assert ("inference-token", True) in calls
+    assert ("configuration-token",) not in calls
+    assert all(call[3] == SUBJECT for call in calls if call[0] == "auth")
+    for key in before.keys() - {"status"}:
+        assert settings(paths)[key] == before[key]
+
+
+@pytest.mark.parametrize("operation", ["enroll", "refresh"])
+def test_inference_key_store_failure_never_replaces_client_settings(pilot, monkeypatch, operation):
+    home, _, paths, _, enroll = pilot
+    if operation == "refresh":
+        enroll()
+    before = settings(paths)
+
+    def fail(*_, **__):
+        raise SignInRequired("Sign-in required")
+
+    monkeypatch.setattr(refresh.EnrolledMsal, "inference_token", fail)
+    with pytest.raises(SignInRequired):
+        enroll() if operation == "enroll" else refresh.refresh(home=home, login=True)
+    assert settings(paths) == before
 
 
 def test_publish_new_models_updates_both_pickers_and_preserves_user_preferences(pilot, monkeypatch):
