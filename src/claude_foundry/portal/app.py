@@ -483,7 +483,8 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             if not url:
                 raise HTTPException(
                     409,
-                    "Configure the validated budget gateway URL before exporting governed profiles",
+                    "Your organization's setup is not ready yet. "
+                    "Ask your administrator to finish connecting the portal, then retry.",
                 )
             try:
                 data = budget[1].get(budget[0].active())
@@ -752,7 +753,13 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "setup_ready": budget is None
+            or bool(providers)
+            or bool(os.getenv("BUDGET_CLAUDE_GATEWAY_URL")),
+            "client_types": list(providers) or [config.get("client_type", "claude")],
+        }
 
     static = Path(os.getenv("PORTAL_STATIC_DIR", "portal/web/dist")).resolve()
     if static.is_dir():

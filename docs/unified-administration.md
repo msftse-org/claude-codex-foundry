@@ -48,6 +48,10 @@ Complete steps 2–7 above. Once the intended pilot clients pass the checks belo
 
 ## Acceptance and handover
 
+The developer's connection flow is **Download Mac setup ZIP → open Install.command → sign in with Microsoft**. Gateway addresses are supplied by the deployment; developers do not enter or repair them.
+
+The deployer now checks that client setup is connected for every enabled provider before reporting completion. A code-only portal update does not add missing gateway configuration. If an older installation shows “Your organization's setup is not ready yet”, the deployment administrator must finish the portal upgrade using the same private settings. For a manually assembled budget installation, retain its existing ledger and gateway configuration as described above; do not run a fresh deployment over it. No developer-side configuration change is needed.
+
 - Verify both providers in the portal catalog and in group/member model selection. Existing groups retain their previous grants; adding a provider does not automatically grant it to every group.
 - Verify each exported profile's tenant, provider, published model subset, default and governed endpoint. Codex profiles must end in `/v1`, contain only qualified OpenAI models, and contain no Claude models. A group administrator cannot export another group's grants.
 - Using the customer's exported profiles, run `claude-foundry verify --config CLAUDE_PROFILE --budgeted` for Claude and `claude-foundry verify --config CODEX_PROFILE` for Codex. These are small billable checks. Verify model listing, JSON and streaming inference for each provider. Run a real local file tool and a history follow-up with the approved native Codex and Claude clients. Test Codex compaction with its required output allowance. Keep synthetic evidence private.
