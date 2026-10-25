@@ -1,6 +1,6 @@
-# Client configuration refresh — experimental API
+# Client configuration refresh — experimental components
 
-This is the first server increment of automatic client configuration refresh,
+These are the first server/client increments of automatic configuration refresh,
 not a working end-to-end installer. It is disabled by default. Existing JSON
 installations and inference authentication are unchanged.
 
@@ -121,3 +121,48 @@ atomic reconciliation and native client/version qualification pass. Claude
 Desktop's `modelCatalogUrl` mirrors Anthropic's signed metadata; it is not this
 entitlement feed. Codex remote catalogs require a complete version-compatible
 `ModelsResponse`, not this wrapper or a generic OpenAI models response.
+
+## Client reader (not yet an installer)
+
+`configuration_client.py` implements bounded data-only reads. It does not log
+in, persist credentials/enrollment, schedule work or change application files.
+The trusted setup channel supplies this descriptor; a refresh response may
+never replace it:
+
+```json
+{
+  "schema_version": 1,
+  "organization_id": "00000000-0000-0000-0000-000000000001",
+  "tenant_id": "00000000-0000-0000-0000-000000000002",
+  "configuration_url": "https://portal.example.com/api/v1/me/client-configuration",
+  "configuration_resource_id": "00000000-0000-0000-0000-000000000004",
+  "routes": {
+    "claude": {
+      "route_id": "claude-gateway",
+      "gateway_url": "https://gateway.example.com/claude"
+    },
+    "codex": {
+      "route_id": "codex-gateway",
+      "gateway_url": "https://gateway.example.com/codex/v1"
+    }
+  }
+}
+```
+
+The reader derives the exact delegated scope from the pinned resource ID.
+Explicit initial enrollment obtains the server-authenticated subject; every
+subsequent read requires that subject. A cached response is revalidated before
+it can authorize an `If-None-Match` request. Account switches, provider/route
+changes, unknown fields, extra helper commands/URLs, invalid defaults, duplicate
+models and Claude family-default conflicts are rejected.
+
+Requests use HTTPS, no redirects, a ten-second timeout, identity encoding and
+a 256 KiB response cap. The ETag must match the bytes received. This is a
+corruption check, not an independent signature or proof of freshness: trust
+still comes from authenticated HTTPS to the reviewed endpoint. Errors expose
+neither response bodies nor tokens. The HTTP client does not retry or prompt.
+
+Descriptor validation rejects IP literals, local/metadata host names and
+noncanonical URLs; it is not a general SSRF defense against arbitrary DNS
+aliases. Distribution through the reviewed organization setup channel remains
+essential. This component alone does not make unattended refresh available.
