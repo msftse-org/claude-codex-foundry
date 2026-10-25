@@ -377,3 +377,25 @@ before helper removal. Ruff, shell syntax, package build and whitespace checks
 passed. These tests use isolated homes and mocked scheduling/authentication;
 they do not establish native scheduling, interactive Entra or application UI
 behavior.
+
+### Registration qualification — 2026-10-26
+
+The dedicated demo tenant accepted creation of the separate single-tenant API
+and public client. A read-only rerun verified their manifests against the
+saved receipt. The API exposes admin-consent delegated `configuration.read`;
+the public client requests that and Cognitive Services `user_impersonation`.
+No existing application manifest or client installation was changed.
+
+Tenant-wide consent returned `Authorization_RequestDenied` because the current
+operator lacks the necessary administrator role. This is an unresolved release
+gate, not an authentication success. Do not change the scope to user-consent,
+preauthorize the client, or reuse a more privileged client to bypass it.
+An authorized tenant administrator must review and grant the dedicated public
+client's requested delegated permissions. Keep the same receipt and registration
+identities. No feature deployment, end-user MSAL login or source merge was
+performed as part of this check. Conditional Access, actual background refresh
+and native model-picker qualification remain unverified.
+
+The complete offline Python suite passed (696 tests), including consent-failure
+sanitization and reuse of the same registrations after denial. Ruff checks and
+formatting passed. These checks do not close the live qualification gates above.

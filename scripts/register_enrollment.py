@@ -271,7 +271,14 @@ def prepare(graph, tenant, name, output, *, apply=False, consent=False):
                 "Dedicated enterprise application is disabled; review before continuing."
             )
     if consent:
-        az_json("ad", "app", "permission", "admin-consent", "--id", apps["client"]["appId"])
+        try:
+            az_json("ad", "app", "permission", "admin-consent", "--id", apps["client"]["appId"])
+        except Exception:
+            raise RuntimeError(
+                "Registrations are prepared but admin consent was not confirmed. "
+                "Ask an authorized tenant administrator to review the dedicated enrollment "
+                "application's permissions. Keep and reuse this receipt; do not create new apps."
+            ) from None
     return {
         "mode": "applied",
         "tenant_id": receipt["tenant_id"],

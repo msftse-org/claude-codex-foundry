@@ -186,6 +186,24 @@ def test_other_tenant_or_unsafe_receipt_refused(registration, tmp_path):
     assert not graph.calls
 
 
+def test_consent_failure_keeps_registrations_and_sanitizes_error(
+    registration, tmp_path, monkeypatch
+):
+    def denied(*args):
+        raise RuntimeError("Forbidden with PRIVATE_IDENTITY and PRIVATE_DIAGNOSTICS")
+
+    monkeypatch.setattr(registration, "az_json", denied)
+    graph = Directory()
+    output = tmp_path / "receipt.json"
+    with pytest.raises(RuntimeError, match="admin consent was not confirmed") as failure:
+        registration.prepare(graph, TENANT, "Test", output, apply=True, consent=True)
+    assert "PRIVATE" not in str(failure.value)
+    assert output.exists() and len(graph.apps) == 2
+    graph.calls.clear()
+    registration.prepare(graph, TENANT, "Test", output)
+    assert not graph.writes
+
+
 def test_disabled_enterprise_application_not_reenabled(registration, tmp_path):
     graph = Directory()
     output = tmp_path / "receipt.json"
