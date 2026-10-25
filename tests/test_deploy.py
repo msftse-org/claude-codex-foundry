@@ -183,6 +183,7 @@ def test_full_deployment_runs_documented_steps_in_order(
         "observability --enable-dimensions",
         "init-codex",
         "qualify",
+        "scale_model_capacity.py --config",
         "register_client_app.py",
         "ad app permission admin-consent",
         "export-client",
@@ -195,6 +196,7 @@ def test_full_deployment_runs_documented_steps_in_order(
     ]
     positions = [next(i for i, c in enumerate(seen) if step in c) for step in order]
     assert positions == sorted(positions)
+    assert sum("scale_model_capacity.py" in command for command in seen) == 1
     assert any("ad group member add" in c and USER in c for c in seen)
     bundle = next(c for c in runner.calls if c[1].endswith("build_client_bundle.py"))
     assert bundle.count("--profile") == 2
@@ -212,6 +214,17 @@ def test_full_deployment_runs_documented_steps_in_order(
     assert portal["ownerObjectId"]["value"] == USER
     org_config = json.loads((tmp_path / ".local/organization.json").read_text())
     assert org_config["model_provider_data"]["countryCode"] == "US"
+
+
+def test_capacity_maximization_can_be_disabled(deploy, settings, tmp_path, org, monkeypatch):
+    value = json.loads(settings.read_text())
+    value["maximize_model_capacity"] = False
+    settings.write_text(json.dumps(value))
+    runner = FakeRunner(organization(org))
+
+    run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+
+    assert not any("scale_model_capacity.py" in command for command in commands(runner))
 
 
 def test_rerun_reuses_group_app_registration_and_qualified_models(
@@ -508,6 +521,29 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     assert not any(c[3:4] == ["verify"] for c in runner.calls)
     assert any("closed until" in w for w in job.warnings)
     assert job.state["governance_mode"] == "unified"
+
+
+def test_deployment_enables_stream_capture_with_content_logs(unified_job):
+    job, _, _ = unified_job
+    portal = job.local / "portal"
+    portal.mkdir(parents=True)
+    (portal / "parameters.json").write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    "contentLogsConfig": {
+                        "value": {
+                            "capture_enabled": True,
+                            "workspace_id": "00000000-0000-0000-0000-000000000001",
+                        }
+                    }
+                }
+            }
+        )
+    )
+    job.deploy(verify=False)
+    params = json.loads((job.local / "unified/runtime-parameters.json").read_text())["parameters"]
+    assert params["contentLogsEnabled"]["value"] is True
 
 
 def test_upgrade_does_not_redeploy_foundation_models_or_replace_owner(unified_job):

@@ -6,6 +6,7 @@
   "publisher_name": "Contoso",
   "publisher_email": "platform-team@contoso.com",
   "accept_marketplace_terms": false,
+  "maximize_model_capacity": true,
   "marketplace": {
     "organizationName": "Contoso Ltd",
     "countryCode": "US",

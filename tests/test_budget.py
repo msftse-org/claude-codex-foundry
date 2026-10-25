@@ -186,6 +186,23 @@ def test_overrun_pauses_and_cannot_be_unpaused_by_publish(ledger, policy):
         ledger.activate(policy)
 
 
+def test_owner_can_reconcile_exact_recorded_overrun(ledger, policy):
+    reservation = admit(ledger, policy)
+    with pytest.raises(BudgetDenied, match="paused"):
+        ledger.settle(reservation["request_id"], 100_001)
+    incident = ledger.incident()
+    assert incident["request_id"] == reservation["request_id"]
+    assert incident["observed_cost_micro_usd"] == 100_001
+    settled = ledger.resolve_incident(reservation["request_id"])
+    assert settled["state"] == "settled"
+    assert settled["charged"] == 100_001
+    assert settled["reconciliation"] == "observed_overrun"
+    assert ledger.incident() is None
+    assert ledger.active() == policy_digest(policy)
+    with pytest.raises(BudgetDenied, match="changed"):
+        ledger.resolve_incident(reservation["request_id"])
+
+
 def test_concurrent_publication_rejects_stale_policy(ledger, policy):
     changed = copy.deepcopy(policy)
     changed["settings"]["spend_limit_usd"] = "2"

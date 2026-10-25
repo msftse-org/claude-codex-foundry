@@ -84,6 +84,9 @@ def load_settings(path):
     s.setdefault("auth_mode", "azure-cli")
     if s["auth_mode"] not in {"msal", "azure-cli"}:
         raise DeployError("auth_mode must be msal or azure-cli")
+    s.setdefault("maximize_model_capacity", True)
+    if type(s["maximize_model_capacity"]) is not bool:
+        raise DeployError("maximize_model_capacity must be true or false")
     s.setdefault("grant_admin_consent", True)
     s.setdefault("add_deployer_to_developers", True)
     s.setdefault("allowed_object_ids", [])
@@ -419,6 +422,20 @@ class Deployment:
                 print("Some Codex models failed qualification and were not published.")
             self.cli("admin", "--config", config, "gateway")
 
+    def maximize_model_capacity(self):
+        if not self.s["maximize_model_capacity"]:
+            return
+        self.step("Maximizing model TPM with currently unallocated Azure quota")
+        # One account-wide pass is sufficient for both providers. The planner preserves
+        # model versions and deployment settings, never shrinks capacity, and respects
+        # each Azure quota pool's remaining allocation.
+        self.script(
+            "scale_model_capacity.py",
+            "--config",
+            self.org_path,
+            "--apply",
+        )
+
     def desktop_app(self):
         if self.s["auth_mode"] != "msal":
             return None
@@ -605,6 +622,7 @@ class Deployment:
                 unified_settings,
                 runtime_models,
                 portal_outputs["identityObjectId"]["value"],
+                parameters.get("contentLogsConfig"),
             )
         package = self.dist / "claude-foundry-admin-preview.zip"
         self.script("build_portal.py", "--output", package)
@@ -677,6 +695,7 @@ class Deployment:
             self.claude()
         if self.s["codex"]["enabled"]:
             self.codex()
+        self.maximize_model_capacity()
         client_id = self.desktop_app()
         profiles = [] if self.unified else self.profiles(client_id)
         if self.s["portal"]["enabled"]:
@@ -708,8 +727,12 @@ class Deployment:
                     )
         print(f"  Developer group: {self.s['developer_group_name']} ({group})")
         print(f"  Installer ZIP:   {self.state['bundle']}")
-        for warning in self.warnings:
-            print(f"\nAction needed: {warning}")
+        if self.warnings:
+            print("\nRequired administrator actions:")
+            for warning in self.warnings:
+                print(f"  - {warning}")
+        elif self.s["auth_mode"] == "azure-cli":
+            print("\nRequired administrator actions: none for developer sign-in (Azure CLI mode).")
         print("\nOnboard developers:")
         print("  uv run python scripts/onboard_users.py alice@example.com bob@example.com")
         print("  Send them the installer ZIP. They open Install.command and sign in once.")

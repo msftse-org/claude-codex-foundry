@@ -7,6 +7,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import UUID
 
+from azure.storage.blob import BlobServiceClient
 from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from .domain import StrictModel
@@ -21,6 +22,8 @@ class LogSource(StrictModel):
     retention_days: int = Field(default=7, ge=4, le=30)
     max_message_bytes: int = Field(default=262144, ge=1024, le=262144)
     capture_enabled: bool = False
+    stream_capture_account: str = Field(default="", pattern=r"^$|^[a-z0-9]{3,24}$")
+    stream_capture_container: str = Field(default="content-logs", pattern=r"^[a-z0-9-]{3,63}$")
 
 
 class LogQuery(StrictModel):
@@ -123,10 +126,46 @@ chunks=count(), principal_id=take_any(principal_id) by correlation_id=Correlatio
         query += f'| where timestamp < datetime({filters.before.isoformat()}) or (timestamp == datetime({filters.before.isoformat()}) and correlation_id > "{filters.before_id}")\n'
     query += "| order by timestamp desc, correlation_id asc | take 51"
     rows = run_query(source, credential, query)
+    if source.stream_capture_account:
+        # A governed request can be represented by both APIM's native LLM log
+        # and our complete streaming-proxy capture. Keep one list entry per
+        # request, preferring the stream record because it is the authoritative
+        # detail source for streamed responses.
+        rows_by_id = {str(row["correlation_id"]): row for row in rows}
+        rows_by_id.update(
+            {
+                str(row["correlation_id"]): row
+                for row in _stream_records(source, credential, filters, group_id)
+            }
+        )
+        rows = list(rows_by_id.values())
+    rows.sort(key=lambda row: (row["timestamp"], row["correlation_id"]), reverse=True)
     return {"items": rows[:50], "has_more": len(rows) > 50}
 
 
 def read_log(source, credential, correlation_id, group_id=None):
+    if source.stream_capture_account:
+        captured = _stream_record(source, credential, correlation_id)
+        if captured and (not group_id or captured.get("group_id") == str(UUID(group_id))):
+            return {
+                "correlation_id": str(correlation_id),
+                "chunks": [
+                    {
+                        "timestamp": captured["timestamp"],
+                        "api_id": captured["api_id"],
+                        "model": captured["model"],
+                        "model_name": captured["model"],
+                        "status": captured["status"],
+                        "principal_id": captured["principal_id"],
+                        "sequence": 0,
+                        "request_id": captured["request_id"],
+                        "request": captured["request"],
+                        "response": captured["response"],
+                    }
+                ],
+                "max_message_bytes": source.max_message_bytes,
+                "note": "Captured by the governed streaming proxy. Prompt and response are size-limited, and the completion flag records whether authoritative stream settlement finished.",
+            }
     end = datetime.now(UTC)
     query = scoped_query(source, end - timedelta(days=source.retention_days), end, group_id)
     query += f"""messages | where CorrelationId == "{correlation_id}"
@@ -146,3 +185,72 @@ request=RequestMessages, response=ResponseMessages
         "max_message_bytes": source.max_message_bytes,
         "note": "Captured messages may include conversation context and tool data. Native capture is size-limited; interrupted streams or ingestion delays can leave missing fragments. This is not a complete conversation archive.",
     }
+
+
+def _stream_container(source, credential):
+    return BlobServiceClient(
+        f"https://{source.stream_capture_account}.blob.core.windows.net",
+        credential=credential,
+    ).get_container_client(source.stream_capture_container)
+
+
+def _stream_record(source, credential, correlation_id):
+    suffix = f"{UUID(str(correlation_id))}.json"
+    container = _stream_container(source, credential)
+    for blob in container.list_blobs():
+        if blob.name.endswith(suffix):
+            return json.loads(container.download_blob(blob.name).readall())
+    return None
+
+
+def _stream_records(source, credential, filters, group_id=None):
+    container = _stream_container(source, credential)
+    rows = []
+    earliest = max(filters.start, datetime.now(UTC) - timedelta(days=source.retention_days))
+    day = earliest.date()
+    final_day = filters.end.date()
+    blobs = []
+    while day <= final_day:
+        blobs.extend(container.list_blobs(name_starts_with=f"{day:%Y/%m/%d}/"))
+        day += timedelta(days=1)
+    blobs.sort(key=lambda blob: blob.name, reverse=True)
+    for blob in blobs:
+        if len(rows) >= 500:
+            break
+        try:
+            record = json.loads(container.download_blob(blob.name).readall())
+            timestamp = datetime.fromisoformat(record["timestamp"])
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            continue
+        if not earliest <= timestamp <= filters.end:
+            continue
+        if group_id and record.get("group_id") != str(UUID(group_id)):
+            continue
+        if filters.api_id and record.get("api_id") != filters.api_id:
+            continue
+        if filters.model and record.get("model") != filters.model:
+            continue
+        if filters.correlation_id and record.get("correlation_id") != str(filters.correlation_id):
+            continue
+        if filters.principal_id and record.get("principal_id") != str(filters.principal_id):
+            continue
+        if filters.before and not (
+            timestamp < filters.before
+            or (timestamp == filters.before and record["correlation_id"] > str(filters.before_id))
+        ):
+            continue
+        rows.append(
+            {
+                "timestamp": record["timestamp"],
+                "api_id": record["api_id"],
+                "model": record["model"],
+                "model_name": record["model"],
+                "status": record.get("status"),
+                "has_request": record.get("request") is not None,
+                "has_response": record.get("response") is not None,
+                "chunks": 1,
+                "principal_id": record["principal_id"],
+                "correlation_id": record["correlation_id"],
+            }
+        )
+    return rows

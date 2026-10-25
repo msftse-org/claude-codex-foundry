@@ -106,6 +106,8 @@ beforeEach(() => {
         }
         if (path === "/api/budgets/reservations")
             return Promise.resolve({ items: [], has_more: false });
+        if (path === "/api/budgets/incident")
+            return Promise.resolve({ incident: null });
         throw new Error("Unexpected API path: " + path);
     });
 });

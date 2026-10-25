@@ -13,7 +13,7 @@ For a customer assistant to carry out the process, use the [LLM deployment and o
 | Who | Permission |
 | --- | --- |
 | Azure administrator | Owner, or Contributor plus Role Based Access Control Administrator, on the subscription. The subscription must be allowed to purchase the selected Anthropic Marketplace offers. |
-| Entra administrator (can be the same person) | Create app registrations and grant admin consent (for example Application Administrator), and create a security group, or provide an existing group's object ID. |
+| Entra administrator (only for explicit MSAL mode; can be the same person) | Create the app registration and grant any consent required by tenant policy. The default Azure CLI sign-in does not need an app registration or admin consent. |
 
 Install Git, [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) with Bicep, [uv](https://docs.astral.sh/uv/), and Node.js 24 with npm (portal build). Before you start, check the subscription's Azure Policy assignments for deny rules on locations, tags, public storage access or subnet network security groups (the portal network does not create NSGs).
 
@@ -38,7 +38,8 @@ Edit `.local/deploy.json`:
 | `accept_marketplace_terms` | Set to `true` after reviewing the paid Anthropic Marketplace terms. Claude models are not deployed until then. |
 | `marketplace` | Legal organization name, two-letter country code and industry for Anthropic attestation. |
 | `developer_group_id` | Existing Entra security group for developers. Leave empty to create or reuse **Claude & Codex developers**. |
-| `claude`, `codex` | `enabled`, optional `models` list (empty deploys every eligible model with quota), `capacity` per deployment, and `sku`. |
+| `claude`, `codex` | `enabled`, optional `models` list (empty deploys every eligible model with quota), initial `capacity` per deployment, and `sku`. |
+| `maximize_model_capacity` | Defaults to `true`: after deployment, allocate every deployment as much currently unallocated quota as its model/SKU pool permits. Set `false` only when the reviewed initial capacities must remain fixed. |
 | `portal.enabled` | Deploys the administration portal on the same Claude route. Governance is not published automatically. |
 
 Optional fields: `apim_sku` (`BasicV2` or `StandardV2`), `auth_mode` (`azure-cli`, the default, needs no app registration or consent; `msal` is an explicit opt-in for developer Macs without Azure CLI and requires a tenant-owned app registration plus any consent required by tenant policy), `allowed_object_ids`, `profile_name`, `grant_admin_consent`, `add_deployer_to_developers` and `names` overrides. Keep this file and everything the script writes in `.local/`, outside Git.
@@ -56,10 +57,11 @@ The script creates billable Azure resources and makes small billable verificatio
 3. Deploys Foundry, API Management, Application Insights and Log Analytics. Unified mode grants qualification inference to the deploying operator; explicit baseline mode grants it to the developer group.
 4. Deploys Claude models, publishes **Claude via Azure Foundry** and connects observability.
 5. Creates **Codex via Azure Foundry**, deploys and qualifies OpenAI models, and publishes only those that pass.
-6. Registers the developer sign-in application (public client, no secret), requests tenant-wide admin consent and exports client profiles. If you cannot grant consent, the script finishes and prints the command for an Entra administrator; developers can sign in once consent is granted.
-7. Builds one installer ZIP for Claude and Codex in `dist/`.
-8. Deploys the administration portal, shared runtime/private ledger and governed routes in unified mode, then packages the application.
-9. Reports the model-verification and owner-publication steps needed to activate shared inference. Explicit baseline mode runs its final gateway verifier unless `--skip-verify` is set. Codex qualification makes billable requests in either mode.
+6. Maximizes model TPM using currently unallocated quota, without changing model versions or SKUs.
+7. Exports Azure CLI client profiles. Only explicit `auth_mode=msal` registers a public client and may request tenant-wide admin consent; if consent cannot be granted, the script prints the exact administrator action.
+8. Builds one installer ZIP for Claude and Codex in `dist/`.
+9. Deploys the administration portal, shared runtime/private ledger and governed routes in unified mode, then packages the application.
+10. Reports every remaining administrator and developer action. Explicit baseline mode runs its final gateway verifier unless `--skip-verify` is set. Codex qualification makes billable requests in either mode.
 
 If a step fails, fix the reported problem and run the same command again. Existing resources, deployments, the group and the app registrations are reused; IDs and the deployment target are kept in `.local/deploy-state.json`. Use a separate checkout for each customer: changing the tenant, subscription or resource names while retaining this state is rejected before Azure changes. To change models later, edit `.local/deploy.json`, rerun the command and redistribute the new ZIP.
 
