@@ -236,6 +236,9 @@ export function GroupEditor({
     save: (g: Group) => Promise<void>;
 }) {
     const [models, setModels] = useState(group?.model_ids || []);
+    const [unlimited, setUnlimited] = useState(
+        group?.spend_ceiling_unlimited ?? false,
+    );
     const [delegated, setDelegated] = useState(group?.delegated_models || []);
     const owner = state.viewer.role === "owner";
     const count = state.members.filter((m) => m.group_id === group?.id).length;
@@ -260,8 +263,13 @@ export function GroupEditor({
                         monthly_tokens: Number(f.get("tokens")),
                         budget_usd: Number(f.get("budget")),
                         spend_ceiling_usd: owner
-                            ? String(f.get("ceiling") || "") || null
+                            ? unlimited
+                                ? null
+                                : String(f.get("ceiling") || "") || null
                             : (group?.spend_ceiling_usd ?? null),
+                        spend_ceiling_unlimited: owner
+                            ? unlimited
+                            : (group?.spend_ceiling_unlimited ?? false),
                         spend_limit_usd: String(f.get("spend") || "") || null,
                         delegated_models: delegated,
                     });
@@ -364,6 +372,15 @@ export function GroupEditor({
                             />
                         </Field>
                     </div>
+                    <label className="checkrow">
+                        <input
+                            type="checkbox"
+                            checked={unlimited}
+                            disabled={!owner}
+                            onChange={(e) => setUnlimited(e.target.checked)}
+                        />
+                        No group spending ceiling
+                    </label>
                     <div className="twocol">
                         <Field
                             label="Owner-assigned ceiling (USD)"
@@ -374,7 +391,7 @@ export function GroupEditor({
                                 type="number"
                                 min="0"
                                 step="0.000001"
-                                disabled={!owner}
+                                disabled={!owner || unlimited}
                                 defaultValue={group?.spend_ceiling_usd ?? ""}
                             />
                         </Field>

@@ -1033,3 +1033,100 @@ def test_terminal_event_is_settled_before_client_disconnect(policy, ledger, prov
             await response.body_iterator.aclose()
 
     asyncio.run(run())
+
+
+def test_explicit_unlimited_scopes_keep_accounting_and_enforce_finite_team(policy):
+    policy["settings"].update(spend_limit_usd=None, spend_limit_unlimited=True)
+    policy["groups"][0].update(spend_ceiling_usd=None, spend_ceiling_unlimited=True)
+    policy = snapshot(policy)
+    group = {
+        **policy["groups"][0],
+        "id": str(uuid4()),
+        "spend_ceiling_unlimited": False,
+        "spend_ceiling_usd": "400",
+        "spend_limit_usd": "400",
+    }
+    member = {
+        **policy["members"][0],
+        "id": str(uuid4()),
+        "role": "developer",
+        "group_id": group["id"],
+        "spend_limit_usd": "400",
+    }
+    policy["groups"].append(group)
+    policy["members"].append(member)
+    ledger = Ledger(MemoryRows())
+    ledger.activate(policy)
+    request = admit(ledger, policy, amount=900_000_000)
+    ledger.settle(request["request_id"], 500_000_000)
+    admit(ledger, policy, amount=900_000_000)
+    scopes = ledger.balances(policy, policy["members"][0]["id"])["scopes"]
+    assert all(
+        s["limit_micro_usd"] is None
+        and s["remaining_micro_usd"] is None
+        and s["spent_micro_usd"] == 500_000_000
+        and s["reserved_micro_usd"] == 900_000_000
+        for s in scopes
+    )
+
+    def attempt(_):
+        try:
+            return ledger.reserve(
+                str(uuid4()), member["id"], "claude-sonnet-4-6", 100_000_000, policy, "hash"
+            )
+        except BudgetDenied:
+            return None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        accepted = [r for r in pool.map(attempt, range(12)) if r]
+    assert len(accepted) == 4
+    scopes = ledger.balances(policy, member["id"])["scopes"]
+    assert scopes[0]["limit_micro_usd"] is None
+    assert all(
+        s["limit_micro_usd"] == 400_000_000 and s["remaining_micro_usd"] == 0 for s in scopes[1:]
+    )
+    # A full finite team never prevents the unlimited team's admission.
+    admit(ledger, policy, amount=900_000_000)
+    finite = copy.deepcopy(policy)
+    finite["settings"].update(spend_limit_unlimited=False, spend_limit_usd="400")
+    with pytest.raises(BudgetDenied, match="below"):
+        ledger.activate(finite)
+    assert ledger.active() == policy_digest(policy)
+
+
+@pytest.mark.parametrize("scope", ["organization", "group"])
+def test_unlimited_requires_explicit_choice_and_no_conflicting_amount(policy, scope):
+    target, value, flag = (
+        (policy["settings"], "spend_limit_usd", "spend_limit_unlimited")
+        if scope == "organization"
+        else (policy["groups"][0], "spend_ceiling_usd", "spend_ceiling_unlimited")
+    )
+    target[value] = None
+    with pytest.raises(ValueError):
+        snapshot(policy)
+    with pytest.raises(BudgetDenied, match="configured"):
+        Ledger(MemoryRows()).activate(policy)
+    target[flag] = True
+    snapshot(policy)
+    target[value] = "1"
+    with pytest.raises(ValueError, match="unlimited"):
+        snapshot(policy)
+    with pytest.raises(BudgetDenied, match="configured"):
+        Ledger(MemoryRows()).activate(policy)
+
+
+def test_group_publication_preserves_owner_unlimited_choice(policy):
+    from claude_foundry.portal.budget_policy import group_publication
+
+    actor = {**policy["members"][0], "id": str(uuid4()), "role": "group_admin"}
+    draft = copy.deepcopy(policy)
+    draft["settings"].update(spend_limit_usd=None, spend_limit_unlimited=True)
+    draft["groups"][0].update(spend_ceiling_usd=None, spend_ceiling_unlimited=True)
+    published = group_publication(policy, draft, actor)
+    assert not published["settings"]["spend_limit_unlimited"]
+    assert not published["groups"][0]["spend_ceiling_unlimited"]
+    assert published["groups"][0]["spend_ceiling_usd"] == "1"
+    # A delegated publication must also preserve an already unlimited owner ceiling.
+    policy["groups"][0].update(spend_ceiling_usd=None, spend_ceiling_unlimited=True)
+    published = group_publication(policy, draft, actor)
+    assert published["groups"][0]["spend_ceiling_unlimited"]

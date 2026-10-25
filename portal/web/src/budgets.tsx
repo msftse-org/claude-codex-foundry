@@ -12,18 +12,20 @@ type Balance = {
     published_hash?: string;
     scopes: {
         scope: string;
-        limit_micro_usd: number;
+        limit_micro_usd: number | null;
         spent_micro_usd: number;
         reserved_micro_usd: number;
-        remaining_micro_usd: number;
+        remaining_micro_usd: number | null;
     }[];
 };
-const dollars = (v: number) =>
-    new Intl.NumberFormat("en-US", {
-        style: "currency",
-        currency: "USD",
-        maximumFractionDigits: 6,
-    }).format(v / 1_000_000);
+const dollars = (v: number | null) =>
+    v === null
+        ? "Unlimited"
+        : new Intl.NumberFormat("en-US", {
+              style: "currency",
+              currency: "USD",
+              maximumFractionDigits: 6,
+          }).format(v / 1_000_000);
 
 export function BudgetPanel({
     state,
@@ -48,6 +50,7 @@ export function BudgetPanel({
     const [editing, setEditing] = useState<
         "organization" | "price" | "publish" | null
     >(null);
+    const [orgUnlimited, setOrgUnlimited] = useState(false);
     const [price, setPrice] = useState<BudgetPrice>();
     const [working, setWorking] = useState(false);
     const [refreshCount, setRefreshCount] = useState(0);
@@ -136,7 +139,13 @@ export function BudgetPanel({
                         <div className="actions">
                             <button
                                 className="button"
-                                onClick={() => setEditing("organization")}
+                                onClick={() => {
+                                    setOrgUnlimited(
+                                        state.settings.spend_limit_unlimited ??
+                                            false,
+                                    );
+                                    setEditing("organization");
+                                }}
                             >
                                 Organization limit
                             </button>
@@ -326,7 +335,10 @@ export function BudgetPanel({
                             if (
                                 await save("settings", {
                                     ...state.settings,
-                                    spend_limit_usd: String(f.get("limit")),
+                                    spend_limit_usd: orgUnlimited
+                                        ? null
+                                        : String(f.get("limit")),
+                                    spend_limit_unlimited: orgUnlimited,
                                     budget_enforcement:
                                         f.get("enabled") === "on",
                                 })
@@ -335,6 +347,16 @@ export function BudgetPanel({
                         }}
                     >
                         <div className="drawer-scroll drawer-fields">
+                            <label className="checkrow">
+                                <input
+                                    type="checkbox"
+                                    checked={orgUnlimited}
+                                    onChange={(e) =>
+                                        setOrgUnlimited(e.target.checked)
+                                    }
+                                />
+                                No organization spending limit
+                            </label>
                             <Field
                                 label="Monthly USD limit"
                                 help="Zero blocks every new request. Lowering below spent plus reserved is rejected at publication."
@@ -344,7 +366,8 @@ export function BudgetPanel({
                                     type="number"
                                     min="0"
                                     step="0.000001"
-                                    required
+                                    required={!orgUnlimited}
+                                    disabled={orgUnlimited}
                                     defaultValue={
                                         state.settings.spend_limit_usd ?? ""
                                     }

@@ -1364,3 +1364,25 @@ def test_blob_bootstrap_is_lazy_and_never_overwrites_existing_state(monkeypatch,
 
     BlobStore("example", object(), racing_initial)
     assert blob.uploaded == state  # Another instance won; its state is preserved.
+
+
+@pytest.mark.parametrize("role", ["admin", "group_admin"])
+def test_only_owner_can_choose_unlimited(state, role):
+    actor = add_member(state, role)
+    group = state["groups"][0]
+    before = copy.deepcopy(state)
+    with pytest.raises(PermissionError):
+        change(
+            state,
+            "group",
+            {**group, "spend_ceiling_usd": None, "spend_ceiling_unlimited": True},
+            actor,
+        )
+    with pytest.raises(PermissionError):
+        change(
+            state,
+            "settings",
+            {**state["settings"], "spend_limit_usd": None, "spend_limit_unlimited": True},
+            actor,
+        )
+    assert state == before

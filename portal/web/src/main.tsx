@@ -951,7 +951,9 @@ function App() {
                                                     : g.spend_ceiling_usd !=
                                                         null
                                                       ? `$${g.spend_ceiling_usd} (ceiling)`
-                                                      : "Not set"
+                                                      : g.spend_ceiling_unlimited
+                                                        ? "Unlimited"
+                                                        : "Not set"
                                                 : g.monthly_tokens
                                                   ? fmt(g.monthly_tokens)
                                                   : "Not set"}
@@ -1335,7 +1337,9 @@ function App() {
                                                     {state.budget_configured
                                                         ? g.spend_ceiling_usd ==
                                                           null
-                                                            ? "Not set"
+                                                            ? g.spend_ceiling_unlimited
+                                                                ? "Unlimited"
+                                                                : "Not set"
                                                             : `$${g.spend_ceiling_usd}`
                                                         : g.budget_usd
                                                           ? `$${fmt(g.budget_usd)}`

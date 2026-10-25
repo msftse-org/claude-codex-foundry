@@ -44,8 +44,12 @@ def snapshot(state):
         ],
     }
     settings = result["settings"]
-    if not settings["budget_enforcement"] or settings["spend_limit_usd"] is None:
-        raise ValueError("Set a finite organization limit and enable hard budget enforcement")
+    if not settings["budget_enforcement"] or (
+        settings["spend_limit_usd"] is None and not settings["spend_limit_unlimited"]
+    ):
+        raise ValueError(
+            "Set an organization limit or explicitly choose unlimited, and enable hard budget enforcement"
+        )
     groups = {g["id"]: g for g in result["groups"]}
     if len(groups) != len(result["groups"]) or len({m["id"] for m in result["members"]}) != len(
         result["members"]
@@ -59,8 +63,10 @@ def snapshot(state):
     for p in prices.values():
         BudgetPrice.model_validate(p).check_current()
     for group in groups.values():
-        if group["spend_ceiling_usd"] is None:
-            raise ValueError("Every group needs an owner-assigned dollar ceiling")
+        if group["spend_ceiling_usd"] is None and not group["spend_ceiling_unlimited"]:
+            raise ValueError(
+                "Every group needs an owner-assigned dollar ceiling or explicit unlimited ceiling"
+            )
         if set(group["model_ids"]) - set(group["delegated_models"]):
             raise ValueError("Group models must be inside the owner's delegated allowance")
     for member in result["members"]:
@@ -231,6 +237,7 @@ def group_publication(active, draft, actor):
         {
             **proposed,
             "spend_ceiling_usd": current["spend_ceiling_usd"],
+            "spend_ceiling_unlimited": current.get("spend_ceiling_unlimited", False),
             "delegated_models": current["delegated_models"],
         }
     ).model_dump(mode="json")
