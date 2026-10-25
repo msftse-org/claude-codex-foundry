@@ -199,6 +199,28 @@ class BudgetProxy:
         if payload.get("stream") and response.is_success:
             usage = UsageStream(provider)
 
+            def incomplete_stream_event():
+                message = (
+                    "The upstream model stream ended before a terminal event; "
+                    "the budget reservation remains held for review."
+                )
+                value = (
+                    {
+                        "type": "error",
+                        "error": {"type": "api_error", "message": message},
+                    }
+                    if provider == "anthropic"
+                    else {
+                        "type": "error",
+                        "error": {
+                            "code": "upstream_stream_incomplete",
+                            "message": message,
+                            "param": None,
+                        },
+                    }
+                )
+                return ("data: " + json.dumps(value, separators=(",", ":")) + "\n\n").encode()
+
             async def chunks():
                 settled = False
                 try:
@@ -211,15 +233,33 @@ class BudgetProxy:
                             settled = True
                         yield chunk
                     if not settled:
-                        await settle(usage.tokens())
-                except BaseException:
-                    # Cancellation, absent usage, parse errors, and settlement failures
-                    # all keep the reservation. Never log prompts, output, or tokens.
+                        try:
+                            await settle(usage.tokens())
+                            settled = True
+                        except Exception:
+                            # Normalize every unsettled terminal path. Some compatible
+                            # providers emit a failure-shaped event that a native client
+                            # does not recognize; the canonical error prevents that event
+                            # from degrading into a misleading transport disconnect.
+                            yield incomplete_stream_event()
+                            LOG.warning(
+                                "Stream did not confirm settlement; check reservation: %s",
+                                request_id,
+                            )
+                except asyncio.CancelledError:
                     if not settled:
                         LOG.warning(
                             "Stream did not confirm settlement; check reservation: %s", request_id
                         )
                     raise
+                except Exception:
+                    # Upstream read errors and settlement failures keep the reservation,
+                    # but clients still receive a terminal protocol error when possible.
+                    yield incomplete_stream_event()
+                    if not settled:
+                        LOG.warning(
+                            "Stream did not confirm settlement; check reservation: %s", request_id
+                        )
                 finally:
                     await response.aclose()
 

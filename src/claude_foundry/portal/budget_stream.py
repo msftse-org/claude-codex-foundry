@@ -15,6 +15,7 @@ class UsageStream:
         self.complete = False
         self.final_usage = False
         self.invalid = False
+        self.failed = False
 
     def feed(self, chunk):
         if self.invalid:
@@ -52,11 +53,13 @@ class UsageStream:
             elif kind == "message_stop":
                 self.complete = self.final_usage
             elif kind == "error":
+                self.failed = True
                 self.invalid = True
         elif kind in {"response.completed", "response.incomplete"}:
             self.usage = value["response"]["usage"]
             self.complete = True
         elif kind in {"error", "response.failed"}:
+            self.failed = True
             self.invalid = True
 
     def tokens(self):
