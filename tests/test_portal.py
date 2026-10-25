@@ -1483,3 +1483,181 @@ def test_only_owner_can_choose_unlimited(state, role):
             actor,
         )
     assert state == before
+
+
+@pytest.fixture
+def unified_app(budget_app, org, monkeypatch):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    state, etag = application.state.store.read()
+    gpt = {"name": "gpt-test", "model": "gpt-test", "qualified": True}
+    claude = {
+        **org,
+        "api_id": "claude-governed",
+        "gateway_url": "https://test-apim.azure-api.net/claude-governed",
+    }
+    codex = {
+        **org,
+        "api_id": "codex-governed",
+        "client_type": "codex",
+        "gateway_url": "https://test-apim.azure-api.net/codex-governed/v1",
+        "models": [gpt],
+        "default_model": "gpt-test",
+    }
+    state["groups"][0]["model_ids"].append("gpt-test")
+    state["groups"][0]["delegated_models"].append("gpt-test")
+    state["budget_prices"].append(
+        {**state["budget_prices"][0], "model": "gpt-test", "provider": "openai"}
+    )
+    application.state.store.save(state, etag)
+    from claude_foundry.portal.budget_policy import snapshot
+
+    policy = snapshot(state)
+    snapshots.put(policy)
+    ledger.activate(policy)
+    monkeypatch.setenv(
+        "PORTAL_PROVIDER_CONFIGS_JSON", json.dumps({"claude": claude, "codex": codex})
+    )
+    application = create_app(
+        org, application.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    return application, ledger, snapshots, admin, developer, outsider
+
+
+def test_shared_portal_lists_both_providers_and_exports_correct_profiles(unified_app, org, key):
+    app, ledger, snapshots, *_ = unified_app
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        data = client.get("/api/state", headers=auth).json()
+        assert data["client_types"] == ["claude", "codex"]
+        assert {m["provider"] for m in data["models"]} == {"claude", "codex"}
+        codex = client.get("/api/client-profile?client=codex", headers=auth)
+        assert codex.status_code == 200, codex.text
+        profile = codex.json()
+        assert profile["client_type"] == "codex" and profile["default_model"] == "gpt-test"
+        assert profile["gateway_url"].endswith("/codex-governed/v1")
+        assert [m["name"] for m in profile["models"]] == ["gpt-test"]
+        claude = client.get("/api/client-profile?client=claude", headers=auth).json()
+        assert [m["name"] for m in claude["models"]] == ["claude-sonnet-4-6"]
+        assert claude["gateway_url"].endswith("/claude-governed")
+        assert client.get("/api/client-profile?client=invalid", headers=auth).status_code == 422
+        assert client.get("/api/client-profile?client=codex").status_code == 401
+
+
+def test_shared_profile_exports_enforce_group_scope_and_published_grants(unified_app, org, key):
+    app, ledger, snapshots, admin, developer, outsider = unified_app
+    data, etag = app.state.store.read()
+    data["groups"][1]["model_ids"].append("gpt-test")  # Unpublished change must not grant access.
+    data["groups"][1]["delegated_models"].append("gpt-test")
+    app.state.store.save(data, etag)
+    with TestClient(app) as client:
+        assert (
+            client.get(
+                "/api/client-profile?client=codex", headers=headers(org, key, outsider["id"])
+            ).status_code
+            == 409
+        )
+        assert (
+            client.get(
+                "/api/client-profile",
+                params={"client": "codex", "group_id": outsider["group_id"]},
+                headers=headers(org, key, admin["id"]),
+            ).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/api/client-profile?client=codex", headers=headers(org, key, developer["id"])
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get("/api/model-policy", headers=headers(org, key, developer["id"])).status_code
+            == 403
+        )
+        assert client.get("/api/model-policy", headers=headers(org, key)).status_code == 200
+
+
+def test_shared_reporting_uses_both_fixed_api_scopes(unified_app, org, key, monkeypatch):
+    app, *_ = unified_app
+    scopes = []
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.telemetry",
+        lambda app_id, credential, config, days: scopes.append(config) or {"status": "connected"},
+    )
+    monkeypatch.setattr(
+        "claude_foundry.portal.app.cost_analysis",
+        lambda app_id, credential, config, body, prices: (
+            scopes.append(config) or {"status": "connected"}
+        ),
+    )
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        assert client.get("/api/telemetry", headers=auth).status_code == 200
+        assert (
+            client.post(
+                "/api/cost-analysis",
+                json={"start": "2026-01-01", "end": "2026-01-02"},
+                headers=auth,
+            ).status_code
+            == 200
+        )
+    assert len(scopes) == 2
+    for config in scopes:
+        assert {p["api_id"] for p in config["reporting_apis"]} == {
+            "claude-governed",
+            "codex-governed",
+        }
+
+
+def test_shared_setup_zips_match_published_provider_profiles(
+    unified_app, org, key, monkeypatch, tmp_path
+):
+    import io
+    import zipfile
+    from pathlib import Path
+
+    from claude_foundry.client_bundle import build_template
+
+    app, ledger, snapshots, admin, developer, outsider = unified_app
+    template = tmp_path / "template.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    with TestClient(app) as client:
+        auth = headers(org, key, developer["id"])
+        for provider in ["claude", "codex"]:
+            profile = client.get(
+                "/api/client-profile", params={"client": provider}, headers=auth
+            ).json()
+            response = client.get("/api/client-bundle", params={"client": provider}, headers=auth)
+            assert response.status_code == 200, (
+                response.text[:100] if response.status_code != 200 else ""
+            )
+            with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+                assert json.loads(archive.read("claude-foundry/client.json")) == profile
+                readme = archive.read("claude-foundry/README.md").decode()
+                assert profile["gateway_url"] in readme
+                assert "claude-foundry/AGENTS.md" in archive.namelist()
+                assert "claude-foundry/Install.command" in archive.namelist()
+                if provider == "codex":
+                    assert profile["client_type"] == "codex"
+                    assert profile["default_model"] in {m["name"] for m in profile["models"]}
+                    assert profile["gateway_url"].endswith("/codex-governed/v1")
+                    assert "Codex Desktop / CLI" in readme
+                else:
+                    assert "--budgeted" in readme and "--governed" not in readme
+            denied = client.get(
+                "/api/client-bundle",
+                params={"client": provider, "group_id": outsider["group_id"]},
+                headers=auth,
+            )
+            assert (
+                denied.status_code == 403
+                and denied.headers.get("content-type") == "application/json"
+            )
+        assert client.get("/api/client-bundle?client=codex").status_code == 401
+        assert (
+            client.get(
+                "/api/client-bundle?client=codex", headers=headers(org, key, outsider["id"])
+            ).status_code
+            == 409
+        )

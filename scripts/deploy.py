@@ -96,10 +96,12 @@ def load_settings(path):
     codex = {"enabled": True, "models": [], "capacity": 10, "sku": None}
     s["claude"] = {**claude, **s.get("claude", {})}
     s["codex"] = {**codex, **s.get("codex", {})}
-    s["portal"] = {"enabled": True, **s.get("portal", {})}
+    s["portal"] = {"enabled": True, "mode": "unified", **s.get("portal", {})}
+    if s["portal"]["mode"] not in {"unified", "baseline"}:
+        raise DeployError("portal.mode must be unified or baseline")
     if not s["claude"]["enabled"] and not s["codex"]["enabled"]:
         raise DeployError("Enable Claude, Codex or both")
-    if s["portal"]["enabled"] and not s["claude"]["enabled"]:
+    if s["portal"]["enabled"] and s["portal"]["mode"] == "baseline" and not s["claude"]["enabled"]:
         raise DeployError("The administration portal manages the Claude route; enable Claude")
     if s["claude"]["sku"] not in {"GlobalStandard", "DataZoneStandard"}:
         raise DeployError("claude.sku must be GlobalStandard or DataZoneStandard")
@@ -172,6 +174,8 @@ class Deployment:
             "names": self.n,
         }
         previous = self.state.get("target")
+        if self.state.get("governance_mode") == "unified" and self.s["portal"]["mode"] != "unified":
+            raise DeployError("A unified installation cannot be downgraded to baseline on rerun")
         if previous is not None and previous != target:
             raise DeployError(
                 "Deployment target changed; use a separate checkout for each customer"
@@ -289,7 +293,9 @@ class Deployment:
             "publisherEmail": self.s["publisher_email"],
             "applicationInsightsName": self.n["insights"],
             "logAnalyticsName": self.n["logs"],
-            "inferencePrincipals": [{"id": group, "type": "Group"}],
+            "inferencePrincipals": [{"id": self.user["id"], "type": "User"}]
+            if self.unified
+            else [{"id": group, "type": "Group"}],
             "allowedObjectIds": self.s["allowed_object_ids"],
         }
         path = self.local / "parameters.json"
@@ -451,8 +457,16 @@ class Deployment:
         )
         profiles = []
         for enabled, config, output in [
-            (self.s["claude"]["enabled"], self.org_path, self.local / "client.json"),
-            (self.s["codex"]["enabled"], self.codex_path, self.local / "codex-client.json"),
+            (
+                self.s["claude"]["enabled"],
+                self.local / "unified/claude-organization.json" if self.unified else self.org_path,
+                self.local / "client.json",
+            ),
+            (
+                self.s["codex"]["enabled"],
+                self.local / "unified/codex-organization.json" if self.unified else self.codex_path,
+                self.local / "codex-client.json",
+            ),
         ]:
             if enabled:
                 self.cli("admin", "--config", config, "export-client", "--output", output, *auth)
@@ -461,20 +475,68 @@ class Deployment:
         args = []
         for profile in profiles:
             args += ["--profile", profile]
-        self.script("build_client_bundle.py", *args, "--output", bundle)
+        self.script(
+            "build_client_bundle.py",
+            *args,
+            *(["--budgeted"] if self.unified else []),
+            "--output",
+            bundle,
+        )
         self.save(bundle=str(bundle))
         return profiles
 
+    @property
+    def unified(self):
+        return self.s["portal"]["enabled"] and self.s["portal"]["mode"] == "unified"
+
     def portal(self, client_id):
-        self.step("Deploying the administration portal on the Claude route")
+        self.step(
+            "Deploying shared Claude/Codex administration"
+            if self.unified
+            else "Deploying the administration portal on the Claude route"
+        )
         portal_dir = self.local / "portal"
         config = portal_dir / "organization.json"
-        self.script("prepare_portal.py", "--organization", self.org_path, "--output", config)
+        unified_settings = {}
+        if self.unified:
+            from claude_foundry.unified_deployment import prepare
+
+            primary, unified_settings, runtime_models = prepare(self)
+            write_json(config, next(iter(unified_settings["providerConfigs"].values())))
+            # Verify the live app before ARM can replace app settings. An existing
+            # ledger is never replaced by an empty deterministic-name account.
+            app_scope = f"/subscriptions/{self.s['subscription_id']}/resourceGroups/{self.n['portal_resource_group']}/providers/Microsoft.Web/sites/{self.n['portal']}"
+            try:
+                live_settings = self.azure(self.s["subscription_id"]).request(
+                    "POST", app_scope + "/config/appsettings/list", version="2024-04-01"
+                )["properties"]
+            except AzureError as error:
+                if error.status != 404:
+                    raise
+                live_settings = {}
+            if live_settings.get("BUDGET_STORAGE_ACCOUNT") and (
+                live_settings["BUDGET_STORAGE_ACCOUNT"] != unified_settings["budgetStorageAccount"]
+                or live_settings.get("BUDGET_ORGANIZATION_ID")
+                != unified_settings["budgetOrganizationId"]
+            ):
+                raise DeployError(
+                    "The live portal uses a different budget ledger. Adopt its existing configuration before upgrading; no Azure deployment was made"
+                )
+        else:
+            self.script("prepare_portal.py", "--organization", self.org_path, "--output", config)
         entra = portal_dir / "entra.json"
         url = f"https://{self.n['portal']}.azurewebsites.net"
         args = ["--organization", config, "--name", self.n["portal_app"]]
         args += ["--redirect-uri", url + "/", "--output", entra]
         if entra.exists():
+            if (
+                self.unified
+                and live_settings.get("PORTAL_CLIENT_ID")
+                and live_settings["PORTAL_CLIENT_ID"] != read_json(entra)["client_id"]
+            ):
+                raise DeployError(
+                    "The recorded portal registration differs from the live portal; preserve its existing Entra configuration before upgrading"
+                )
             args += ["--app-id", read_json(entra)["client_id"]]
         self.script("register_portal.py", *args)
         parameters = {
@@ -489,12 +551,37 @@ class Deployment:
             "insightsName": self.n["insights"],
             "insightsResourceGroup": self.n["resource_group"],
             "privateStorage": True,
+            **unified_settings,
         }
         path = portal_dir / "parameters.json"
+        if path.exists():
+            previous = read_json(path)["parameters"]
+            for key in (
+                "ownerObjectId",
+                "ownerName",
+                "ownerEmail",
+                "storageAccountName",
+                "contentLogsConfig",
+                "vnetAddressPrefix",
+                "functionsSubnetPrefix",
+                "endpointsSubnetPrefix",
+            ):
+                if key in previous:
+                    parameters[key] = previous[key]["value"]
+        if self.unified and live_settings.get("PORTAL_STORAGE_ACCOUNT"):
+            parameters["storageAccountName"] = live_settings["PORTAL_STORAGE_ACCOUNT"]
+        if self.unified:
+            for key, env in (
+                ("ownerObjectId", "PORTAL_OWNER_ID"),
+                ("ownerName", "PORTAL_OWNER_NAME"),
+                ("ownerEmail", "PORTAL_OWNER_EMAIL"),
+            ):
+                if live_settings.get(env):
+                    parameters[key] = live_settings[env]
         write_json(path, deployment_parameters(parameters))
         group = self.n["portal_resource_group"]
         self.az("group", "create", "--name", group, "--location", self.s["location"])
-        self.az(
+        portal_outputs = self.az(
             "deployment",
             "group",
             "create",
@@ -507,8 +594,18 @@ class Deployment:
             "--parameters",
             f"@{path}",
             "--query",
-            "properties.provisioningState",
+            "properties.outputs",
         )
+        if self.unified:
+            from claude_foundry.unified_deployment import deploy_runtime
+
+            deploy_runtime(
+                self,
+                primary,
+                unified_settings,
+                runtime_models,
+                portal_outputs["identityObjectId"]["value"],
+            )
         package = self.dist / "claude-foundry-admin-preview.zip"
         self.script("build_portal.py", "--output", package)
         self.run(
@@ -562,6 +659,12 @@ class Deployment:
 
     def deploy(self, verify=True):
         self.bind_target()
+        if (
+            self.unified
+            and self.state.get("portal_url")
+            and self.state.get("governance_mode") != "unified"
+        ):
+            raise DeployError("Use --upgrade-portal to migrate an existing baseline installation")
         self.sign_in()
         self.providers()
         group = self.developer_group()
@@ -571,10 +674,15 @@ class Deployment:
         if self.s["codex"]["enabled"]:
             self.codex()
         client_id = self.desktop_app()
-        profiles = self.profiles(client_id)
+        profiles = [] if self.unified else self.profiles(client_id)
         if self.s["portal"]["enabled"]:
             self.portal(client_id)
-        if verify:
+        if self.unified:
+            profiles = self.profiles(client_id)
+            self.warnings.append(
+                "Shared routes require owner publication before developer inference. Import intended members, review both providers and spending settings, publish, then run the unified acceptance checks in docs/unified-administration.md. Installer creation does not prove inference readiness."
+            )
+        if verify and not self.unified:
             self.verify(profiles)
         self.summary(group)
 
@@ -587,6 +695,13 @@ class Deployment:
             print(f"  Codex gateway:   {read_json(self.codex_path)['gateway_url']}")
         if self.state.get("portal_url"):
             print(f"  Portal:          {self.state['portal_url']} (owner: {self.user['email']})")
+        if self.unified:
+            print("  Portal coverage: both enabled providers; policy publication required")
+            for client in ("claude", "codex"):
+                if self.s[client]["enabled"]:
+                    print(
+                        f"  {client.title()} governed gateway: {read_json(self.local / f'unified/{client}-organization.json')['gateway_url']}"
+                    )
         print(f"  Developer group: {self.s['developer_group_name']} ({group})")
         print(f"  Installer ZIP:   {self.state['bundle']}")
         for warning in self.warnings:
@@ -594,6 +709,37 @@ class Deployment:
         print("\nOnboard developers:")
         print("  uv run python scripts/onboard_users.py alice@example.com bob@example.com")
         print("  Send them the installer ZIP. They open Install.command and sign in once.")
+
+    def upgrade_portal(self):
+        """Reuse models, foundation, original portal storage and identities during cutover."""
+        if not self.unified:
+            raise DeployError("Portal upgrades require portal.mode=unified")
+        self.bind_target()
+        for client, path in (("claude", self.org_path), ("codex", self.codex_path)):
+            if self.s[client]["enabled"] and not path.exists():
+                raise DeployError(
+                    f"Preserve the existing {client} organization configuration before upgrading"
+                )
+        if (
+            not (self.local / "portal/parameters.json").exists()
+            or not (self.local / "portal/entra.json").exists()
+        ):
+            raise DeployError(
+                "Portal upgrade requires the existing private portal parameter and Entra registration files"
+            )
+        client_id = self.state.get("desktop_client_id")
+        if self.s["auth_mode"] == "msal" and not client_id:
+            raise DeployError(
+                "Record the existing desktop_client_id before upgrading; no sign-in application will be replaced"
+            )
+        self.sign_in()
+        self.providers()
+        self.portal(client_id)
+        self.profiles(client_id)
+        self.warnings.append(
+            "Upgrade preserves baseline routes and old role assignments. Complete governed client tests, then retire alternate inference paths using docs/unified-administration.md before claiming shared enforcement."
+        )
+        self.summary(self.state.get("developer_group_id", "existing group"))
 
 
 def deployment_parameters(values):
@@ -636,13 +782,22 @@ def main():
     )
     parser.add_argument("--settings", type=Path, default=Path(".local/deploy.json"))
     parser.add_argument(
+        "--upgrade-portal",
+        action="store_true",
+        help="Connect both providers using existing local deployment state; skip foundation and model deployment",
+    )
+    parser.add_argument(
         "--skip-verify",
         action="store_true",
         help="Skip final gateway checks; Codex qualification still makes billable requests",
     )
     args = parser.parse_args()
     try:
-        Deployment(load_settings(args.settings)).deploy(verify=not args.skip_verify)
+        job = Deployment(load_settings(args.settings))
+        if args.upgrade_portal:
+            job.upgrade_portal()
+        else:
+            job.deploy(verify=not args.skip_verify)
     except (DeployError, AzureError, OSError, ValueError, KeyError) as error:
         print(f"\nStopped: {error}", file=sys.stderr)
         print(

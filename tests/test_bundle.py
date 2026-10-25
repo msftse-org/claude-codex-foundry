@@ -144,3 +144,12 @@ def test_combined_bundle_requires_one_of_each_client_in_one_tenant(org, tmp_path
     with pytest.raises(ValueError, match="one of each" if same_kind else "same Microsoft Entra"):
         build([first, second], tmp_path / "combined.zip", root)
     assert not (tmp_path / "combined.zip").exists()
+
+
+def test_shared_runtime_bundle_has_matching_verification_instructions(org):
+    profiles = [export_client(org), codex_profile(org)]
+    template = build_template(Path(__file__).resolve().parents[1])
+    with zipfile.ZipFile(io.BytesIO(build_bundle(profiles, template, budgeted=True))) as archive:
+        readme = archive.read("claude-foundry/README.md").decode()
+        assert "--budgeted" in readme and "--governed" not in readme
+        assert "codex/client.json" in readme

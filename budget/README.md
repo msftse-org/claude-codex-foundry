@@ -1,6 +1,6 @@
 # Budget gateway evaluation
 
-This optional preview implements the [approved spending hierarchy](../docs/budget-enforcement.md) and is included in `main`. It uses standard APIM, a separate streaming Functions Flex Consumption app, Azure Table transactions and immutable policy snapshots. The portal and baseline gateways remain separate. Customer release checks still apply.
+The shared runtime implements the [approved spending hierarchy](../docs/budget-enforcement.md) and is included in `main`. It uses standard APIM, a separate streaming Functions Flex Consumption app, Azure Table transactions and immutable policy snapshots. It is included by the default unified deployer; see [unified administration](../docs/unified-administration.md). The low-level instructions below also support isolated evaluations and advanced operator upgrades. Customer release checks still apply.
 
 Before deploying, read the [Azure architecture and full request-flow diagram](../docs/budget-architecture.md): which service checks identity and allowance, where data is stored, how publication works, and what happens when a dependency fails.
 

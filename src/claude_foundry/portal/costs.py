@@ -15,6 +15,25 @@ UNATTRIBUTED = "__unattributed__"
 BREAKDOWN_LIMIT = 2500
 
 
+def planning_prices(state):
+    """Use explicit planning rates first, then reviewed enforcement ceilings."""
+    prices = list(state.get("prices", []))
+    explicit = {p["model"] for p in prices}
+    for value in state.get("budget_prices", []):
+        if value["model"] not in explicit:
+            prices.append(
+                {
+                    "model": value["model"],
+                    "input_per_million": float(value["input_ceiling_per_million"]),
+                    "output_per_million": float(value["output_ceiling_per_million"]),
+                    "source_url": value["source_url"],
+                    "verified_on": value["verified_at"][:10],
+                    "note": "Planning estimate at reviewed enforcement ceilings; not an Azure invoice.",
+                }
+            )
+    return prices
+
+
 class CostQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     start: date
@@ -50,6 +69,9 @@ def build_query(config, filters, prices):
     # JSON-encoded literals prevent user-controlled filters/rates becoming KQL syntax.
     rates = {p["model"]: [p["input_per_million"], p["output_per_million"]] for p in prices}
     cuts = []
+    api_scope = f"== {json.dumps(config['api_id'])}"
+    if config.get("reporting_apis"):
+        api_scope = f"in (dynamic({json.dumps([p['api_id'] for p in config['reporting_apis']])}))"
     for field, values in (
         ("model", filters.model_ids),
         ("group_id", filters.group_ids),
@@ -62,7 +84,7 @@ def build_query(config, filters, prices):
     return f"""let rates = dynamic({json.dumps(rates)});
 let usage = materialize(customMetrics
 | where timestamp >= datetime({filters.previous_start.isoformat()}) and timestamp < datetime({(filters.end + timedelta(days=1)).isoformat()})
-| where tostring(customDimensions["API ID"]) == {json.dumps(config["api_id"])} and tostring(customDimensions["Service ID"]) == {json.dumps(config["apim_name"])}
+| where tostring(customDimensions["API ID"]) {api_scope} and tostring(customDimensions["Service ID"]) == {json.dumps(config["apim_name"])}
 | where name in ("Prompt Tokens", "Completion Tokens", "Prompt Cached Tokens")
 | extend model=tostring(customDimensions.Model), group_id=tostring(customDimensions["Group ID"]), principal_id=tostring(customDimensions["Principal ID"])
 | extend model=iff(isempty(model), "{UNATTRIBUTED}", model), group_id=iff(isempty(group_id), "{UNATTRIBUTED}", group_id), principal_id=iff(isempty(principal_id), "{UNATTRIBUTED}", principal_id)

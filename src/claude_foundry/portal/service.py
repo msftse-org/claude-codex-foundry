@@ -62,16 +62,29 @@ def telemetry(app_id, credential, config, days=30):
         raise ValueError("Unsupported reporting period")
     gateway_path = json.dumps(config["gateway_url"].rstrip("/") + "/v1/")
     api_id, service_id = json.dumps(config["api_id"]), json.dumps(config["apim_name"])
+    path_filter = f"url startswith {gateway_path}"
+    metric_filter = f"== {api_id}"
+    if config.get("reporting_apis"):
+        path_filter = " or ".join(
+            "url startswith "
+            + json.dumps(
+                p["gateway_url"].rstrip("/") + ("/" if p["gateway_url"].endswith("/v1") else "/v1/")
+            )
+            for p in config["reporting_apis"]
+        )
+        metric_filter = (
+            f"in (dynamic({json.dumps([p['api_id'] for p in config['reporting_apis']])}))"
+        )
     # Aggregate in Kusto: counts must not silently stop at the first 10,000 requests.
-    query = f"""let calls = requests | where timestamp > ago({days}d) | where url startswith {gateway_path} | project timestamp, name, resultCode, duration, operation_Id, weight=tolong(coalesce(itemCount, 1));
-let actors = traces | where timestamp > ago({days}d) | where message == "Claude inference request" | extend model=tostring(customDimensions.model), principal_id=tostring(customDimensions.principal_id) | summarize model=take_any(model), principal_id=take_any(principal_id) by operation_Id;
+    query = f"""let calls = requests | where timestamp > ago({days}d) | where {path_filter} | project timestamp, name, resultCode, duration, operation_Id, weight=tolong(coalesce(itemCount, 1));
+let actors = traces | where timestamp > ago({days}d) | where message in ("Claude inference request", "Codex inference request", "Budgeted inference request") | extend model=tostring(customDimensions.model), principal_id=tostring(customDimensions.principal_id) | summarize model=take_any(model), principal_id=take_any(principal_id) by operation_Id;
 let joined = materialize(calls | join kind=leftouter actors on operation_Id | extend model=iff(isempty(model), "Unattributed", model), principal_id=iff(isempty(principal_id), "Unattributed", principal_id));
 union
 (joined | summarize requests=sum(weight), errors=sumif(weight, resultCode !startswith "2"), duration_ms=sum(duration * weight) by key=format_datetime(timestamp, "yyyy-MM-dd") | project bucket="daily", data=pack_all()),
 (joined | summarize requests=sum(weight), errors=sumif(weight, resultCode !startswith "2"), duration_ms=sum(duration * weight) by key=model | project bucket="models", data=pack_all()),
 (joined | summarize requests=sum(weight), errors=sumif(weight, resultCode !startswith "2"), duration_ms=sum(duration * weight) by key=principal_id | project bucket="people", data=pack_all()),
 (joined | top 250 by timestamp desc | project timestamp, name, resultCode, duration, model, principal_id | project bucket="requests", data=pack_all()),
-(customMetrics | where timestamp >= startofmonth(now()) | where tostring(customDimensions["API ID"]) == {api_id} and tostring(customDimensions["Service ID"]) == {service_id}
+(customMetrics | where timestamp >= startofmonth(now()) | where tostring(customDimensions["API ID"]) {metric_filter} and tostring(customDimensions["Service ID"]) == {service_id}
 | where name in ("Prompt Tokens", "Completion Tokens", "Prompt Cached Tokens")
 | summarize input_tokens=sumif(coalesce(valueSum, value), name == "Prompt Tokens"), output_tokens=sumif(coalesce(valueSum, value), name == "Completion Tokens"), cached_tokens=sumif(coalesce(valueSum, value), name == "Prompt Cached Tokens") by model=tostring(customDimensions.Model), group_id=tostring(customDimensions["Group ID"]), principal_id=tostring(customDimensions["Principal ID"])
 | project bucket="month_tokens", data=pack_all())"""

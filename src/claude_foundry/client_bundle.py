@@ -47,7 +47,7 @@ def build_template(root):
     return output.getvalue()
 
 
-def build_bundle(profiles, template, *, governed=False):
+def build_bundle(profiles, template, *, governed=False, budgeted=False):
     if isinstance(profiles, dict):
         profiles = [profiles]
     configs = [validate_client(copy.deepcopy(profile)) for profile in profiles]
@@ -96,7 +96,13 @@ def build_bundle(profiles, template, *, governed=False):
     verification = "\n".join(
         "~/.local/share/claude-foundry/runtime/bin/claude-foundry verify --config "
         f"~/.config/claude-foundry/{'codex/' if kind == 'codex' else ''}client.json"
-        + (" --governed" if governed and kind == "claude" else "")
+        + (
+            " --budgeted"
+            if budgeted and kind == "claude"
+            else " --governed"
+            if governed and kind == "claude"
+            else ""
+        )
         for kind in by_kind
     )
     restore = "\n".join(

@@ -16,6 +16,11 @@ param insightsName string
 param insightsResourceGroup string
 @description('Optional output from content-logs.bicep. Empty keeps content access unavailable.')
 param contentLogsConfig object = {}
+@description('Unified governance. Empty retains the explicitly selected legacy portal.')
+param budgetStorageAccount string = ''
+param budgetOrganizationId string = ''
+param providerConfigs object = {}
+param initialBudgetPrices array = []
 @description('Use private Blob networking. Keep enabled where organizational policy requires private storage.')
 param privateStorage bool = true
 param vnetAddressPrefix string = '10.91.0.0/24'
@@ -113,7 +118,7 @@ module monitoring 'modules/portal-monitoring.bicep' = {
     principalId: identity.properties.principalId
   }
 }
-module gatewayAccess 'modules/portal-gateway-access.bicep' = {
+module gatewayAccess 'modules/portal-gateway-access.bicep' = if (empty(budgetStorageAccount)) {
   scope: resourceGroup(organization.apim_resource_group)
   name: '${portalName}-gateway-access'
   params: {
@@ -173,6 +178,10 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'PORTAL_DESKTOP_CLIENT_ID', value: desktopClientId }
         { name: 'PORTAL_INSIGHTS_APP_ID', value: insights.properties.AppId }
         { name: 'PORTAL_CONTENT_LOGS_JSON', value: empty(contentLogsConfig) ? '' : string(contentLogsConfig) }
+        { name: 'BUDGET_STORAGE_ACCOUNT', value: budgetStorageAccount }
+        { name: 'BUDGET_ORGANIZATION_ID', value: budgetOrganizationId }
+        { name: 'PORTAL_PROVIDER_CONFIGS_JSON', value: string(providerConfigs) }
+        { name: 'PORTAL_INITIAL_BUDGET_PRICES_JSON', value: string(initialBudgetPrices) }
         { name: 'PORTAL_STATIC_DIR', value: '/home/site/wwwroot/static' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }

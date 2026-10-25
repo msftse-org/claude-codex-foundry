@@ -1,6 +1,6 @@
 # Claude & Codex on Azure
 
-Run Claude Desktop, Claude Code and Codex Desktop/CLI through **Azure Foundry and standard Azure API Management**, with Microsoft Entra sign-in. Deploy in the customer's subscription, give developers a Mac installer, and manage Claude access and usage in a customer-owned portal.
+Run Claude Desktop, Claude Code and Codex Desktop/CLI through **Azure Foundry and standard Azure API Management**, with Microsoft Entra sign-in. Deploy in the customer's subscription, give developers a Mac installer, and manage Claude and Codex access and usage in one customer-owned portal.
 
 ## Start here
 
@@ -36,7 +36,7 @@ az account set --subscription YOUR_SUBSCRIPTION_ID
 uv run --frozen python scripts/deploy.py --settings .local/deploy.json
 ```
 
-This creates Foundry, APIM, monitoring, the enabled Claude/Codex model routes, sign-in applications, an installer ZIP and the optional portal. **Azure charges apply, including verification requests. APIM can take 30+ minutes.** Review the final verification results and any consent actions. If a step fails, fix the cause and rerun with the same settings and state.
+This creates Foundry, APIM, monitoring, the enabled Claude/Codex model routes, sign-in applications, an installer ZIP and unified administration with the shared runtime and private ledger storage. **Azure charges apply, including verification requests. APIM can take 30+ minutes.** Review the final verification results and any consent actions. If a step fails, fix the cause and rerun with the same settings and state.
 
 ### 3. Add developers and distribute the installer
 
@@ -50,7 +50,7 @@ These commands grant group access to **existing users in the customer's tenant**
 
 Send `dist/claude-codex-SUFFIX-macos.zip` through the customer's software channel. Developers install the approved apps, extract the ZIP, open `Install.command`, sign in with Microsoft and reopen their apps. Test on a pilot Mac before wider distribution. [Installation and recovery](docs/macos.md).
 
-**To enable Claude portal governance:** sign in as the owner, import the generated CSV under **Members**, review all intended callers, then publish. Portal groups and Entra groups are separate; unregistered callers lose access after publication. [Import and publication guide](docs/llm-onboarding.md#import-developers-and-configure-governance).
+**To activate shared governance:** sign in as the owner, review both catalogs, import intended members, verify model prices and pinned deployment bounds, then publish access and spending policy. Governed inference stays closed until these checks pass. [Unified setup and existing-customer upgrade](docs/unified-administration.md). Portal groups and Entra groups are separate.
 
 ## Find the right guide
 
@@ -71,7 +71,7 @@ Send `dist/claude-codex-SUFFIX-macos.zip` through the customer's software channe
 ## Before a customer rollout
 
 - **Preview features:** Codex and the portal have documented acceptance gaps. Review [Codex validation](docs/codex-validation.md) and [portal validation](portal/VALIDATION.md) for the intended rollout.
-- **Spending controls:** the standard deployment does not enforce USD limits. The separate budget gateway adds organization/group/user limits for Claude and Codex and remains an evaluation feature with [release checks](docs/budget-enforcement.md#release-acceptance). Portal cost estimates are not Azure invoices.
+- **Spending controls:** the default unified installation includes the shared runtime for Claude/Codex organization/group/user limits, activated by reviewed owner publication. Its [release checks](docs/budget-enforcement.md#release-acceptance) remain required. Explicit `portal.mode=baseline` and portal-free deployments do not enforce shared USD limits. Portal cost estimates are not Azure invoices.
 - **Supported setup:** onboarding targets macOS and Azure public cloud. Baseline APIM/Foundry endpoints use public HTTPS. Keep customer configuration and identity lists in ignored `.local/`; distribute only the installer ZIP.
 
 Independently maintained; no Microsoft or Anthropic support or certification. No repository license has been selected; confirm redistribution terms before sharing source with customers. Azure and model-provider terms apply separately.

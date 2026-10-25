@@ -168,3 +168,38 @@ it("preserves the unified portal's provider choice for profiles, ZIPs and setup 
         "claude-foundry-macos.zip",
     );
 });
+
+it("starts with Codex setup when the group's default is an OpenAI model", async () => {
+    const codex = {
+        ...profile,
+        client_type: "codex",
+        gateway_url: "https://organization.azure-api.net/codex-governed/v1",
+    };
+    vi.mocked(api).mockResolvedValue(codex);
+    const firstUser = {
+        ...state,
+        client_types: ["claude", "codex"],
+        models: [{ name: "gpt-test", anthropicFamilyTier: "openai" }],
+        groups: [
+            {
+                ...state.groups[0],
+                default_model: "gpt-test",
+                model_ids: ["gpt-test"],
+            },
+        ],
+    } as State;
+    render(
+        <Onboarding state={firstUser} onMembers={vi.fn()} notify={notify} />,
+    );
+    await screen.findByText(codex.gateway_url);
+    expect(api).toHaveBeenCalledWith(
+        "/api/client-profile?client=codex&group_id=platform",
+    );
+    fireEvent.click(
+        screen.getByRole("button", { name: "Download Mac setup ZIP" }),
+    );
+    expect(downloadFile).toHaveBeenCalledWith(
+        "/api/client-bundle?client=codex&group_id=platform",
+        "claude-foundry-macos.zip",
+    );
+});

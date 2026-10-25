@@ -18,13 +18,14 @@ from pydantic import ValidationError
 
 from ..client_bundle import build_bundle, build_template
 from ..config import export_client, load_org
+from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator
 from .boundary import RequestBoundary
 from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
-from .budget_policy import Snapshots, group_publication, portal_seed, snapshot
+from .budget_policy import Snapshots, draft_impact, group_publication, portal_seed, snapshot
 from .budget_proxy import GatewayIdentity
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
-from .costs import CostQuery, cost_analysis
+from .costs import CostQuery, cost_analysis, planning_prices
 from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
 from .governance import impact
 from .policy_cache import MAX_SHARED_BYTES
@@ -60,7 +61,14 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             Ledger(AzureRows(budget_account, os.environ["BUDGET_ORGANIZATION_ID"], credential)),
             Snapshots(budget_account, credential),
         )
+    policy_impact = draft_impact if budget is not None else impact
     budget_models = json.loads(os.getenv("PORTAL_BUDGET_MODELS_JSON", "[]"))
+    providers = provider_configs(
+        config, json.loads(os.getenv("PORTAL_PROVIDER_CONFIGS_JSON", "{}"))
+    )
+    if providers and budget is None:
+        raise ValueError("Shared provider administration requires the budget runtime")
+    reporting = reporting_config(config, providers) if providers else config
     # Separate machine-only origin for APIM's immutable snapshot cache. This
     # portal always reads Blob directly on a miss, preventing cache recursion.
     origin_audience = os.getenv("BUDGET_POLICY_CACHE_AUDIENCE", "")
@@ -73,6 +81,8 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     model_catalog = config["models"] + [
         m for m in budget_models if m["name"] not in {m["name"] for m in config["models"]}
     ]
+    if providers:
+        model_catalog = catalog(providers)
     content_source = (
         LogSource.model_validate_json(os.environ["PORTAL_CONTENT_LOGS_JSON"])
         if os.getenv("PORTAL_CONTENT_LOGS_JSON")
@@ -82,10 +92,13 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     def storage():
         if app.state.store is None:
             initial = seed(
-                config,
+                {**config, "models": model_catalog},
                 owner_id,
                 os.getenv("PORTAL_OWNER_NAME", "Organization owner"),
                 os.getenv("PORTAL_OWNER_EMAIL", "owner@example.com"),
+            )
+            initial["budget_prices"] = json.loads(
+                os.getenv("PORTAL_INITIAL_BUDGET_PRICES_JSON", "[]")
             )
             app.state.store = (
                 LocalStore(os.getenv("PORTAL_LOCAL_PATH", ".local/portal/state.json"), initial)
@@ -255,10 +268,13 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             viewer=member,
             models=model_catalog,
             budget_configured=budget is not None,
+            client_types=list(providers) if providers else [config.get("client_type", "claude")],
             gateway_url=config["gateway_url"],
             tenant_id=config["tenant_id"],
-            policy_hash=impact(config, data)["policy_hash"],
+            policy_hash=policy_impact(config, data)["policy_hash"],
         )
+        if budget is not None:
+            data["prices"] = planning_prices(data)
         if member["role"] == "developer":
             data.update(
                 members=[member],
@@ -297,12 +313,12 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 copy.deepcopy(data), body, member, [m["name"] for m in model_catalog]
             )
             # Validate the resulting policy size and model references before persistence.
-            impact(config, updated)
+            policy_impact(config, updated)
             storage().save(updated, etag)
             return {
                 "revision": updated["revision"],
                 "saved": True,
-                "gateway_changed": impact(config, updated)["policy_hash"]
+                "gateway_changed": policy_impact(config, updated)["policy_hash"]
                 != updated.get("published_hash"),
             }
         except PermissionError as exc:
@@ -320,7 +336,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         try:
             members = import_members(data, body, member)
             data["members"].extend(members)
-            effect = impact(config, data)
+            effect = policy_impact(config, data)
             return {
                 "count": len(members),
                 "members": members[:20],
@@ -335,7 +351,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     def preview(access=actor_dependency):
         data, _, member = access
         administrative(member)
-        return impact(config, data)
+        return policy_impact(config, data)
 
     @app.post("/api/publish")
     def deploy(body: dict, access=actor_dependency):
@@ -396,7 +412,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             publish_status="published",
             published_revision=data["revision"],
             published_at=now(),
-            published_hash=impact(config, data)["policy_hash"],
+            published_hash=policy_impact(config, data)["policy_hash"],
         )
         audit(data, member, "gateway.published", "Gateway", None, {"reviewed_revision": reviewed})
         storage().save(data, etag)
@@ -412,7 +428,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         if cached and cached[0] == days and (datetime.now(UTC) - cached[1]).total_seconds() < 60:
             return cached[2]
         try:
-            result = telemetry(os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, config, days)
+            result = telemetry(os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, reporting, days)
             app.state.telemetry_cache = (days, datetime.now(UTC), result)
             return result
         except Exception:
@@ -428,14 +444,14 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             body = body.model_copy(update={"group_ids": [member["group_id"]]})
         else:
             administrative(member)
-        prices = data["prices"]
+        prices = planning_prices(data) if budget is not None else data["prices"]
         key = body.model_dump_json() + json.dumps(prices, sort_keys=True)
         cached = app.state.cost_cache.get(key)
         if cached and (datetime.now(UTC) - cached[0]).total_seconds() < 60:
             return cached[1]
         try:
             result = cost_analysis(
-                os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, config, body, prices
+                os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, reporting, body, prices
             )
         except Exception:
             raise HTTPException(
@@ -449,13 +465,21 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         return result
 
     def client_config(group_id, access, client="claude"):
-        if client != "claude":
-            raise HTTPException(409, "Codex client downloads are not configured for this portal.")
         data, _, member = access
         profile_actor = member
         profile_config = config
+        if providers:
+            if client not in providers:
+                raise HTTPException(409, "This provider is not configured for the portal")
+            profile_config = providers[client]
+        elif client != config.get("client_type", "claude"):
+            raise HTTPException(409, "This provider is not configured for the portal")
         if budget is not None:
-            url = os.getenv("BUDGET_CLAUDE_GATEWAY_URL")
+            url = (
+                profile_config["gateway_url"]
+                if providers
+                else os.getenv("BUDGET_CLAUDE_GATEWAY_URL")
+            )
             if not url:
                 raise HTTPException(
                     409,
@@ -474,7 +498,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 ) from None
             if member["group_id"] != profile_actor["group_id"]:
                 raise HTTPException(409, "Publish the membership change before exporting a profile")
-            profile_config = {**config, "gateway_url": url}
+            profile_config = {**profile_config, "gateway_url": url}
         allowed = effective_models(data, member)
         group = next(g for g in data["groups"] if g["id"] == member["group_id"])
         if group_id:
@@ -486,12 +510,12 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             if not group:
                 raise HTTPException(404, "Group not found.")
             allowed = group["model_ids"]
-        models = copy.deepcopy([m for m in config["models"] if m["name"] in allowed])
+        models = copy.deepcopy([m for m in profile_config["models"] if m["name"] in allowed])
         if not models:
             raise HTTPException(
                 409, "This group has no model access. Grant a model before exporting."
             )
-        for family in {m["anthropicFamilyTier"] for m in models}:
+        for family in {m["anthropicFamilyTier"] for m in models} if client == "claude" else set():
             options = [m for m in models if m["anthropicFamilyTier"] == family]
             if any(m["name"] == group["default_model"] for m in options):
                 for model in options:
@@ -499,6 +523,17 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             if not any(m.get("isFamilyDefault") for m in options):
                 options[0]["isFamilyDefault"] = True
         models.sort(key=lambda model: model["name"] != group["default_model"])
+        if client == "codex":
+            names = {m["name"] for m in models}
+            profile_config = {
+                **profile_config,
+                "default_model": group["default_model"]
+                if group["default_model"] in names
+                else next(
+                    (m["name"] for m in models if m["name"] == profile_config.get("default_model")),
+                    models[0]["name"],
+                ),
+            }
         desktop_client_id = os.getenv("PORTAL_DESKTOP_CLIENT_ID")
         if desktop_client_id:
             desktop_client_id = str(UUID(desktop_client_id))
@@ -516,7 +551,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     ):
         return JSONResponse(
             client_config(group_id, access, client),
-            headers={"Content-Disposition": 'attachment; filename="client.json"'},
+            headers={"Content-Disposition": f'attachment; filename="{client}-client.json"'},
         )
 
     @app.get("/api/client-bundle")
@@ -539,9 +574,22 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 "The setup bundle is unavailable. Ask your administrator to redeploy the portal package.",
             ) from None
         return Response(
-            build_bundle(profile, template, governed=True),
+            build_bundle(profile, template, governed=budget is None, budgeted=budget is not None),
             media_type="application/zip",
             headers={"Content-Disposition": 'attachment; filename="claude-foundry-macos.zip"'},
+        )
+
+    @app.get("/api/model-policy")
+    def model_policy(access=actor_dependency):
+        data, _, member = access
+        if member["role"] not in {"owner", "admin"}:
+            raise HTTPException(403, "Only organization administrators can export the model policy")
+        return JSONResponse(
+            {"budget_prices": data.get("budget_prices", [])},
+            headers={
+                "Content-Disposition": 'attachment; filename="model-policy.json"',
+                "Cache-Control": "no-store",
+            },
         )
 
     @app.get("/api/budgets/balance")

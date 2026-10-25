@@ -56,6 +56,9 @@ def parser():
     check.add_argument("--config", type=Path)
     check.add_argument("--all-models", action="store_true")
     check.add_argument(
+        "--budgeted", action="store_true", help="Verify a shared budget-runtime Claude route"
+    )
+    check.add_argument(
         "--governed", action="store_true", help="Verify published Claude portal governance"
     )
     admin = actions.add_parser(
@@ -159,8 +162,8 @@ def main():
         elif args.action == "verify":
             c = load_client(args.config) if args.config else auth.installed_config()
             if c.get("client_type") == "codex":
-                if args.governed:
-                    raise ValueError("--governed applies only to the Claude portal gateway")
+                if args.governed or args.budgeted:
+                    raise ValueError("--governed and --budgeted apply only to Claude gateways")
                 selected = (
                     c["models"]
                     if args.all_models
@@ -169,7 +172,12 @@ def main():
                 report = [codex_verify.qualify(c, m) for m in selected]
                 print(json.dumps(report, indent=2))
                 return 0 if all(r["passed"] for r in report) else 2
-            verify(c, args.all_models, governed=args.governed)
+            verify(
+                c,
+                args.all_models,
+                governed=args.governed,
+                **({"budgeted": True} if args.budgeted else {}),
+            )
         elif args.action == "admin":
             c = load_org(args.config)
             azure = Azure(c["subscription_id"])

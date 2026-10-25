@@ -1,5 +1,7 @@
 # Management portal — preview
 
+The standard deployment now connects both providers through [unified administration](../docs/unified-administration.md). The manual Claude baseline and isolated-preview commands below remain for explicitly selected legacy/testing setups.
+
 The portal is included for continued development and evaluation. Use feature branches and pull requests for follow-up work. CI validates source; it does not deploy Azure resources. The deployment workflow below attaches to the existing Claude API by default: clients, usage/cost reporting, profile export and publication share one route. Complete the remaining validation and an explicit rollout review before customer production use.
 
 For daily administration and screenshots, start with the [portal user guide](../docs/portal-guide.md). For code contributions, use [CONTRIBUTING.md](../CONTRIBUTING.md).

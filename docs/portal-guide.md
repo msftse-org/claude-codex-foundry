@@ -177,6 +177,8 @@ Displayed times use the browser's timezone; JSON details retain UTC. State and a
 
 ## Developer onboarding
 
+Unified installations offer separate **Claude** and **Codex** applications, using published grants and the correct provider endpoint. The Codex setup contains only qualified OpenAI models. Owners can also download the model-policy draft for the deployment administrator to verify pinned runtime bounds before publication. See [unified setup and upgrades](unified-administration.md).
+
 After granting and publishing access, open **Developer onboarding**, choose the group when offered, and select **Download Mac setup ZIP**. Developers download their own scoped setup. The page shows the target application, gateway address, and sign-in method from that profile.
 
 ![Complete setup ZIP, gateway address and copyable Codex setup prompt](images/portal-onboarding-setup.png)

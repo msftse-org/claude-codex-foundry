@@ -4,7 +4,7 @@
 
 Give this guide and repository access to the customer's coding assistant. The assistant can prepare the configuration, deploy infrastructure, resolve existing directory users, build the installer and verify the result. A customer administrator supplies the target environment and authorizes the Azure changes and paid services. Interactive Microsoft sign-in and any required administrator consent still happen in the customer's tenant.
 
-This runbook targets a fresh Azure public-cloud installation with macOS clients. For existing infrastructure, use the [administrator guide](administrator.md); do not point the fresh-deployment script at shared resources without reviewing ownership and its templates.
+This runbook targets a fresh Azure public-cloud installation with macOS clients. For an existing standard installation, use the [portal-only upgrade](unified-administration.md#upgrade-an-existing-standard-installation). For other existing infrastructure, use the [administrator guide](administrator.md); do not point the fresh-deployment script at shared resources without reviewing ownership and its templates.
 
 ## Prompt to give the customer's assistant
 
@@ -28,8 +28,11 @@ to resume the same deployment. Keep credentials, identity data and raw reports o
 Git and chat. Never change tenant policies or weaken networking to bypass a failure.
 
 Treat Entra group membership, portal membership and policy publication as distinct
-steps. If enforced USD limits or delegated group administration are required, follow
-the budget deployment guide and acceptance checks before claiming those are active.
+steps. Use unified portal administration by default for both enabled providers. Follow
+docs/unified-administration.md: review model prices/capacities, verify and pin actual
+versions, configure portal.model_policy_file, then obtain owner publication. Complete
+the budget acceptance checks before claiming access and spending controls are active.
+Use portal.mode=baseline only if the customer explicitly chooses the legacy setup.
 
 Finish with the source commit, deployed resources and URLs, actual available models,
 verification evidence, import counts and unresolved identities, installer location,
@@ -47,7 +50,7 @@ Mark the installation incomplete if a required acceptance check has not passed.
 | Entra authority | Ability to read users, create or use a security group and change its membership, create app registrations and obtain required admin consent. Azure subscription roles do not grant these directory permissions. |
 | Contact and terms | APIM publisher name/email. For Claude: legal organization name, two-letter country code, industry and explicit authorization to accept the paid Anthropic Marketplace terms. |
 | Clients and models | Claude, Codex or both; an approved model list and capacity for each, plus SKU if required. Empty model lists attempt every eligible model with quota. Capacity is not a spending limit. |
-| Access mode | Baseline developer group; optional Claude portal governance; or the additional enforced-budget preview. Identify the initial owner and approved administrators. |
+| Access mode | Unified Claude/Codex administration by default. Identify the owner, administrators, approved spend policy and reviewed model prices/capacities. Explicit legacy mode is optional. |
 | Sign-in | `msal` for developer Macs without Azure CLI, with app registration and consent; or the customer's approved `azure-cli` alternative. |
 | Developer group | Existing group object ID, or authorization to create a group. Use a customer-specific `developer_group_name` if several installations share a tenant; the default display name can reuse a group. |
 | Initial people | Approved work emails, UPNs or tenant-local user object IDs. Include guest users only after they exist in the target tenant. Keep the CSV under `.local/`. |
@@ -59,11 +62,12 @@ Choose the enforcement path before distributing profiles:
 
 | Path | Result and required follow-up |
 | --- | --- |
-| Baseline | Entra developer-group inference RBAC and the published model catalog. The one-command script deploys this path. |
-| Claude portal governance | The same Claude route gains published membership, model and token policies. Import all intended callers and review/publish separately. Codex remains on its separate baseline route. |
-| Enforced USD budgets / delegated group administrators | Requires the [budget runtime deployment](../budget/README.md), budget routes, reviewed prices/capacities and policy publication. Complete the [release acceptance checks](budget-enforcement.md#release-acceptance) and bypass review. This remains an evaluation feature. |
+| Unified (default) | Both enabled providers share portal membership, model grants and the ledger. Runtime/storage are automatic; reviewed model bounds, owner publication and acceptance checks remain required. |
+| Baseline (explicit) | Set `portal.mode=baseline` for developer-group inference RBAC and the legacy Claude-only portal. No shared USD enforcement. |
+| Legacy Claude portal governance | The same Claude route gains published membership, model and token policies. Import all intended callers and review/publish separately. Codex remains on its separate baseline route. |
+| Enforced USD budgets / delegated group administrators | The default deployer includes the runtime. Follow [unified administration](unified-administration.md) for reviewed prices/capacities and policy publication. Complete the [release acceptance checks](budget-enforcement.md#release-acceptance) and bypass review. This remains an evaluation feature. |
 
-The standard portal's dollar planning fields do not enforce spending. If the customer requires enforced budgets, the baseline deployment alone does not satisfy the request. Content capture is also a separate, opt-in [deployment](content-logs.md); leave it off unless requested.
+Dollar planning fields alone do not enforce spending. Shared enforcement requires runtime verification and a valid owner-published policy. Content capture is also a separate, opt-in [deployment](content-logs.md); leave it off unless requested.
 
 ## Prepare and validate locally
 
@@ -82,7 +86,7 @@ uv run --frozen python scripts/onboard_users.py --help
 
 Install Git, Azure CLI with Bicep, uv/Python 3.11+, and Node.js 24/npm before deployment. The portal builder runs `npm ci` and a production build. Check these locally with `git --version`, `az version`, `az bicep version`, `uv --version`, `node --version` and `npm --version`.
 
-Edit `.local/deploy.json` using the customer inputs. Replace every example tenant/subscription/contact/attestation value. Use explicit model lists for a scoped pilot. Set `portal.enabled=false` for a Codex-only installation; the standard portal requires Claude. Set `accept_marketplace_terms=true` only after the customer has authorized the relevant terms. The [quick start](quickstart.md#1-describe-the-deployment) describes the supported settings and naming overrides.
+Edit `.local/deploy.json` using the customer inputs. Replace every example tenant/subscription/contact/attestation value. Use explicit model lists for a scoped pilot. The unified portal supports Codex-only installations; use `portal.enabled=false` only when intentionally omitting administration. Set `accept_marketplace_terms=true` only after the customer has authorized the relevant terms. The [quick start](quickstart.md#1-describe-the-deployment) describes the supported settings and naming overrides.
 
 Validate settings without calling Azure or printing their contents:
 
@@ -100,7 +104,7 @@ alice@contoso.com
 bob@contoso.com
 ```
 
-This input adds existing directory users to the inference group. It does not create accounts, invite guests, assign licenses, import conversation histories or synchronize an identity provider. Unknown or ambiguous identities need correction by the customer.
+This input adds existing directory users to the developer group. In unified mode, shared-route inference also requires portal membership and publication. It does not create accounts, invite guests, assign licenses, import conversation histories or synchronize an identity provider. Unknown or ambiguous identities need correction by the customer.
 
 ## Deploy the authorized plan
 
@@ -113,9 +117,9 @@ uv run --frozen python scripts/deploy.py --settings .local/deploy.json
 
 Compare the selected IDs to the settings before proceeding. Sign in as the intended owner/deployer; the script expects an interactive user and reads `az ad signed-in-user show`. A service-principal-only CI deployment is not implemented by this wrapper.
 
-The script registers resource providers, prepares group/RBAC, deploys Foundry/APIM/monitoring, deploys models and API routes, qualifies Codex models, prepares sign-in, exports profiles, packages the installer and optionally deploys the portal. APIM can take 30 minutes or longer. It prints the commands it runs. Model provisioning/qualification may partially succeed; inspect the reports and actual published catalog against the approved plan.
+The script registers resource providers, prepares group/RBAC, deploys Foundry/APIM/monitoring, deploys models and API routes, qualifies Codex models, prepares sign-in, deploys the unified portal/runtime, exports governed profiles and packages the installer by default. APIM can take 30 minutes or longer. It prints the commands it runs. Model provisioning/qualification may partially succeed; inspect the reports and actual published catalog against the approved plan.
 
-`--skip-verify` skips the final gateway checks. Codex qualification still sends billable model requests; the command is not an offline or free deployment mode. If MSAL admin consent cannot be granted, the script can finish with an action-needed message. Record and complete that consent step before declaring developer sign-in ready. If `grant_admin_consent=false` was chosen, verify consent separately.
+In explicit baseline mode, `--skip-verify` skips the final gateway checks. Unified mode names owner publication and the acceptance checks as pending instead of probing inference before a policy exists. Codex qualification still sends billable model requests; the command is not an offline or free deployment mode. If MSAL admin consent cannot be granted, the script can finish with an action-needed message. Record and complete that consent step before declaring developer sign-in ready. If `grant_admin_consent=false` was chosen, verify consent separately.
 
 On a failure, preserve `.local/deploy-state.json` and the organization files, fix the specific issue, and rerun the same command for the same target. Target changes are rejected before Azure changes. Do not delete state or change the suffix to hide a provisioning error: that can orphan billable resources. Escalate quota, policy, purchase and consent restrictions to their customer owners.
 
@@ -131,7 +135,7 @@ The script checks the tenant recorded in deployment state, resolves each identit
 
 For **baseline access**, the group grant is sufficient after propagation. Installing the portal does not turn on governance, and the script does not import portal members automatically.
 
-For **Claude portal governance**, use the authenticated owner/admin portal session and [member-import workflow](portal-guide.md#members-and-bulk-onboarding):
+For **unified administration**, complete [model verification and shared publication](unified-administration.md) for both providers. For **legacy Claude portal governance**, use the authenticated owner/admin portal session and [member-import workflow](portal-guide.md#members-and-bulk-onboarding):
 
 1. Create the intended portal groups and review their allowed/default models and quotas. Portal groups do not synchronize with Entra groups.
 2. Import the generated CSV under **Members → Import CSV**, selecting the appropriate default portal group. Split the file by team if needed. The portal accepts up to 2,500 new developers per file. Exclude the existing owner and other already registered members; duplicate object IDs are rejected rather than updated.
@@ -141,9 +145,11 @@ For **Claude portal governance**, use the authenticated owner/admin portal sessi
 
 If the assistant has no authenticated portal control, hand these concrete steps and the private CSV to the customer owner and mark publication pending. Do not replace Microsoft sign-in with local-owner mode or edit private Blob state to bypass the portal API.
 
-For **enforced budgets**, continue with the [budget runtime guide](../budget/README.md). Publish the approved hierarchy and reviewed enforcement prices, export profiles for the budget routes, remove alternate direct/baseline inference paths as documented, and run its acceptance checks. Keep that work distinct from the standard portal publication above.
+For **enforced budgets**, complete the [unified acceptance procedure](unified-administration.md#acceptance-and-handover); the runtime is already deployed by default. The [low-level runtime guide](../budget/README.md) remains available for manual installations. Publish the approved hierarchy and reviewed enforcement prices, export profiles for the budget routes, remove alternate direct/baseline inference paths as documented, and run its acceptance checks. Keep that work distinct from the standard portal publication above.
 
 ## Verify and hand over
+
+For the default unified setup, follow [shared acceptance](unified-administration.md#acceptance-and-handover). Use `claude-foundry verify --config .local/client.json --budgeted` for Claude and `claude-foundry verify --config .local/codex-client.json` for Codex after owner publication. The legacy governed-verifier examples below apply only to `portal.mode=baseline`.
 
 Check the command's final status, model/qualification reports and any consent warnings. Gateway verification uses the deployer's Azure CLI identity; it does not prove a developer's MSAL sign-in, Conditional Access or desktop installation works.
 

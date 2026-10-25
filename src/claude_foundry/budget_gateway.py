@@ -50,8 +50,13 @@ def policy_xml(tenant_id, budget_url, audience, provider):
         **{"copy-unmatched-params": "false"},
     )
     element(inbound, "authentication-managed-identity", resource=audience)
+    inference = element(
+        element(inbound, "choose"),
+        "when",
+        condition='@(context.Operation.Id == "messages" || context.Operation.Id == "responses")',
+    )
     trace = element(
-        inbound,
+        inference,
         "trace",
         source="claude-foundry" if provider == "anthropic" else "codex-foundry",
         severity="information",
@@ -60,8 +65,22 @@ def policy_xml(tenant_id, budget_url, audience, provider):
     element(
         trace,
         "metadata",
+        name="model",
+        value='@{ try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? ""; } catch { return ""; } }',
+    )
+    element(
+        trace,
+        "metadata",
         name="principal_id",
         value='@(((Jwt)context.Variables["callerJwt"]).Claims.GetValueOrDefault("oid", ""))',
+    )
+    metric = element(inference, "llm-emit-token-metric", namespace="ClaudeCodexFoundry")
+    element(metric, "dimension", name="API ID")
+    element(
+        metric,
+        "dimension",
+        name="Model",
+        value='@{ try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? "Unknown"; } catch { return "Unknown"; } }',
     )
     backend = element(root, "backend")
     element(backend, "forward-request", timeout="240", **{"buffer-response": "false"})
@@ -108,10 +127,12 @@ def deploy(config, azure, budget_url, audience, provider, api_id, api_route):
         raise ValueError("Refusing to overwrite an API not owned by this budget deployment")
     properties = {
         "displayName": ("Claude" if provider == "anthropic" else "Codex")
-        + " via Azure Foundry — budget preview",
+        + " via Azure Foundry - shared governance",
         "description": marker,
         "path": api_route,
         "protocols": ["https"],
+        "apiType": "http",
+        "serviceUrl": budget_url,
         "subscriptionRequired": True,
     }
     azure.request("PUT" if existing is None else "PATCH", base, {"properties": properties})
