@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 from starlette.datastructures import URL, Headers, MutableHeaders
 from starlette.responses import JSONResponse
 
+from .configuration_feed import CONFIGURATION_PATH
+
 MAX_BODY_BYTES = 1_000_000
 
 
@@ -30,6 +32,9 @@ class RequestBoundary:
                 )
                 if scope["path"].startswith("/api/"):
                     headers["Cache-Control"] = "no-store"
+                if scope["path"] == CONFIGURATION_PATH:
+                    headers["Cache-Control"] = "private, no-store"
+                    headers["Vary"] = "Authorization"
                 if not self.local:
                     headers["Strict-Transport-Security"] = "max-age=31536000"
             await send(message)

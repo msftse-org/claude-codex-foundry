@@ -6,9 +6,11 @@ import jwt
 from fastapi import HTTPException
 
 
-class Authenticator:
-    def __init__(self, tenant, client_id):
+class _TokenValidator:
+    def __init__(self, tenant, client_id, scope, authorized_clients):
         self.tenant, self.client_id = str(UUID(tenant)), str(UUID(client_id)) if client_id else ""
+        self.scope = scope
+        self.authorized_clients = {str(UUID(client)) for client in authorized_clients}
         self.issuer = f"https://login.microsoftonline.com/{self.tenant}/v2.0"
         self.keys = jwt.PyJWKClient(
             f"https://login.microsoftonline.com/{self.tenant}/discovery/v2.0/keys",
@@ -37,11 +39,28 @@ class Authenticator:
             if (
                 claims["tid"] != self.tenant
                 or not isinstance(claims.get("scp"), str)
-                or "access_as_user" not in claims.get("scp", "").split()
-                or claims.get("azp") != self.client_id
+                or self.scope not in claims.get("scp", "").split()
+                or claims.get("azp") not in self.authorized_clients
+                or claims.get("idtyp") == "app"
                 or not isinstance(claims["oid"], str)
             ):
                 raise ValueError("Wrong tenant, scope, or client")
             return str(UUID(claims["oid"]))
         except (jwt.PyJWTError, ValueError, KeyError, TypeError) as exc:
             raise HTTPException(401, "Your sign-in is invalid or expired. Sign in again.") from exc
+
+
+class Authenticator(_TokenValidator):
+    """Portal tokens remain restricted to the portal application and scope."""
+
+    def __init__(self, tenant, client_id):
+        super().__init__(tenant, client_id, "access_as_user", [client_id] if client_id else [])
+
+
+class ConfigurationAuthenticator(_TokenValidator):
+    """A distinct read-only resource, never accepted by administration routes."""
+
+    def __init__(self, tenant, resource_id, authorized_clients):
+        if not resource_id or not authorized_clients:
+            raise ValueError("Configuration access requires a resource and allowed public clients")
+        super().__init__(tenant, resource_id, "configuration.read", authorized_clients)

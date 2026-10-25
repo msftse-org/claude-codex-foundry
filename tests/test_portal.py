@@ -1709,3 +1709,273 @@ def test_shared_setup_zips_match_published_provider_profiles(
             ).status_code
             == 409
         )
+
+
+CONFIG_RESOURCE = "00000000-0000-0000-0000-000000000005"
+CONFIG_CLIENT = "00000000-0000-0000-0000-000000000006"
+CONFIG_ORGANIZATION = "00000000-0000-0000-0000-000000000007"
+CONFIG_PATH = "/api/v1/me/client-configuration"
+
+
+@pytest.fixture
+def configuration_app(unified_app, org, monkeypatch):
+    application, ledger, snapshots, *members = unified_app
+    policy = snapshots.get(ledger.active())
+    bounds = {
+        price["model"]: {
+            "provider": price["provider"],
+            "version": price["deployment_version"],
+            "max_input_tokens": price["max_input_tokens"],
+            "max_output_tokens": price["max_output_tokens"],
+        }
+        for price in policy["budget_prices"]
+    }
+    for name, value in {
+        "PORTAL_CLIENT_CONFIGURATION_ENABLED": "1",
+        "PORTAL_CONFIGURATION_RESOURCE_ID": CONFIG_RESOURCE,
+        "PORTAL_CONFIGURATION_CLIENT_IDS_JSON": json.dumps([CONFIG_CLIENT]),
+        "BUDGET_ORGANIZATION_ID": CONFIG_ORGANIZATION,
+        "PORTAL_CONFIGURATION_DEPLOYMENTS_JSON": json.dumps(bounds),
+    }.items():
+        monkeypatch.setenv(name, value)
+    application = create_app(
+        org, application.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    return application, ledger, snapshots, *members
+
+
+def configuration_headers(org, key, oid=OWNER, **overrides):
+    return {
+        "Authorization": "Bearer "
+        + token(
+            org,
+            key,
+            oid,
+            **{
+                "aud": CONFIG_RESOURCE,
+                "azp": CONFIG_CLIENT,
+                "scp": "configuration.read",
+                **overrides,
+            },
+        )
+    }
+
+
+def test_configuration_feed_own_user_only_data_and_no_mutation(configuration_app, org, key):
+    app, ledger, snapshots, admin, developer, outsider = configuration_app
+    before = copy.deepcopy(ledger.rows.rows)
+    draft_before = app.state.store.read()
+    with TestClient(app) as client:
+        response = client.get(CONFIG_PATH, headers=configuration_headers(org, key, developer["id"]))
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "schema_version": 1,
+            "organization_id": CONFIG_ORGANIZATION,
+            "tenant_id": org["tenant_id"],
+            "subject_id": developer["id"],
+            "state": "active",
+            "clients": {
+                "claude": {
+                    "route_id": "claude-governed",
+                    "default_model": "claude-sonnet-4-6",
+                    "models": [
+                        {
+                            "name": "claude-sonnet-4-6",
+                            "family_tier": "sonnet",
+                            "family_default": True,
+                        }
+                    ],
+                },
+                "codex": {
+                    "route_id": "codex-governed",
+                    "default_model": "gpt-test",
+                    "model_ids": ["gpt-test"],
+                },
+            },
+        }
+        assert response.headers["cache-control"] == "private, no-store"
+        assert response.headers["vary"] == "Authorization"
+        etag = response.headers["etag"]
+        conditional = client.get(
+            CONFIG_PATH,
+            headers={**configuration_headers(org, key, developer["id"]), "If-None-Match": etag},
+        )
+        assert conditional.status_code == 304 and conditional.content == b""
+        assert conditional.headers["etag"] == etag
+    assert ledger.rows.rows == before
+    assert app.state.store.read() == draft_before
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [
+        {"aud": CLIENT},
+        {"aud": "https://cognitiveservices.azure.com"},
+        {"azp": CLIENT},
+        {"azp": str(uuid4())},
+        {"azp": []},
+        {"scp": "access_as_user"},
+        {"scp": "configuration.read.more"},
+        {"scp": ["configuration.read"]},
+        {"scp": None, "roles": ["configuration.read"]},
+        {"idtyp": "app"},
+        {"oid": "not-a-uuid"},
+        {"tid": str(uuid4())},
+        {"iss": "https://login.microsoftonline.com/common/v2.0"},
+        {"exp": 1},
+        {"nbf": int(time.time()) + 600},
+    ],
+)
+def test_configuration_feed_rejects_wrong_identity_claims(configuration_app, org, key, claims):
+    app, *_ = configuration_app
+    with TestClient(app) as client:
+        response = client.get(CONFIG_PATH, headers=configuration_headers(org, key, **claims))
+        assert response.status_code == 401
+        assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_configuration_and_portal_tokens_are_not_interchangeable(configuration_app, org, key):
+    app, *_ = configuration_app
+    with TestClient(app) as client:
+        assert client.get(CONFIG_PATH, headers=headers(org, key)).status_code == 401
+        assert client.get(CONFIG_PATH).status_code == 401
+        assert client.get("/api/state", headers=configuration_headers(org, key)).status_code == 401
+        assert (
+            client.post("/api/publish", headers=configuration_headers(org, key)).status_code == 401
+        )
+        assert (
+            client.get("/api/client-profile", headers=configuration_headers(org, key)).status_code
+            == 401
+        )
+        assert client.get("/api/state", headers=headers(org, key)).status_code == 200
+
+
+@pytest.mark.parametrize("query", ["member_id", "group_id", "tenant_id", "client", "url"])
+def test_configuration_feed_rejects_all_caller_selectors(configuration_app, org, key, query):
+    app, *_ = configuration_app
+    with TestClient(app) as client:
+        response = client.get(
+            CONFIG_PATH,
+            params={query: str(uuid4())},
+            headers=configuration_headers(org, key),
+        )
+        assert response.status_code == 400
+
+
+@pytest.mark.parametrize("revocation", ["suspended", "removed"])
+def test_configuration_reauthorizes_before_304(configuration_app, org, key, revocation):
+    app, ledger, snapshots, admin, developer, outsider = configuration_app
+    auth = configuration_headers(org, key, developer["id"])
+    with TestClient(app) as client:
+        first = client.get(CONFIG_PATH, headers=auth)
+        policy = snapshots.get(ledger.active())
+        if revocation == "removed":
+            policy["members"] = [m for m in policy["members"] if m["id"] != developer["id"]]
+        else:
+            next(m for m in policy["members"] if m["id"] == developer["id"])["status"] = "suspended"
+        snapshots.put(policy)
+        ledger.activate(policy)
+        response = client.get(CONFIG_PATH, headers={**auth, "If-None-Match": first.headers["etag"]})
+        assert response.status_code == 403
+        assert "etag" not in response.headers
+
+
+def test_configuration_ignores_unpublished_drafts_and_unrelated_publications(
+    configuration_app, org, key
+):
+    app, ledger, snapshots, *_ = configuration_app
+    with TestClient(app) as client:
+        auth = configuration_headers(org, key)
+        first = client.get(CONFIG_PATH, headers=auth)
+        draft, tag = app.state.store.read()
+        draft["members"][0].update(status="suspended", extra_models=["unpublished-model"])
+        app.state.store.save(draft, tag)
+        policy = snapshots.get(ledger.active())
+        policy["settings"]["spend_limit_usd"] = "9"
+        snapshots.put(policy)
+        ledger.activate(policy)
+        assert (
+            client.get(CONFIG_PATH, headers={**auth, "If-None-Match": first.headers["etag"]})
+        ).status_code == 304
+
+
+def test_configuration_feed_revalidates_price_and_deployment_before_304(
+    configuration_app, org, key
+):
+    app, ledger, snapshots, *_ = configuration_app
+    with TestClient(app) as client:
+        auth = configuration_headers(org, key)
+        first = client.get(CONFIG_PATH, headers=auth)
+        policy = snapshots.get(ledger.active())
+        policy["budget_prices"][0]["deployment_version"] = "changed-but-not-reviewed"
+        policy["budget_prices"][1]["valid_until"] = "2000-01-01T00:00:00Z"
+        # Keep the price shape valid so this exercises currentness, not validation failure.
+        policy["budget_prices"][1]["verified_at"] = "1999-12-31T00:00:00Z"
+        snapshots.put(policy)
+        ledger.activate(policy)
+        response = client.get(CONFIG_PATH, headers={**auth, "If-None-Match": first.headers["etag"]})
+        assert response.status_code == 200
+        assert response.json()["state"] == "no_models"
+        assert response.json()["clients"]["claude"]["models"] == []
+        assert response.json()["clients"]["codex"]["model_ids"] == []
+        assert response.headers["etag"] != first.headers["etag"]
+
+
+@pytest.mark.parametrize("failure", ["paused", "snapshot", "concurrent_publish"])
+def test_configuration_fails_closed_on_policy_unavailability(
+    configuration_app, org, key, monkeypatch, failure
+):
+    app, ledger, snapshots, *_ = configuration_app
+    with TestClient(app) as client:
+        auth = configuration_headers(org, key)
+        first = client.get(CONFIG_PATH, headers=auth)
+        if failure == "paused":
+            meta, tag = ledger.rows.read("policy")
+            ledger.rows.commit([("policy", {**meta, "paused": True}, tag)])
+        elif failure == "snapshot":
+            snapshots.values.clear()
+        else:
+            old = ledger.active()
+            results = iter([old, "new-digest"])
+            monkeypatch.setattr(ledger, "active", lambda: next(results))
+        response = client.get(CONFIG_PATH, headers={**auth, "If-None-Match": first.headers["etag"]})
+        assert response.status_code == 503 and "etag" not in response.headers
+
+
+def test_configuration_disabled_by_default(unified_app, org, key):
+    app, *_ = unified_app
+    with TestClient(app) as client:
+        assert client.get(CONFIG_PATH, headers=configuration_headers(org, key)).status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("PORTAL_CONFIGURATION_RESOURCE_ID", CLIENT),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", json.dumps([CLIENT.upper()])),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", json.dumps([CONFIG_RESOURCE])),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", json.dumps([CONFIG_CLIENT, CONFIG_CLIENT])),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", "[]"),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", '"not-a-list"'),
+        ("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", '["not-a-uuid"]'),
+        ("PORTAL_CONFIGURATION_DEPLOYMENTS_JSON", "{}"),
+        ("PORTAL_CLIENT_CONFIGURATION_ENABLED", "true"),
+    ],
+)
+def test_configuration_startup_rejects_unsafe_settings(
+    configuration_app, org, monkeypatch, name, value
+):
+    app, ledger, snapshots, *_ = configuration_app
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        create_app(
+            org, app.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+        )
+
+
+def test_configuration_never_inherits_local_owner_mode(configuration_app, org):
+    app, ledger, snapshots, *_ = configuration_app
+    with pytest.raises(ValueError, match="authenticated shared"):
+        create_app(
+            org, app.state.store, credential=object(), local=True, budget=(ledger, snapshots)
+        )

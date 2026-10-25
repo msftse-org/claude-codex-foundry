@@ -19,12 +19,18 @@ from pydantic import ValidationError
 from ..client_bundle import build_bundle, build_template
 from ..config import export_client, load_org
 from ..unified import catalog, provider_configs, reporting_config
-from .auth import Authenticator
+from .auth import Authenticator, ConfigurationAuthenticator
 from .boundary import RequestBoundary
 from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
 from .budget_policy import Snapshots, draft_impact, group_publication, portal_seed, snapshot
 from .budget_proxy import GatewayIdentity
 from .client_configuration import project_profile
+from .configuration_feed import (
+    CONFIGURATION_PATH,
+    client_configuration,
+    configuration_bytes,
+    deployment_bounds,
+)
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis, planning_prices
 from .domain import Change, apply_change, audit, import_members, now, seed
@@ -87,6 +93,35 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
     )
     if providers and budget is None:
         raise ValueError("Shared provider administration requires the budget runtime")
+    configuration_auth = None
+    configuration_organization = None
+    configuration_deployments = {}
+    configuration_enabled = os.getenv("PORTAL_CLIENT_CONFIGURATION_ENABLED", "0")
+    if configuration_enabled not in {"0", "1"}:
+        raise ValueError("Client configuration enablement must be 0 or 1")
+    if configuration_enabled == "1":
+        if not providers or budget is None or local:
+            raise ValueError("Client configuration requires authenticated shared administration")
+        resource_id = str(UUID(os.environ["PORTAL_CONFIGURATION_RESOURCE_ID"]))
+        if resource_id == auth.client_id:
+            raise ValueError("Configuration and portal resources must be distinct")
+        authorized_clients = json.loads(os.environ["PORTAL_CONFIGURATION_CLIENT_IDS_JSON"])
+        if not isinstance(authorized_clients, list) or not 1 <= len(authorized_clients) <= 10:
+            raise ValueError("Configure separate public configuration clients")
+        authorized_clients = [str(UUID(value)) for value in authorized_clients]
+        if (
+            resource_id in authorized_clients
+            or auth.client_id in authorized_clients
+            or len(set(authorized_clients)) != len(authorized_clients)
+        ):
+            raise ValueError("Configure separate public configuration clients")
+        configuration_auth = ConfigurationAuthenticator(
+            config["tenant_id"], resource_id, authorized_clients
+        )
+        configuration_organization = str(UUID(os.environ["BUDGET_ORGANIZATION_ID"]))
+        configuration_deployments = deployment_bounds(
+            json.loads(os.environ["PORTAL_CONFIGURATION_DEPLOYMENTS_JSON"])
+        )
     reporting = reporting_config(config, providers) if providers else config
     # Separate machine-only origin for APIM's immutable snapshot cache. This
     # portal always reads Blob directly on a miss, preventing cache recursion.
@@ -149,6 +184,47 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             raise HTTPException(403, "An organization administration role is required.")
 
     actor_dependency = Depends(actor)
+
+    @app.get(CONFIGURATION_PATH)
+    def current_client_configuration(request: Request):
+        if configuration_auth is None:
+            raise HTTPException(404, "Client configuration refresh is not enabled.")
+        # Deliberately independent of the browser's actor/local-owner dependency.
+        oid = configuration_auth.identity(request.headers.get("authorization"))
+        if request.query_params:
+            raise HTTPException(400, "Client configuration accepts no query parameters.")
+        try:
+            digest = budget[0].active()
+            policy = budget[1].get(digest)
+            value = client_configuration(
+                providers,
+                configuration_deployments,
+                policy,
+                configuration_organization,
+                config["tenant_id"],
+                oid,
+            )
+            body, etag = configuration_bytes(value)
+            # Do not acknowledge a conditional read across a concurrent publish/pause.
+            if budget[0].active() != digest:
+                raise ValueError("Publication changed during read")
+        except PermissionError:
+            raise HTTPException(403, "Current published organization access is required.") from None
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Client configuration unavailable (%s).", type(exc).__name__
+            )
+            raise HTTPException(503, "Client configuration is temporarily unavailable.") from None
+        unchanged = request.headers.get("if-none-match") == etag
+        logging.getLogger(__name__).info(
+            "Client configuration read (%s).", "unchanged" if unchanged else value["state"]
+        )
+        return Response(
+            None if unchanged else body,
+            status_code=304 if unchanged else 200,
+            media_type="application/json",
+            headers={"ETag": etag},
+        )
 
     def content_access(member):
         if member["role"] not in {"owner", "admin", "group_admin"}:

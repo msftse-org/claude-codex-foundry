@@ -2,6 +2,21 @@
 
 Status: **preview**. The portal, Codex and content-log sources are maintained in `main`. This record is evidence for the isolated Azure preview and for one authorized shared-route acceptance, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
 
+## Offline verification on 2026-10-25: configuration read boundary
+
+The opt-in own-user configuration API uses a separate Entra audience, delegated
+scope and public-client allowlist. It remains disabled by default. **422 Python
+tests pass**, including signed-token separation from portal/inference credentials,
+malformed claims, no selectors, unpublished edits ignored, revocation before
+conditional reads, missing/paused/concurrently changed policy, deployment/price
+mismatch and polling without ledger/draft mutations. These are synthetic offline
+tests, not evidence of tenant consent or real Conditional Access.
+
+Registration/deployment wiring, automatic onboarding, credential account binding,
+safe local reconciliation and native catalogs are not delivered by this increment.
+No live resources or installed client settings were changed for these tests. See
+[the experimental contract](../docs/client-configuration-refresh.md).
+
 ## Verification recorded on 2026-10-23: one shared Claude route
 
 [PR #7](https://github.com/msftse-org/claude-codex-foundry/pull/7) makes the existing Claude API the default target for clients, portal reporting, profile export and governance publication. An isolated API remains an explicit testing option. The rollout below was performed in one authorized environment; backups, configuration, telemetry and recovery snapshots remain private.
