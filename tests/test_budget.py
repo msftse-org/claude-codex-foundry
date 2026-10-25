@@ -1160,6 +1160,65 @@ def test_terminal_event_is_settled_before_client_disconnect(policy, ledger, prov
     asyncio.run(run())
 
 
+def test_openai_stream_eof_emits_terminal_error_and_keeps_reservation(policy, ledger):
+    policy["budget_prices"][0]["provider"] = "openai"
+    ledger.activate(policy)
+    partial = b'data: {"type":"response.created","sequence_number":0}\n\n'
+
+    class ProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield partial
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=ProviderStream())
+            )
+        ) as client:
+            proxy = BudgetProxy(
+                ledger,
+                SimpleNamespace(get=lambda digest: policy),
+                SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="test")),
+                "https://test.services.ai.azure.com",
+                {
+                    "claude-sonnet-4-6": {
+                        "version": "1",
+                        "provider": "openai",
+                        "max_input_tokens": 1000,
+                        "max_output_tokens": 1000,
+                    }
+                },
+                client,
+            )
+            response = await proxy.infer(
+                "openai",
+                policy["members"][0]["id"],
+                str(uuid4()),
+                {"model": "claude-sonnet-4-6", "stream": True},
+            )
+            wire = b"".join([chunk async for chunk in response.body_iterator])
+            assert wire.startswith(partial)
+            events = [
+                json.loads(line[6:]) for line in wire.splitlines() if line.startswith(b"data: ")
+            ]
+            assert events[-1] == {
+                "type": "error",
+                "code": "upstream_stream_incomplete",
+                "message": (
+                    "The upstream model stream ended before a terminal event; "
+                    "the budget reservation remains held for review."
+                ),
+                "param": None,
+                "sequence_number": 0,
+            }
+
+    asyncio.run(run())
+    assert all(
+        scope["reserved_micro_usd"] == 4500 and scope["spent_micro_usd"] == 0
+        for scope in ledger.balances(policy, policy["members"][0]["id"])["scopes"]
+    )
+
+
 def test_explicit_unlimited_scopes_keep_accounting_and_enforce_finite_team(policy):
     policy["settings"].update(spend_limit_usd=None, spend_limit_unlimited=True)
     policy["groups"][0].update(spend_ceiling_usd=None, spend_ceiling_unlimited=True)
