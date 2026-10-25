@@ -967,3 +967,69 @@ def test_cache_diagnostics_require_current_organization_admin(policy, ledger, sn
             asyncio.run(proxy.cache_status(policy["members"][0]["id"]))
         assert denied.value.status_code == 403
         assert probes == []
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_terminal_event_is_settled_before_client_disconnect(policy, ledger, provider):
+    if provider == "openai":
+        policy["budget_prices"][0]["provider"] = "openai"
+        ledger.activate(policy)
+    terminal = (
+        [
+            {
+                "type": "message_start",
+                "message": {"usage": {"input_tokens": 2, "output_tokens": 0}},
+            },
+            {"type": "message_delta", "usage": {"output_tokens": 3}},
+            {"type": "message_stop"},
+        ]
+        if provider == "anthropic"
+        else [
+            {
+                "type": "response.completed",
+                "response": {"usage": {"input_tokens": 2, "output_tokens": 3}},
+            }
+        ]
+    )
+
+    class ProviderStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"".join(b"data: " + json.dumps(event).encode() + b"\n\n" for event in terminal)
+            raise AssertionError("Client disconnects without requesting another chunk")
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, stream=ProviderStream())
+            )
+        ) as client:
+            proxy = BudgetProxy(
+                ledger,
+                SimpleNamespace(get=lambda digest: policy),
+                SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="test")),
+                "https://test.services.ai.azure.com",
+                {
+                    "claude-sonnet-4-6": {
+                        "version": "1",
+                        "provider": provider,
+                        "max_input_tokens": 1000,
+                        "max_output_tokens": 1000,
+                    }
+                },
+                client,
+            )
+            response = await proxy.infer(
+                provider,
+                policy["members"][0]["id"],
+                str(uuid4()),
+                {"model": "claude-sonnet-4-6", "stream": True},
+            )
+            await anext(response.body_iterator)
+            # The terminal event has reached the client, but upstream EOF has not.
+            assert all(
+                scope["spent_micro_usd"] == 51 and scope["reserved_micro_usd"] == 0
+                for scope in ledger.balances(policy, policy["members"][0]["id"])["scopes"]
+            )
+            await response.body_iterator.aclose()
+
+    asyncio.run(run())

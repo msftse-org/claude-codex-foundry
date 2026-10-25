@@ -200,17 +200,25 @@ class BudgetProxy:
             usage = UsageStream(provider)
 
             async def chunks():
+                settled = False
                 try:
                     async for chunk in response.aiter_bytes():
                         usage.feed(chunk)
+                        # Native clients can disconnect immediately after the terminal
+                        # event. Commit its authoritative usage before exposing it.
+                        if usage.complete and not settled:
+                            await settle(usage.tokens())
+                            settled = True
                         yield chunk
-                    await settle(usage.tokens())
+                    if not settled:
+                        await settle(usage.tokens())
                 except BaseException:
                     # Cancellation, absent usage, parse errors, and settlement failures
                     # all keep the reservation. Never log prompts, output, or tokens.
-                    LOG.warning(
-                        "Stream did not confirm settlement; check reservation: %s", request_id
-                    )
+                    if not settled:
+                        LOG.warning(
+                            "Stream did not confirm settlement; check reservation: %s", request_id
+                        )
                     raise
                 finally:
                     await response.aclose()
