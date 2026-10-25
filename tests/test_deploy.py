@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -138,6 +139,7 @@ def organization(org):
 
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
     monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients: None)
 
     class FakeAzure:
         def __init__(self, subscription):
@@ -463,6 +465,9 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
 
     monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
     monkeypatch.setattr(
+        deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
+    )
+    monkeypatch.setattr(
         "claude_foundry.budget_gateway.deploy",
         lambda *args: cloud.append(("route", args[-2], args[-1])),
     )
@@ -479,6 +484,7 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     job.deploy(verify=True)
     params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
     assert set(params["providerConfigs"]["value"]) == {"claude", "codex"}
+    assert ("setup", "https://ccf-admin-contoso1.azurewebsites.net", ["claude", "codex"]) in cloud
     assert params["organization"]["value"]["gateway_url"].endswith("/claude-governed")
     assert params["budgetStorageAccount"]["value"] == job.state["budget_storage"]
     assert params["providerConfigs"]["value"]["codex"]["gateway_url"].endswith("/codex-governed/v1")
@@ -536,6 +542,36 @@ def test_upgrade_refuses_to_replace_a_live_ledger(unified_job):
     with pytest.raises(Exception, match="different.*ledger"):
         job.upgrade_portal()
     assert not any("deployment group create" in c for c in commands(runner))
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        {"status": "ok"},
+        {"status": "ok", "setup_ready": False, "client_types": ["claude", "codex"]},
+        {"status": "ok", "setup_ready": True, "client_types": ["claude"]},
+    ],
+)
+def test_healthy_code_without_gateway_configuration_is_not_a_complete_deployment(
+    deploy, monkeypatch, status
+):
+    monkeypatch.setattr(
+        deploy.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
+    )
+    with pytest.raises(deploy.DeployError, match="client setup is not connected"):
+        deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
+
+
+def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
+    status = {"status": "ok", "setup_ready": True, "client_types": ["codex", "claude"]}
+    monkeypatch.setattr(
+        deploy.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
+    )
+    deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
 
 
 def test_unified_mode_cannot_be_downgraded(unified_job):

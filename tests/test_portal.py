@@ -754,8 +754,13 @@ def test_budget_setup_bundle_uses_published_gateway_and_access(
     gateway = "https://test-apim.azure-api.net/claude-budget-preview"
     with TestClient(app) as client:
         auth = headers(org, key)
-        assert client.get("/api/client-bundle", headers=auth).status_code == 409
+        refused = client.get("/api/client-bundle", headers=auth)
+        assert refused.status_code == 409
+        assert "Ask your administrator" in refused.json()["detail"]
+        assert "gateway URL" not in refused.json()["detail"]
+        assert client.get("/api/health").json()["setup_ready"] is False
         monkeypatch.setenv("BUDGET_CLAUDE_GATEWAY_URL", gateway)
+        assert client.get("/api/health").json()["setup_ready"] is True
         response = client.get("/api/client-bundle", headers=auth)
         assert response.status_code == 200
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
@@ -1527,6 +1532,11 @@ def test_shared_portal_lists_both_providers_and_exports_correct_profiles(unified
     app, ledger, snapshots, *_ = unified_app
     with TestClient(app) as client:
         auth = headers(org, key)
+        assert client.get("/api/health").json() == {
+            "status": "ok",
+            "setup_ready": True,
+            "client_types": ["claude", "codex"],
+        }
         data = client.get("/api/state", headers=auth).json()
         assert data["client_types"] == ["claude", "codex"]
         assert {m["provider"] for m in data["models"]} == {"claude", "codex"}

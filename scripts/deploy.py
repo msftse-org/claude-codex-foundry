@@ -631,6 +631,10 @@ class Deployment:
             ]
         )
         wait_for_health(url + "/api/health")
+        verify_portal_setup(
+            url,
+            list(unified_settings["providerConfigs"]) if self.unified else ["claude"],
+        )
         self.save(portal_url=url)
 
     def verify(self, profiles):
@@ -774,6 +778,25 @@ def wait_for_health(url, attempts=40, delay=15):
             pass
         time.sleep(delay)
     raise DeployError(f"{url} did not become healthy; check the Function app deployment logs")
+
+
+def verify_portal_setup(url, expected_clients):
+    """Do not report success while users would receive an unusable setup download."""
+    try:
+        with urllib.request.urlopen(url + "/api/health", timeout=30) as response:
+            status = json.load(response)
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        raise DeployError(
+            "The portal's client setup could not be verified; check its deployment."
+        ) from None
+    if status.get("setup_ready") is not True or set(status.get("client_types", [])) != set(
+        expected_clients
+    ):
+        raise DeployError(
+            "The portal is online, but client setup is not connected to every enabled gateway. "
+            "Complete the portal deployment with the same settings before distributing installers. "
+            "Uploading code alone does not configure gateway connections."
+        )
 
 
 def main():
