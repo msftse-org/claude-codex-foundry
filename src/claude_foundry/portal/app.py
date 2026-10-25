@@ -24,9 +24,10 @@ from .boundary import RequestBoundary
 from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
 from .budget_policy import Snapshots, draft_impact, group_publication, portal_seed, snapshot
 from .budget_proxy import GatewayIdentity
+from .client_configuration import project_profile
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis, planning_prices
-from .domain import Change, apply_change, audit, effective_models, import_members, now, seed
+from .domain import Change, apply_change, audit, import_members, now, seed
 from .governance import impact
 from .policy_cache import MAX_SHARED_BYTES
 from .service import ManagedAzure, publish, telemetry
@@ -518,46 +519,23 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             if member["group_id"] != profile_actor["group_id"]:
                 raise HTTPException(409, "Publish the membership change before exporting a profile")
             profile_config = {**profile_config, "gateway_url": url}
-        allowed = effective_models(data, member)
-        group = next(g for g in data["groups"] if g["id"] == member["group_id"])
         if group_id:
             if profile_actor["role"] not in {"owner", "admin"} and not (
                 profile_actor["role"] == "group_admin" and group_id == profile_actor["group_id"]
             ):
                 raise HTTPException(403, "Only administrators can export another group's profile.")
-            group = next((g for g in data["groups"] if g["id"] == group_id), None)
-            if not group:
+            if not any(g["id"] == group_id for g in data["groups"]):
                 raise HTTPException(404, "Group not found.")
-            allowed = group["model_ids"]
-        models = copy.deepcopy([m for m in profile_config["models"] if m["name"] in allowed])
-        if not models:
+        projected = project_profile(profile_config, data, member, group_id=group_id)
+        if not projected["models"]:
             raise HTTPException(
                 409, "This group has no model access. Grant a model before exporting."
             )
-        for family in {m["anthropicFamilyTier"] for m in models} if client == "claude" else set():
-            options = [m for m in models if m["anthropicFamilyTier"] == family]
-            if any(m["name"] == group["default_model"] for m in options):
-                for model in options:
-                    model["isFamilyDefault"] = model["name"] == group["default_model"]
-            if not any(m.get("isFamilyDefault") for m in options):
-                options[0]["isFamilyDefault"] = True
-        models.sort(key=lambda model: model["name"] != group["default_model"])
-        if client == "codex":
-            names = {m["name"] for m in models}
-            profile_config = {
-                **profile_config,
-                "default_model": group["default_model"]
-                if group["default_model"] in names
-                else next(
-                    (m["name"] for m in models if m["name"] == profile_config.get("default_model")),
-                    models[0]["name"],
-                ),
-            }
         desktop_client_id = os.getenv("PORTAL_DESKTOP_CLIENT_ID")
         if desktop_client_id:
             desktop_client_id = str(UUID(desktop_client_id))
         return export_client(
-            {**profile_config, "models": models},
+            projected,
             auth_mode="msal" if desktop_client_id else "azure-cli",
             client_id=desktop_client_id,
         )
