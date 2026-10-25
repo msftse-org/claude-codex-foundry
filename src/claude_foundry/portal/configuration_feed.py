@@ -47,6 +47,8 @@ def client_configuration(providers, deployments, policy, organization_id, tenant
         provider = "anthropic" if client == "claude" else "openai"
         available = []
         for model in config["models"]:
+            if client == "codex" and model.get("qualified") is not True:
+                continue
             deployment = deployments.get(model["name"])
             prices = [
                 p
@@ -87,16 +89,14 @@ def client_configuration(providers, deployments, policy, organization_id, tenant
             clients[client] = {
                 "route_id": config["api_id"],
                 "default_model": projected["default_model"],
-                "model_ids": [model["name"] for model in models],
+                "models": [{"name": model["name"], "model": model["model"]} for model in models],
             }
     return {
         "schema_version": 1,
         "organization_id": str(UUID(organization_id)),
         "tenant_id": str(UUID(tenant_id)),
         "subject_id": str(UUID(subject_id)),
-        "state": "active"
-        if any(value.get("models") or value.get("model_ids") for value in clients.values())
-        else "no_models",
+        "state": "active" if any(value["models"] for value in clients.values()) else "no_models",
         "clients": clients,
     }
 

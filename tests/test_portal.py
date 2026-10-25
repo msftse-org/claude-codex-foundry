@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import os
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -1789,7 +1790,7 @@ def test_configuration_feed_own_user_only_data_and_no_mutation(configuration_app
                 "codex": {
                     "route_id": "codex-governed",
                     "default_model": "gpt-test",
-                    "model_ids": ["gpt-test"],
+                    "models": [{"name": "gpt-test", "model": "gpt-test"}],
                 },
             },
         }
@@ -1804,6 +1805,29 @@ def test_configuration_feed_own_user_only_data_and_no_mutation(configuration_app
         assert conditional.headers["etag"] == etag
     assert ledger.rows.rows == before
     assert app.state.store.read() == draft_before
+
+
+def test_configuration_feed_omits_unqualified_codex_models(configuration_app, org):
+    from claude_foundry.portal.configuration_feed import client_configuration, deployment_bounds
+
+    _, ledger, snapshots, *_ = configuration_app
+    providers = json.loads(os.environ["PORTAL_PROVIDER_CONFIGS_JSON"])
+    providers["codex"]["models"][0]["qualified"] = False
+    # Startup also rejects unqualified provider metadata. Keep the projection
+    # defensive if it is called independently of app construction.
+    result = client_configuration(
+        providers,
+        deployment_bounds(json.loads(os.environ["PORTAL_CONFIGURATION_DEPLOYMENTS_JSON"])),
+        snapshots.get(ledger.active()),
+        CONFIG_ORGANIZATION,
+        org["tenant_id"],
+        OWNER,
+    )
+    assert result["clients"]["codex"] == {
+        "route_id": "codex-governed",
+        "default_model": "",
+        "models": [],
+    }
 
 
 @pytest.mark.parametrize(
@@ -1917,7 +1941,7 @@ def test_configuration_feed_revalidates_price_and_deployment_before_304(
         assert response.status_code == 200
         assert response.json()["state"] == "no_models"
         assert response.json()["clients"]["claude"]["models"] == []
-        assert response.json()["clients"]["codex"]["model_ids"] == []
+        assert response.json()["clients"]["codex"]["models"] == []
         assert response.headers["etag"] != first.headers["etag"]
 
 

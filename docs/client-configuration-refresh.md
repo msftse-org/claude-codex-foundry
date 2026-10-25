@@ -1,8 +1,9 @@
 # Client configuration refresh — experimental components
 
-These are the first server/client increments of automatic configuration refresh,
-not a working end-to-end installer. It is disabled by default. Existing JSON
-installations and inference authentication are unchanged.
+These are opt-in server/client increments of automatic configuration refresh,
+not yet a working end-to-end installer. The API is disabled by default. Existing
+JSON installations and inference authentication are unchanged unless a user
+explicitly enrolls or migrates.
 
 ## Trust boundary
 
@@ -19,9 +20,8 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-Registration, consent, deployment wiring, persisted enrollment and background
-refresh are subsequent increments. Do not reuse the portal application to
-enable this endpoint.
+Registration, consent, deployment wiring and background scheduling are subsequent
+increments. Do not reuse the portal application to enable this endpoint.
 
 ## Operator settings
 
@@ -73,7 +73,7 @@ owner-impersonation mode. Normal portal development works with the feature off.
     "codex": {
       "route_id": "codex-gateway",
       "default_model": "example-codex",
-      "model_ids": ["example-codex"]
+      "models": [{"name": "example-codex", "model": "gpt-example"}]
     }
   }
 }
@@ -167,7 +167,7 @@ noncanonical URLs; it is not a general SSRF defense against arbitrary DNS
 aliases. Distribution through the reviewed organization setup channel remains
 essential. This component alone does not make unattended refresh available.
 
-## Enrolled Azure CLI credentials (library only)
+## Enrolled Azure CLI credentials
 
 `enrollment_auth.py` adds the credential provider for the Azure CLI pilot.
 It uses an installer-owned absolute directory with mode `0700`, rejects
@@ -190,5 +190,60 @@ or persists tokens itself. Azure CLI still owns its cache and may store
 credentials there in plaintext on macOS/Linux. This is the existing pilot
 authentication posture, not an encrypted-cache fallback or a new security
 guarantee. Approval of that posture is a release gate; use the encrypted MSAL
-path instead where endpoint policy prohibits it. The library is not yet
-connected to installation or scheduled refresh.
+path instead where endpoint policy prohibits it.
+
+## Explicit macOS pilot enrollment
+
+The CLI now connects the reader, isolated credentials and recoverable settings
+updates. This is a manual pilot entrypoint for a reviewed descriptor, not a
+stable-link bootstrap or a scheduled installer:
+
+```bash
+claude-foundry enroll --descriptor /path/to/reviewed-organization.json
+claude-foundry refresh
+claude-foundry configuration-status
+```
+
+Use repeated `--client claude` / `--client codex` options to select clients.
+Codex uses its approved locally installed binary to render version-matched
+catalog metadata; `--codex-binary /absolute/path/to/codex` selects that binary
+explicitly. No executable path can come from the API.
+
+Enrollment opens one foreground Entra sign-in, establishes the user from the
+authenticated API response and checks inference credentials before replacing
+client files. Subsequent `refresh` calls never sign in. An interaction-required
+failure needs an explicit foreground `refresh --login`; an account switch is
+still refused. One organization and one user are supported per installation.
+
+An existing matching JSON installation requires `--migrate-existing` once.
+Migration checks the recorded tenant and gateway, recognizes the existing
+installer-owned helper/catalog and preserves unrelated preferences and history.
+Unknown routes, remote Codex catalogs, custom `CODEX_HOME`, MDM ownership and
+unrecognized installations stop for review. Legacy profiles are retained.
+
+Refresh updates only model selections, installer-owned Claude family aliases,
+the enrolled Claude Desktop model list and the local Codex catalog. It preserves
+an allowed selected model and moves a removed selection to the current published
+default. Empty grants clear model catalogs; they do not grant inference or erase
+credentials. Routing, helpers and trust anchors cannot be changed by the feed;
+local drift in those fields stops refresh. Existing open sessions may need to
+be reopened to show new picker data; hot-reload is not claimed.
+
+Files under `~/.config/claude-foundry/enrollment` are private (`0700` directory,
+`0600` records; `0700` fixed helper). Each application file is atomically replaced.
+A private journal recovers interrupted multi-file updates on the next run.
+Concurrent runs are locked out, and unexpected later user edits stop recovery
+instead of being overwritten. A private original-settings snapshot is retained
+for future three-way restoration; **enrolled uninstall/restore is not yet
+implemented**. The legacy `restore` command is not an enrollment uninstaller.
+
+Failed authentication, network/schema errors and route drift preserve the last
+successful settings. Status currently reports the last success, not a fresh
+health guarantee. Stale data cannot restore server-revoked access or bypass
+current budget admission. Routine status output contains no account identifiers
+or tokens. Never capture `enrolled-token` output in support logs.
+
+Qualification still required: stable-link packaging, background scheduling,
+Entra consent/Conditional Access, real model-publish/revocation/budget tests,
+all four native client surfaces and recovery/uninstall. Offline temporary-home
+tests do not establish any of those live results.

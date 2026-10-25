@@ -59,7 +59,7 @@ def configuration_value():
             "codex": {
                 "route_id": "codex-governed",
                 "default_model": "coding-example",
-                "model_ids": ["coding-example"],
+                "models": [{"name": "coding-example", "model": "gpt-test"}],
             },
         },
     }
@@ -198,10 +198,11 @@ def test_account_or_organization_switch_never_rebinds(monkeypatch, field):
         ("codex", "route_id", "another-route"),
         ("claude", "default_model", "missing"),
         ("codex", "default_model", "missing"),
-        ("codex", "model_ids", ["ok", "../invalid"]),
-        ("codex", "model_ids", ["same", "same"]),
-        ("codex", "model_ids", [True]),
-        ("codex", "model_ids", ["name"] * 101),
+        ("codex", "models", [{"name": "ok", "model": "../invalid"}]),
+        ("codex", "models", [{"name": "same", "model": "gpt-test"}] * 2),
+        ("codex", "models", [True]),
+        ("codex", "models", [{"name": "name", "model": "gpt-test"}] * 101),
+        ("codex", "models", [{"name": "name", "model": "gpt-test", "command": "exec"}]),
         ("claude", "models", None),
     ],
 )
@@ -245,8 +246,8 @@ def test_duplicate_family_defaults_and_provider_drift_rejected(monkeypatch):
 
 def test_no_models_is_valid_explicit_state(monkeypatch):
     config = configuration_value()
-    for key, model_key in [("claude", "models"), ("codex", "model_ids")]:
-        config["clients"][key][model_key] = []
+    for key in ["claude", "codex"]:
+        config["clients"][key]["models"] = []
         config["clients"][key]["default_model"] = ""
     config["state"] = "no_models"
     assert fetch(monkeypatch, config).data == config
@@ -353,11 +354,13 @@ def test_304_requires_verified_matching_cache(monkeypatch):
 
 def test_new_models_do_not_change_descriptor_or_credential_target(monkeypatch):
     config = configuration_value()
-    config["clients"]["codex"]["model_ids"].append("newly-published-model")
+    config["clients"]["codex"]["models"].append(
+        {"name": "newly-published-model", "model": "gpt-test"}
+    )
     result = fetch(monkeypatch, config)
-    assert result.data["clients"]["codex"]["model_ids"] == [
-        "coding-example",
-        "newly-published-model",
+    assert result.data["clients"]["codex"]["models"] == [
+        {"name": "coding-example", "model": "gpt-test"},
+        {"name": "newly-published-model", "model": "gpt-test"},
     ]
     assert "gateway_url" not in result.data["clients"]["codex"]
 

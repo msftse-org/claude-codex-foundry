@@ -203,11 +203,10 @@ def _validate(body, etag, descriptor, subject_id):
     has_models = False
     for route in descriptor.routes:
         client = clients[route.client]
-        model_key = "models" if route.client == "claude" else "model_ids"
-        _object(client, {"route_id", "default_model", model_key})
+        _object(client, {"route_id", "default_model", "models"})
         if client["route_id"] != route.route_id:
             raise ConfigurationError("Configuration cannot replace an enrolled route.")
-        models = client[model_key]
+        models = client["models"]
         if not isinstance(models, list) or len(models) > 100:
             raise ConfigurationError("Invalid configuration model list.")
         names, defaults = [], set()
@@ -225,7 +224,9 @@ def _validate(body, etag, descriptor, subject_id):
                         raise ConfigurationError("Duplicate Claude family default.")
                     defaults.add(tier)
             else:
-                name = _identifier(model)
+                _object(model, {"name", "model"})
+                name = _identifier(model["name"])
+                _identifier(model["model"])
             names.append(name)
         if len(set(names)) != len(names):
             raise ConfigurationError("Duplicate configuration model.")

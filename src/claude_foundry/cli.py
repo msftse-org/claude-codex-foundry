@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from . import (
     codex_history,
     codex_models,
     codex_verify,
+    configuration_refresh,
     gateway,
     models,
 )
@@ -41,6 +43,29 @@ def parser():
         action="store_true",
         help="Enable Claude's import wizard; conversations are copied only after user selection",
     )
+    enroll = actions.add_parser(
+        "enroll", help="Sign in and enroll macOS clients using a reviewed organization descriptor"
+    )
+    enroll.add_argument("--descriptor", type=Path, required=True)
+    enroll.add_argument("--client", choices=["claude", "codex"], action="append", dest="clients")
+    enroll.add_argument("--codex-binary", type=Path)
+    enroll.add_argument(
+        "--migrate-existing",
+        action="store_true",
+        help="Explicitly migrate matching legacy gateway profiles; rejects routing mismatches",
+    )
+    refresh = actions.add_parser(
+        "refresh", help="Refresh enrolled model settings without signing in or replacing routing"
+    )
+    refresh.add_argument(
+        "--login",
+        action="store_true",
+        help="Explicit foreground reauthentication of the bound user",
+    )
+    actions.add_parser(
+        "enrolled-token", help="Print the enrolled user's inference token; never sign in"
+    )
+    actions.add_parser("configuration-status", help="Show the last successful enrolled refresh")
     restore = actions.add_parser(
         "restore", help="Restore managed settings while preserving subsequent edits"
     )
@@ -148,6 +173,37 @@ def main():
                     "Bring existing work: Settings → Import & export → Import… in Claude Desktop."
                 )
                 print("Review the source and import summary. Original conversations stay in place.")
+        elif args.action in {"enroll", "refresh", "enrolled-token", "configuration-status"}:
+            if sys.platform != "darwin":
+                raise RuntimeError("Organization enrollment currently supports macOS only")
+            if args.action in {"enroll", "refresh"}:
+                client.check_managed_preferences()
+                codex_client.check_managed_preferences()
+                if (
+                    os.environ.get("CODEX_HOME")
+                    and Path(os.environ["CODEX_HOME"]).resolve()
+                    != (Path.home() / ".codex").resolve()
+                ):
+                    raise RuntimeError("Review custom CODEX_HOME before enrolling or refreshing")
+            if args.action == "enroll":
+                result = configuration_refresh.enroll(
+                    args.descriptor,
+                    clients=args.clients,
+                    codex_binary=args.codex_binary,
+                    migrate_existing=args.migrate_existing,
+                )
+            elif args.action == "refresh":
+                result = configuration_refresh.refresh(login=args.login)
+            elif args.action == "enrolled-token":
+                print(configuration_refresh.inference_token())
+                return 0
+            else:
+                result = configuration_refresh.status()
+            print(json.dumps(result, indent=2))
+            if args.action in {"enroll", "refresh"}:
+                print(
+                    "Model settings updated. Reopen clients if their model picker is already open."
+                )
         elif args.action == "restore":
             if args.client == "codex":
                 print(codex_client.restore())
