@@ -79,7 +79,9 @@ The command never changes an existing deployment's SKU or capacity, and it does 
 
 ### Size quota for Desktop traffic
 
-The default capacity of 10 is a starting allocation for validation, not an organization-wide sizing recommendation. Desktop can issue several token-counting requests together. Check each deployment's actual `properties.rateLimits`, monitor 429 responses by operation, and allocate sufficient request and token capacity before rollout. [Claude quota is shared across resources and regions for Global Standard, and within a data zone for Data Zone Standard](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models-quotas-limits).
+The low-level `models` command defaults to 10 capacity units as a safe starting allocation. The one-command deployment then runs `scripts/scale_model_capacity.py --apply` by default and assigns each deployment the maximum currently unallocated capacity permitted by its model/SKU quota pool. It preserves versions and SKUs, never shrinks deployments, and does not transfer quota already allocated elsewhere. Set `maximize_model_capacity` to `false` only when the reviewed initial capacities must remain fixed.
+
+Desktop can issue several token-counting requests together. Check each deployment's actual `properties.rateLimits`, monitor 429 responses by operation, and request more subscription quota when the account-wide maximum is still insufficient. [Claude quota is shared across resources and regions for Global Standard, and within a data zone for Data Zone Standard](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/claude-models-quotas-limits).
 
 For a new model, use `models --model MODEL_NAME --capacity N` (and `--sku` when applicable). For an existing deployment, change its capacity in Foundry or use an explicit ARM patch after reviewing available quota. This keeps the model and deployment type unchanged:
 

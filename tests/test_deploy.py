@@ -183,6 +183,7 @@ def test_full_deployment_runs_documented_steps_in_order(
         "observability --enable-dimensions",
         "init-codex",
         "qualify",
+        "scale_model_capacity.py --config",
         "register_client_app.py",
         "ad app permission admin-consent",
         "export-client",
@@ -195,6 +196,7 @@ def test_full_deployment_runs_documented_steps_in_order(
     ]
     positions = [next(i for i, c in enumerate(seen) if step in c) for step in order]
     assert positions == sorted(positions)
+    assert sum("scale_model_capacity.py" in command for command in seen) == 1
     assert any("ad group member add" in c and USER in c for c in seen)
     bundle = next(c for c in runner.calls if c[1].endswith("build_client_bundle.py"))
     assert bundle.count("--profile") == 2
@@ -212,6 +214,19 @@ def test_full_deployment_runs_documented_steps_in_order(
     assert portal["ownerObjectId"]["value"] == USER
     org_config = json.loads((tmp_path / ".local/organization.json").read_text())
     assert org_config["model_provider_data"]["countryCode"] == "US"
+
+
+def test_capacity_maximization_can_be_disabled(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    value = json.loads(settings.read_text())
+    value["maximize_model_capacity"] = False
+    settings.write_text(json.dumps(value))
+    runner = FakeRunner(organization(org))
+
+    run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+
+    assert not any("scale_model_capacity.py" in command for command in commands(runner))
 
 
 def test_rerun_reuses_group_app_registration_and_qualified_models(
