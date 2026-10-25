@@ -6,7 +6,7 @@ Give developers a familiar Claude experience with Microsoft Entra sign-in. Deplo
 
 **Team repository:** use this repository for source code, documentation, issues, and pull requests. Access is managed by the GitHub organization.
 
-[Install on a Mac](docs/macos.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
+[Install on a Mac](docs/macos.md) · [Deploy with your LLM](docs/llm-onboarding.md) · [Deploy for your organization](docs/administrator.md) · [Explore the portal](docs/portal-guide.md) · [Contribute](CONTRIBUTING.md)
 
 > **Codex and content-log preview:** included in `main`, Codex Desktop/CLI routes to Azure OpenAI models through a separate standard APIM API. It includes Entra sign-in, model qualification, Mac onboarding, restore, and a readable-history handoff for existing conversations. [Setup and limitations](docs/codex.md) · [Validation record](docs/codex-validation.md). The baseline management portal policy remains Claude-only; the optional budget gateway adds shared Claude/Codex policy. Optional [content logs](docs/content-logs.md) support both clients.
 
@@ -48,6 +48,8 @@ The installer supplies its own isolated runtime and preserves unrelated settings
 ### I want to deploy this for my organization
 
 An Azure administrator deploys the shared foundation once. An Entra administrator may also be needed for app registration and consent. Start with a small pilot and your own reviewed configuration.
+
+**Deploying at a new customer?** Give their coding assistant the [LLM deployment and onboarding runbook](docs/llm-onboarding.md). It includes a copyable prompt, customer input checklist, fresh infrastructure deployment, CSV user import, optional governance, verification and handover. Repository assistants discover it through [AGENTS.md](AGENTS.md).
 
 One settings file and one command deploy Foundry, API Management, Claude, Codex and the portal, then build a single developer installer:
 
@@ -127,6 +129,7 @@ The portal is outside the inference path. The budget Function and its storage ar
 
 | Task | Guide |
 | --- | --- |
+| Hand a fresh customer deployment and user import to an LLM | [LLM deployment and onboarding](docs/llm-onboarding.md) |
 | Deploy everything with one command and onboard developers | [Quick start](docs/quickstart.md) |
 | Deploy infrastructure, models, and the gateway | [Organization administrator](docs/administrator.md) |
 | Install, sign in, update, or restore Claude settings | [Mac installation](docs/macos.md) |
