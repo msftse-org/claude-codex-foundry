@@ -1,5 +1,28 @@
 # Codex validation — October 15, 2026
 
+## Enrolled configuration smoke check — October 26, 2026
+
+The opt-in configuration-refresh integration build was deployed to an expressly
+authorized existing demo. This is feature-branch qualification, not a main merge
+or general rollout. Installed client settings and existing session histories were
+not modified.
+
+- Installed CLI **0.145.0** and Desktop-bundled engine
+  **0.164.0-alpha.11.1** each enrolled in a separate disposable home with Azure CLI
+  authentication and the current own-user configuration feed.
+- Each accepted the **33-model** generated native catalog with strict
+  configuration validation. Using `gpt-6.1-sol`, each completed a real read-only
+  shell/file operation and a resumed-conversation follow-up through the enrolled
+  gateway provider. The synthetic verification phrase matched in both turns.
+- Each isolated installation was unenrolled afterward. The real Azure CLI cache
+  was reused, not copied or cleared. Private command output and sessions remain
+  in ignored local storage.
+
+This does not establish visual Desktop UI behavior, hot picker reload, actual
+scheduled execution, or publication/revocation/budget-denial behavior for this
+increment. Those remain required before merge and rollout. The existing checks
+below are separate earlier evidence, not substitutes for those gates.
+
 ## Budget gateway regression check — October 25, 2026
 
 An authenticated Responses request ending in a `compaction_trigger` input item reproduced HTTP 400: the gateway inserted its ordinary 4,096-token default, while the provider required at least 20,000. The corrected gateway supplies at least 20,000 when the client omits the limit, within the verified model maximum. It reserves that complete output bound before dispatch; an explicit insufficient limit is rejected before reservation.

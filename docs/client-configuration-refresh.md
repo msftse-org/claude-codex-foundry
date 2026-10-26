@@ -419,3 +419,33 @@ failure, registration preauthorization and drift refusal, missing-CLI setup,
 and preservation of existing installations. No real installed client settings
 were changed. These results do not establish live scheduling, native model-picker
 reload, policy publication/revocation or budget enforcement for this increment.
+
+### Dedicated demo qualification — 2026-10-26
+
+The opt-in portal build was deployed successfully to the expressly authorized
+existing demo. Its original source bundle, relevant settings and registration
+receipt are retained privately for recovery. The integration build includes the
+reviewed CA-bundle dependency update; no feature PR is merged to main, and the
+flags remain off by default for other deployments. Existing spending ledgers,
+published budget policy and installed client settings were not changed.
+
+Real Entra requests verified a successful own-user response (9 Claude and 33
+Codex models), an authorized conditional 304, and rejection of anonymous requests,
+inference-audience tokens and user-selector parameters. The configuration token
+was also rejected by portal administration. Actual enrollment, unchanged refresh
+and unenrollment passed in disposable client homes using Azure CLI credentials.
+Credentials remained with Azure CLI; they were not copied into enrollment state.
+
+Codex CLI `0.145.0` and the Desktop-bundled engine
+`0.164.0-alpha.11.1` each consumed the enrolled 33-model catalog with strict
+configuration validation, read a synthetic local file through a real tool call,
+and resumed that conversation with the expected answer through the enrolled
+provider. Each isolated enrollment was restored after the test. These are engine
+checks, not visual Desktop UI acceptance or evidence of hot model-picker reload.
+
+Release gates still open: real macOS scheduled execution, interactive
+Conditional Access/reauthentication, Claude Code and Claude Desktop native
+journeys, new-model publication-to-picker timing, published revocation with stale
+files/local rollback, and shared-budget denial/failure-boundary checks for this
+increment. Do not merge or broaden rollout until these pass. Raw native logs,
+identities, tokens and customer configuration remain outside Git.

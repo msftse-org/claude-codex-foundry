@@ -10,7 +10,7 @@ from test_configuration_schedule import launchctl as launchctl
 from claude_foundry import cli, local_update
 from claude_foundry import configuration_refresh as refresh
 from claude_foundry import configuration_schedule as schedule
-from claude_foundry.configuration_client import ConfigurationError
+from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID, ConfigurationError
 
 
 @pytest.mark.parametrize("after_refresh", [False, True])
@@ -40,6 +40,18 @@ def test_unenroll_removes_only_owned_files_and_retains_credentials_and_history(
     assert credential.read_bytes() == b"not an access token"
     enroll()
     assert paths["binding"].exists() and paths["helper"].exists()
+
+
+def test_cli_unenrollment_reports_provider_owned_cache(pilot, launchctl, monkeypatch):
+    home, descriptor, _, _, enroll = pilot
+    value = read(descriptor)
+    value.update(schema_version=3, public_client_id=AZURE_CLI_CLIENT_ID)
+    write(descriptor, value)
+    monkeypatch.setattr(refresh, "EnrolledAzureCli", refresh.EnrolledMsal)
+    enroll()
+    result = refresh.restore(home=home)
+    assert result["credentials"] == "preserved_in_azure_cli"
+    assert not (home / refresh.STATE / "credentials").exists()
 
 
 def test_unenroll_returns_exact_initial_settings_when_no_later_edits(pilot, launchctl):

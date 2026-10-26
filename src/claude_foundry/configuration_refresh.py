@@ -798,6 +798,10 @@ def restore(*, home=None):
     return {
         "state": "restored",
         "automatic_refresh": False,
-        "credentials": "preserved_in_encrypted_store",
+        "credentials": (
+            "preserved_in_azure_cli"
+            if descriptor.schema_version == 3
+            else "preserved_in_encrypted_store"
+        ),
         "history": "preserved",
     }
