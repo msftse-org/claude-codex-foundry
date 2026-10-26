@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from ..client_bundle import build_bundle, build_enrollment_bundle, build_template
 from ..config import export_client, load_org
-from ..configuration_client import ConfigurationError, EnrollmentDescriptor
+from ..configuration_client import AZURE_CLI_CLIENT_ID, ConfigurationError, EnrollmentDescriptor
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator, ConfigurationAuthenticator
 from .boundary import RequestBoundary
@@ -134,7 +134,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         # Never trust Host/X-Forwarded-Host to choose a future credential destination.
         origin = os.environ["PORTAL_ENROLLMENT_ORIGIN"]
         enrollment_descriptor = {
-            "schema_version": 2,
+            "schema_version": 3 if public_client == AZURE_CLI_CLIENT_ID else 2,
             "organization_id": configuration_organization,
             "tenant_id": config["tenant_id"],
             "configuration_url": origin + CONFIGURATION_PATH,

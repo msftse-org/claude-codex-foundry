@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_configuration_client import descriptor_value
 
 from claude_foundry.config import export_client
+from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT_ID = "00000000-0000-0000-0000-000000000004"
@@ -41,10 +43,17 @@ def install(
     fail_login=False,
     fail_command="",
     expected_code=0,
+    azure_cli_installed=True,
 ):
     bundle = tmp_path / "bundle"
     (bundle / "scripts/macos").mkdir(parents=True)
-    shutil.copy2(ROOT / "scripts/macos/install.sh", bundle / "scripts/macos/install.sh")
+    # Do not discover the operator's real Homebrew executables in isolated tests.
+    (bundle / "scripts/macos/install.sh").write_text(
+        (ROOT / "scripts/macos/install.sh")
+        .read_text()
+        .replace("/opt/homebrew/bin:/usr/local/bin:", "")
+    )
+    (bundle / "scripts/macos/install.sh").chmod(0o755)
     shutil.copy2(ROOT / "Install.command", bundle / "Install.command")
     (bundle / "requirements-auth.lock").write_text("")
     for name, profile in profiles.items():
@@ -64,9 +73,10 @@ def install(
         "fi\n"
     )
     uv.chmod(0o755)
-    az = home / ".local/bin/az"
-    az.write_text("#!/bin/bash\nexit 99\n")
-    az.chmod(0o755)  # The installer must delegate sign-in, never run az itself.
+    if azure_cli_installed:
+        az = home / ".local/bin/az"
+        az.write_text("#!/bin/bash\nexit 99\n")
+        az.chmod(0o755)  # The installer must delegate sign-in, never run az itself.
     codex_app = tmp_path / "codex"
     if codex_installed:
         codex_app.write_text("")
@@ -78,6 +88,7 @@ def install(
         "CLAUDE_FOUNDRY_CODEX_CLI": "codex-absent-in-test",
         "FAIL_LOGIN": "1" if fail_login else "0",
         "FAIL_COMMAND": fail_command,
+        "PYTHONPATH": str(ROOT / "src"),
     }
     result = subprocess.run(
         ["/bin/bash", str(bundle / "Install.command"), *args],
@@ -190,7 +201,7 @@ def test_failed_login_explains_that_setup_did_not_complete(org, tmp_path):
 
 def enrollment_files(clients=None):
     return {
-        "enrollment.json": {"sentinel": "validated by the real enrollment command"},
+        "enrollment.json": descriptor_value(),
         "installation.json": {"schema_version": 1, "clients": clients or ["claude"]},
     }
 
@@ -201,6 +212,23 @@ def test_enrollment_installer_uses_fixed_entrypoint_and_explicit_background_choi
     assert "SETUP COMPLETE" in result.stdout
     assert "To enable automatic model updates" in result.stdout
     assert "restore --client" not in result.stdout
+
+
+def test_cli_enrollment_requires_approved_cli_before_client_changes(tmp_path):
+    files = enrollment_files()
+    files["enrollment.json"].update(schema_version=3, public_client_id=AZURE_CLI_CLIENT_ID)
+    calls, result = install(tmp_path, files, azure_cli_installed=False, expected_code=1)
+    assert calls == []
+    assert "Azure CLI sign-in" in result.stderr
+    assert "No client settings were changed" in result.stderr
+
+
+def test_invalid_enrollment_descriptor_stops_before_client_changes(tmp_path):
+    files = enrollment_files()
+    files["enrollment.json"]["public_client_id"] = "untrusted"
+    calls, result = install(tmp_path, files, expected_code=1)
+    assert calls == []
+    assert "enrollment descriptor is invalid" in result.stderr
 
 
 def test_enrollment_installer_both_apps_migration_and_scheduler_are_explicit(tmp_path):

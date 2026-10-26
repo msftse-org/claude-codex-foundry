@@ -80,6 +80,57 @@ def test_preview_has_no_local_or_remote_writes(registration, tmp_path):
     assert not graph.writes
 
 
+def test_cli_mode_creates_only_read_api_and_preauthorizes_one_scope(registration, tmp_path):
+    graph = Directory()
+    output = tmp_path / "receipt.json"
+    assert registration.prepare(graph, TENANT, "Test", output, azure_cli=True) == {
+        "mode": "preview",
+        "existing": {"api": False},
+    }
+    assert not graph.writes and not output.exists()
+    result = registration.prepare(graph, TENANT, "Test", output, apply=True, azure_cli=True)
+    assert len(graph.apps) == 1
+    api = graph.apps[0]
+    receipt = json.loads(output.read_text())
+    assert result["public_client_id"] == registration.AZURE_CLI_CLIENT_ID
+    assert result["admin_consent_requested"] is False
+    assert api["api"]["preAuthorizedApplications"] == [
+        {
+            "appId": registration.AZURE_CLI_CLIENT_ID,
+            "delegatedPermissionIds": [receipt["scope_id"]],
+        }
+    ]
+    assert api["requiredResourceAccess"] == [] and api["appRoles"] == []
+    assert api["publicClient"]["redirectUris"] == []
+    assert not any("oauth2PermissionGrants" in path for _, path, _ in graph.calls)
+    graph.calls.clear()
+    assert registration.prepare(graph, TENANT, "Test", output, apply=True, azure_cli=True) == result
+    assert not graph.writes
+    with pytest.raises(ValueError, match="does not use"):
+        registration.prepare(graph, TENANT, "Test", output, azure_cli=True, consent=True)
+
+
+def test_cli_preauthorization_upgrade_only_changes_receipt_owned_api(registration, tmp_path):
+    graph = Directory()
+    output = tmp_path / "receipt.json"
+    registration.prepare(graph, TENANT, "Test", output, apply=True)
+    old_client = copy.deepcopy(graph.apps[1])
+    graph.calls.clear()
+    registration.prepare(graph, TENANT, "Test", output, apply=True, azure_cli=True)
+    assert graph.apps[1] == old_client
+    assert len(graph.writes) == 1
+    assert graph.writes[0][0:2] == ("PATCH", "applications/" + graph.apps[0]["id"])
+    assert graph.apps[0]["api"]["requestedAccessTokenVersion"] == 2
+    assert graph.apps[0]["api"]["oauth2PermissionScopes"][0]["value"] == "configuration.read"
+    graph.calls.clear()
+    graph.apps[0]["api"]["preAuthorizedApplications"][0]["delegatedPermissionIds"].append(
+        INFERENCE_SCOPE
+    )
+    with pytest.raises(ValueError, match="preauthorization"):
+        registration.prepare(graph, TENANT, "Test", output, apply=True, azure_cli=True)
+    assert not graph.writes
+
+
 def test_creation_has_only_two_delegated_permissions_no_secrets(registration, tmp_path):
     graph = Directory()
     output = tmp_path / "receipt.json"

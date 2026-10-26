@@ -9,6 +9,7 @@ from test_configuration_client import descriptor_value
 
 from claude_foundry.client_bundle import build_bundle, build_enrollment_bundle, build_template
 from claude_foundry.config import export_client, write_json
+from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
 
 
 def builder():
@@ -203,6 +204,21 @@ def test_enrollment_bundle_contains_only_trust_anchors_and_app_selection(clients
 def test_enrollment_bundle_rejects_invalid_selection(clients):
     with pytest.raises(ValueError, match="Choose clients"):
         build_enrollment_bundle(descriptor_value(), b"", clients=clients)
+
+
+def test_cli_enrollment_bundle_explains_cli_owned_storage_without_promising_keychain():
+    descriptor = descriptor_value()
+    descriptor.update(schema_version=3, public_client_id=AZURE_CLI_CLIENT_ID)
+    template = build_template(Path(__file__).resolve().parents[1])
+    with zipfile.ZipFile(
+        io.BytesIO(build_enrollment_bundle(descriptor, template, clients=["claude"]))
+    ) as archive:
+        readme = archive.read("claude-foundry/README.md").decode()
+        assert "Azure CLI" in readme and "--install-azure-cli" in readme
+        assert "not necessarily encrypted" in readme
+        assert "Keychain" not in readme and "Azure CLI is not required" not in readme
+        assert "writes no tokens" in readme
+        assert json.loads(archive.read("claude-foundry/enrollment.json")) == descriptor
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ CONFIGURATION_PATH = "/api/v1/me/client-configuration"
 MAX_BYTES = 256 * 1024
 TIMEOUT_SECONDS = 10
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
 
 
 class ConfigurationError(RuntimeError):
@@ -111,6 +112,7 @@ class EnrollmentDescriptor:
     configuration_resource_id: str
     public_client_id: str
     routes: tuple[EnrolledRoute, ...]
+    schema_version: int = 2
 
     @classmethod
     def parse(cls, value):
@@ -126,12 +128,15 @@ class EnrollmentDescriptor:
                 "routes",
             },
         )
-        if type(value["schema_version"]) is not int or value["schema_version"] != 2:
+        version = value["schema_version"]
+        if type(version) is not int or version not in {2, 3}:
             raise ConfigurationError("Unsupported enrollment schema.")
         resource = _uuid(value["configuration_resource_id"])
         public_client = _uuid(value["public_client_id"])
-        if public_client in {resource, "04b07795-8ddb-461a-bbee-02f9e1bf7b46"}:
-            raise ConfigurationError("Enrollment requires a separate organization public client.")
+        if public_client == resource or ((version == 3) != (public_client == AZURE_CLI_CLIENT_ID)):
+            raise ConfigurationError(
+                "Enrollment authentication mode and public client do not match."
+            )
         routes = value["routes"]
         if not isinstance(routes, dict) or not routes or set(routes) - {"claude", "codex"}:
             raise ConfigurationError("Invalid enrollment routes.")
@@ -151,6 +156,7 @@ class EnrollmentDescriptor:
             resource,
             public_client,
             tuple(parsed),
+            version,
         )
 
     @property

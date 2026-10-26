@@ -20,49 +20,59 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-The dedicated registration helper is available below. Consent, deployed wiring
+The dedicated registration helper is available below. Deployed wiring
 and native client qualification are still release gates. Do not reuse the
 portal application to enable this endpoint.
 
 ## Dedicated Entra registrations
 
-An authorized tenant app administrator runs this from the customer's checkout.
-It previews by default (read-only); `--apply` creates Entra resources, and
-`--grant-admin-consent` separately requests tenant-wide delegated consent for
-the new public client. This does not deploy or enable the portal feature.
+An operator with permission to manage the dedicated API registration runs this
+from the customer's checkout. It previews by default (read-only); `--apply`
+creates the API and preauthorizes Azure CLI for its single read-only scope.
+It does not change Microsoft's Azure CLI registration, grant Graph/ARM
+permissions to clients, deploy the portal or enable the feature.
 
 ```bash
 uv run --frozen --extra auth --extra portal python scripts/register_enrollment.py \
   --tenant TENANT_UUID --subscription SUBSCRIPTION_UUID \
-  --name "Example Refresh Pilot" \
+  --name "Example Refresh Pilot" --azure-cli \
   --output .local/enrollment/entra-receipt.json
 # Review the target, then repeat with --apply.
-# Add --grant-admin-consent only when authorized for tenant-wide consent.
 ```
 
 Use a unique environment-specific name. The API registration exposes only
 admin-consent delegated `configuration.read`, uses v2 tokens and has no secret.
-The distinct public client registers the MSAL PKCE loopback redirect and only
-configuration-read plus delegated Cognitive Services `user_impersonation`.
-It has no Graph, ARM, application-only or portal permission. Fallback public
-flows and implicit token issuance are not enabled. There is no API
-preauthorization; tenant consent and the server's client allowlist are separate
-checks. Public-client IDs are not device authentication.
+The API preauthorizes Microsoft's Azure CLI public client
+(`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) for exactly this scope. No new public
+client, secret or tenant-wide delegated grant is needed for this mode.
+Existing Azure CLI Cognitive Services credentials remain separate inference
+credentials. API preauthorization and the server's narrow client allowlist are
+separate checks; a public-client ID is not proof of a trusted device or executable.
+Tenant Conditional Access, assignment and application-management policy still apply.
+
+For existing schema-2 MSAL pilots, omit `--azure-cli` to retain the separate
+public client and encrypted Keychain cache. Only that legacy mode accepts
+`--grant-admin-consent` with `--apply`, requiring an appropriately authorized
+administrator. Modes are explicit and never silently substituted. Moving an owned
+API to CLI mode verifies its complete manifest first and changes only its API
+preauthorization; the old public client is retained for explicit cleanup.
 
 Keep the private receipt (`0600`) and reuse the **same path, tenant and name**
 after an interrupted run. A durable registration tag lets the helper find a
 created app even when its creation response was lost. It never blindly retries
-creation or consent, adopts another app by display name, repairs drift, adds
+creation or consent, adopts another app by display name, repairs unrelated drift, adds
 credentials, or re-enables a disabled enterprise application. Do not run
 registration concurrently. If the receipt is lost or an administrator changes
 the dedicated manifest, stop for review; do not generate a fresh receipt to
 retry the same deployment.
 
-The administrator needs permission to create applications/service principals
-and, for consent, the appropriate tenant consent role. These operator privileges
+The operator needs permission to manage the owned applications/service principals;
+the separate MSAL mode additionally requires the appropriate tenant consent role.
+These operator privileges
 are not granted to the workstation client. See Microsoft's
 [application creation API](https://learn.microsoft.com/en-us/graph/api/application-post-applications?view=graph-rest-1.0),
 [consent guidance](https://learn.microsoft.com/en-us/entra/identity-platform/v2-admin-consent),
+[preauthorized clients](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-configure-app-expose-web-apis#add-a-scope),
 and [MSAL interactive PKCE prerequisites](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens#interactive-vs-silent).
 
 ## Operator settings
@@ -79,7 +89,7 @@ or downloaded refresh response:
 | `PORTAL_CONFIGURATION_DEPLOYMENTS_JSON` | Reviewed deployment map matching the budget runtime's bounds |
 | `PORTAL_CLIENT_ENROLLMENT_ENABLED` | Exactly `1` enables the experimental link/ZIP onboarding page; `0` by default |
 | `PORTAL_ENROLLMENT_ORIGIN` | Reviewed canonical HTTPS portal origin, without path, query or trailing slash |
-| `PORTAL_ENROLLMENT_CLIENT_ID` | Dedicated organization public-client UUID, present in the configuration client allowlist; not Azure CLI |
+| `PORTAL_ENROLLMENT_CLIENT_ID` | Azure CLI public-client UUID for schema 3; dedicated organization public-client UUID for legacy schema 2; must be in the configuration client allowlist |
 
 The deployment map has this shape, with no additional fields:
 
@@ -167,7 +177,7 @@ Desktop's `modelCatalogUrl` mirrors Anthropic's signed metadata; it is not this
 entitlement feed. Codex remote catalogs require a complete version-compatible
 `ModelsResponse`, not this wrapper or a generic OpenAI models response.
 
-## Client reader (not yet an installer)
+## Data-only client reader
 
 `configuration_client.py` implements bounded data-only reads. It does not log
 in, persist credentials/enrollment, schedule work or change application files.
@@ -176,12 +186,12 @@ never replace it:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "organization_id": "00000000-0000-0000-0000-000000000001",
   "tenant_id": "00000000-0000-0000-0000-000000000002",
   "configuration_url": "https://portal.example.com/api/v1/me/client-configuration",
   "configuration_resource_id": "00000000-0000-0000-0000-000000000004",
-  "public_client_id": "00000000-0000-0000-0000-000000000005",
+  "public_client_id": "04b07795-8ddb-461a-bbee-02f9e1bf7b46",
   "routes": {
     "claude": {
       "route_id": "claude-gateway",
@@ -213,21 +223,26 @@ noncanonical URLs; it is not a general SSRF defense against arbitrary DNS
 aliases. Distribution through the reviewed organization setup channel remains
 essential. This component alone does not make unattended refresh available.
 
-## Enrolled encrypted credentials
+## Account-bound credentials
 
-`enrollment_auth.py` uses an organization-owned single-tenant public client
-and MSAL's browser/loopback PKCE flow. The descriptor pins that public client
-separately from the configuration API resource. Descriptor schema 2 is required;
-the unreleased schema 1 Azure CLI pilot is not silently reinterpreted.
-Azure CLI is not required for enrollment and its normal account/cache is untouched.
+Descriptor schema 3 explicitly selects Azure CLI and pins its public-client ID
+separately from the API resource. The helper first reuses `az account get-access-token`
+with the exact tenant and scope/resource. Only initial enrollment or explicit
+`refresh --login` can invoke foreground `az login`; background refresh never can.
+It does not call `az account set`, log out other accounts, distribute secrets,
+copy token files or maintain another credential cache.
 
-MSAL extensions owns token persistence and cross-process cache locking. On
-macOS credentials are stored in Keychain; the private `0700` state directory
-contains only cache-change markers and lock files. There is **no plaintext
-fallback**. An unavailable or locked store fails closed. Noninteractive reads
-also disable macOS Keychain interaction for the short-lived helper process,
-so background refresh cannot display an unlock or sign-in dialog. Initial
-login and explicit `refresh --login` may interact with the user.
+Azure CLI owns storage and renewal. Its macOS/Linux cache is not necessarily
+encrypted; OS account protection, disk encryption and endpoint policy are required.
+This is an explicit use of the existing CLI credential mechanism, **not an
+encrypted-cache guarantee**. Organizations requiring hardware-backed or Keychain-only
+credentials must review this tradeoff or qualify the separate schema-2 MSAL path.
+
+Schema 2 retains organization-owned MSAL browser/loopback PKCE and encrypted
+MSAL-extensions persistence in macOS Keychain, with cross-process locking and no
+plaintext fallback. Locked/unavailable storage fails closed; silent helpers
+disable Keychain interaction. Schema 1 is rejected. Neither mode falls back to
+the other when authentication fails.
 
 Configuration reads request only `api://<resource-id>/configuration.read`;
 inference reads request only Cognitive Services `user_impersonation`.
@@ -238,17 +253,17 @@ access. The API and gateway still validate and authorize the actual request.
 The authoritative enrollment subject must come from the authenticated API
 response, not an unverified local token.
 
-Silent requests select exactly one account with the enrolled tenant and object
-ID, never the first account in a shared cache. An account switch, duplicate
-account, storage failure or interaction-required response stops the helper
-with a sanitized sign-in-required error. MSAL response bodies and tokens are
+Every returned credential must match the enrolled tenant and object ID; MSAL
+also selects exactly one matching cache account. Azure CLI account switching
+cannot rebind enrollment. Storage failure or interaction-required responses stop
+the helper with a sanitized sign-in-required error. Authentication bodies and tokens are
 never printed in diagnostics. Foreground reauthentication cannot silently
-change the enrolled user. Entra registration/consent, actual Keychain behavior,
+change the enrolled user. Tenant policy, actual credential-store behavior,
 and real Conditional Access remain release qualification gates.
 
 ## Explicit macOS pilot enrollment
 
-The CLI connects the reader, isolated credentials and recoverable settings
+The CLI connects the reader, account-bound credentials and recoverable settings
 updates. A reviewed descriptor can be used directly:
 
 ```bash
@@ -316,7 +331,7 @@ Run `claude-foundry unenroll` to pause automatic refresh and restore only settin
 still owned by this enrollment. Unknown routing/helper/catalog changes or an
 edited enrolled Desktop library entry stop for review before the job is paused.
 Later user preferences, other Desktop profiles, conversations, installed
-applications, the runtime and encrypted credentials are retained. Untouched
+applications, the runtime and credentials are retained. Untouched
 original settings are restored byte-for-byte. A disabled owned LaunchAgent is
 retained; `unenroll` does not uninstall the runtime or sign the account out.
 The legacy `restore` command refuses an enrolled installation.
@@ -363,8 +378,8 @@ or explicitly with `bash Install.command --enable-refresh`. No background job is
 installed merely by downloading a ZIP. Save active work and fully quit/reopen the
 apps after setup; live picker refresh is not promised.
 
-This packaging does not close the authentication release gate above. Do not
-enable it for users until encrypted credentials, Entra consent/Conditional Access,
+This packaging alone does not close the live release gates. Do not
+enable it for general rollout until tenant authentication/Conditional Access,
 actual macOS scheduling, model publication/revocation/budget admission, all four
 native client surfaces and recovery/uninstall have been qualified. Offline
 temporary-home and browser-component tests do not establish those live results.
@@ -380,22 +395,27 @@ behavior.
 
 ### Registration qualification — 2026-10-26
 
-The dedicated demo tenant accepted creation of the separate single-tenant API
-and public client. A read-only rerun verified their manifests against the
-saved receipt. The API exposes admin-consent delegated `configuration.read`;
-the public client requests that and Cognitive Services `user_impersonation`.
-No existing application manifest or client installation was changed.
+The initial separate-public-client pilot encountered a tenant-wide consent
+denial. The revised CLI mode uses resource-owner preauthorization of the
+dedicated configuration API's read-only scope. In the authorized demo this
+preauthorization was read back and Azure CLI successfully obtained the distinct
+configuration token without a tenant-admin consent command. No Microsoft-owned
+registration, delegated tenant grant, installed client settings or budget policy
+was changed by that authentication check. The prior API manifest and registration
+receipt are retained privately for recovery.
 
-Tenant-wide consent returned `Authorization_RequestDenied` because the current
-operator lacks the necessary administrator role. This is an unresolved release
-gate, not an authentication success. Do not change the scope to user-consent,
-preauthorize the client, or reuse a more privileged client to bypass it.
-An authorized tenant administrator must review and grant the dedicated public
-client's requested delegated permissions. Keep the same receipt and registration
-identities. No feature deployment, end-user MSAL login or source merge was
-performed as part of this check. Conditional Access, actual background refresh
-and native model-picker qualification remain unverified.
+This establishes the demo's CLI token-acquisition path, not universal tenant
+eligibility, Conditional Access acceptance or native UI qualification. An operator
+still needs permission to manage the API registration. Preserve the same receipt;
+the unused dedicated public client is not automatically deleted.
 
-The complete offline Python suite passed (696 tests), including consent-failure
-sanitization and reuse of the same registrations after denial. Ruff checks and
-formatting passed. These checks do not close the live qualification gates above.
+### Azure CLI adapter offline qualification — 2026-10-26
+
+724 Python tests and 57 frontend tests passed. Ruff lint/format checks, shell
+syntax, frontend production build, wheel/source build and whitespace checks
+passed. The new cases cover explicit authentication-mode selection, separate
+token audiences, tenant/user/client/scope/expiry binding, silent background
+failure, registration preauthorization and drift refusal, missing-CLI setup,
+and preservation of existing installations. No real installed client settings
+were changed. These results do not establish live scheduling, native model-picker
+reload, policy publication/revocation or budget enforcement for this increment.

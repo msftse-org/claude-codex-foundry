@@ -72,6 +72,27 @@ def build_enrollment_bundle(descriptor, template, *, clients):
         for route in parsed.routes
         if route.client in clients
     )
+    cli_auth = parsed.schema_version == 3
+    prerequisite = (
+        "Azure CLI is required. Use your organization's approved Azure CLI installation. "
+        "If Homebrew is already approved and installed, explicitly choose "
+        "`bash Install.command --install-azure-cli` to install it."
+        if cli_auth
+        else "Azure CLI is not required."
+    )
+    credential_help = (
+        "This setup reuses Azure CLI sign-in; Azure CLI owns credential storage and renewal. "
+        "On macOS/Linux its token cache is not necessarily encrypted: protect the OS account "
+        "and disk, and follow your organization's endpoint policy. This helper writes no "
+        "tokens or credential-cache copies. A different Azure CLI account stops refresh "
+        "instead of rebinding your installation. No new tenant-wide admin-consent command "
+        "is needed when the platform team has preauthorized this API's read-only scope; "
+        "tenant security policies may still require approval or foreground sign-in."
+        if cli_auth
+        else "MSAL stores credentials in macOS Keychain, with no plaintext fallback. "
+        "A locked or unavailable key store stops sign-in/refresh. Enrollment may need "
+        "separate configuration and inference consent prompts."
+    )
     readme = f"""# Enroll {target}
 
 This experimental Mac setup connects to your organization once, then refreshes your published
@@ -93,7 +114,7 @@ user's current published policy determines the available models and server-side 
 
 ## Install
 
-1. Install your organization's approved {target}. Azure CLI is not required.
+1. Install your organization's approved {target}. {prerequisite}
 2. Save active work, extract the ZIP, open the `claude-foundry` folder, then run
    `bash Install.command` (or double-click it).
 3. Review the connection details and complete Microsoft work-account sign-in and MFA.
@@ -116,17 +137,17 @@ Use `~/.local/share/claude-foundry/runtime/bin/claude-foundry configuration-stat
 Use `disable-refresh` to stop the background job. Do not use the legacy `restore` command on an
 enrolled installation; see [the pilot guide](docs/client-configuration-refresh.md) for limitations.
 
-MSAL stores credentials in macOS Keychain, with no plaintext fallback. A locked or unavailable
-key store stops sign-in/refresh. Background refresh never opens a login window. Conditional
-Access may occasionally require foreground sign-in again, and enrollment may need separate
-configuration and inference consent prompts. This installer does not change Azure resources.
+{credential_help}
+Background refresh never starts login. Conditional Access may occasionally require foreground
+sign-in again. This installer does not change Azure resources.
 Never paste tokens into a chat or send them to your administrator.
 """
     instructions = """# Installation assistant instructions
 
 Read README.md, enrollment.json and installation.json first. Use bash Install.command from this
 folder for the user's requested local setup. Do not invent a gateway, change the enrollment
-descriptor, or substitute a legacy client profile. Encrypted credential storage is required.
+descriptor, or substitute a legacy client profile. Follow the descriptor's authentication mode;
+never copy a credential cache or fall back to a different authentication provider.
 
 Let the user complete explicit Microsoft sign-in. Never print, request or copy access tokens.
 Existing JSON migration and enabling background refresh each require the user's explicit choice.

@@ -10,12 +10,164 @@ from test_configuration_client import PUBLIC_CLIENT, RESOURCE, SUBJECT, TENANT, 
 from claude_foundry import enrollment_auth as auth
 from claude_foundry.config import TOKEN_RESOURCE
 from claude_foundry.configuration_client import (
+    AZURE_CLI_CLIENT_ID,
     ConfigurationError,
     EnrollmentDescriptor,
     SignInRequired,
 )
 
 OTHER = "00000000-0000-0000-0000-000000000099"
+
+
+def cli_descriptor():
+    value = descriptor_value()
+    value.update(schema_version=3, public_client_id=AZURE_CLI_CLIENT_ID)
+    return EnrollmentDescriptor.parse(value)
+
+
+@pytest.fixture
+def azure_cli(monkeypatch):
+    calls = []
+    state = SimpleNamespace(payload=claims(azp=AZURE_CLI_CLIENT_ID), returncode=0, fail_once=False)
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        failed = state.fail_once
+        state.fail_once = False
+        return SimpleNamespace(
+            returncode=1 if failed else state.returncode,
+            stdout=json.dumps({"accessToken": token(state.payload)}),
+            stderr="PRIVATE_IDENTITY_AND_TOKEN",
+        )
+
+    monkeypatch.setattr(auth, "find_az", lambda: "/approved/bin/az")
+    monkeypatch.setattr(auth.subprocess, "run", run)
+    monkeypatch.setattr(auth.time, "time", lambda: 1900000000)
+    return state, calls
+
+
+def test_cli_reuses_login_has_separate_audiences_and_writes_no_cache(azure_cli, tmp_path):
+    state, calls = azure_cli
+    provider = auth.EnrolledAzureCli(cli_descriptor(), tmp_path, subject_id=SUBJECT)
+    assert provider.login() == token(state.payload)
+    assert provider.configuration_token() == token(state.payload)
+    state.payload = claims(azp=AZURE_CLI_CLIENT_ID, aud=TOKEN_RESOURCE, scp="user_impersonation")
+    assert provider.inference_token() == token(state.payload)
+    assert not list(tmp_path.iterdir())
+    assert all("login" not in args for args, _ in calls)
+    assert calls[0][0] == [
+        "/approved/bin/az",
+        "account",
+        "get-access-token",
+        "--tenant",
+        TENANT,
+        "--scope",
+        f"api://{RESOURCE}/configuration.read",
+        "--only-show-errors",
+        "--output",
+        "json",
+    ]
+    assert calls[2][0][5:7] == ["--resource", TOKEN_RESOURCE]
+    assert all(options["timeout"] == 45 for _, options in calls)
+    assert all(options["capture_output"] and options["text"] for _, options in calls)
+
+
+def test_cli_only_explicit_foreground_login_can_recover(azure_cli, tmp_path):
+    state, calls = azure_cli
+    provider = auth.EnrolledAzureCli(cli_descriptor(), tmp_path, subject_id=SUBJECT)
+    state.fail_once = True
+    with pytest.raises(SignInRequired):
+        provider.configuration_token()
+    assert len(calls) == 1
+    calls.clear()
+    state.fail_once = True
+    assert provider.login()
+    assert [args[1] for args, _ in calls] == ["account", "login", "account"]
+    assert calls[1][0] == [
+        "/approved/bin/az",
+        "login",
+        "--tenant",
+        TENANT,
+        "--allow-no-subscriptions",
+        "--scope",
+        f"api://{RESOURCE}/configuration.read",
+        "--only-show-errors",
+        "--output",
+        "json",
+    ]
+    assert calls[1][1]["timeout"] == 300
+    assert all("set" not in args and "logout" not in args for args, _ in calls)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("tid", OTHER),
+        ("oid", OTHER),
+        ("oid", None),
+        ("oid", "email@example.com"),
+        ("aud", TOKEN_RESOURCE),
+        ("aud", [RESOURCE]),
+        ("azp", PUBLIC_CLIENT),
+        ("idtyp", "app"),
+        ("scp", "configuration.reader"),
+        ("scp", []),
+        ("exp", 1),
+        ("exp", True),
+        ("exp", "2000000000"),
+        ("exp", float("nan")),
+        ("exp", float("inf")),
+    ],
+)
+def test_cli_changed_identity_invalid_audience_or_claims_fail_closed(
+    azure_cli, tmp_path, key, value, capsys
+):
+    state, calls = azure_cli
+    state.payload[key] = value
+    provider = auth.EnrolledAzureCli(cli_descriptor(), tmp_path, subject_id=SUBJECT)
+    with pytest.raises(SignInRequired) as failure:
+        provider.configuration_token()
+    assert len(calls) == 1
+    assert "PRIVATE" not in str(failure.value)
+    assert capsys.readouterr().out == capsys.readouterr().err == ""
+
+
+def test_cli_requires_binding_before_background_reads(azure_cli, tmp_path):
+    _, calls = azure_cli
+    provider = auth.EnrolledAzureCli(cli_descriptor(), tmp_path)
+    with pytest.raises(SignInRequired):
+        provider.configuration_token()
+    with pytest.raises(SignInRequired):
+        provider.inference_token()
+    assert calls == []
+    assert provider.login()
+    assert provider.subject_id is None  # The server response, not local JWT parsing, binds it.
+
+
+def test_cli_wrong_auth_provider_cannot_reinterpret_legacy_descriptor(tmp_path):
+    with pytest.raises(SignInRequired):
+        auth.EnrolledAzureCli(descriptor(), tmp_path)
+
+
+def test_cli_timeout_and_invalid_output_are_sanitized(azure_cli, tmp_path, monkeypatch):
+    provider = auth.EnrolledAzureCli(cli_descriptor(), tmp_path, subject_id=SUBJECT)
+    for result in [
+        SimpleNamespace(returncode=1, stdout="", stderr="PRIVATE"),
+        SimpleNamespace(returncode=0, stdout='{"accessToken":"PRIVATE"}', stderr=""),
+        SimpleNamespace(returncode=0, stdout="x" * 65537, stderr=""),
+        SimpleNamespace(returncode=0, stdout='{"x":1,"x":2}', stderr=""),
+    ]:
+        monkeypatch.setattr(auth.subprocess, "run", lambda *_, response=result, **__: response)
+        with pytest.raises(SignInRequired, match="Organization sign-in") as failure:
+            provider.configuration_token()
+        assert "PRIVATE" not in str(failure.value)
+
+    def timeout(*_, **__):
+        raise auth.subprocess.TimeoutExpired("PRIVATE", 45)
+
+    monkeypatch.setattr(auth.subprocess, "run", timeout)
+    with pytest.raises(SignInRequired):
+        provider.configuration_token()
 
 
 def descriptor():

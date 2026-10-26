@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
 
 from claude_foundry.azure import az_json
+from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
 from claude_foundry.local_update import _read, _replace
 
 SCOPE = "configuration.read"
@@ -95,7 +96,7 @@ def cognitive_permission(graph):
     }
 
 
-def manifest(receipt, role, cognitive, resource_id=None):
+def manifest(receipt, role, cognitive, resource_id=None, *, azure_cli=False):
     value = {
         "displayName": receipt["name"] + (" Configuration API" if role == "api" else " Enrollment"),
         "signInAudience": "AzureADMyOrg",
@@ -128,6 +129,13 @@ def manifest(receipt, role, cognitive, resource_id=None):
                 ),
             }
         ]
+        if azure_cli:
+            value["api"]["preAuthorizedApplications"] = [
+                {
+                    "appId": AZURE_CLI_CLIENT_ID,
+                    "delegatedPermissionIds": [receipt["scope_id"]],
+                }
+            ]
     else:
         value["requiredResourceAccess"] = [
             {
@@ -165,7 +173,7 @@ def verify(app, expected, *, resource=False):
     if app.get("api", {}).get("requestedAccessTokenVersion") != 2:
         raise ValueError("Dedicated registrations require v2 access tokens.")
     for key in ("preAuthorizedApplications", "knownClientApplications"):
-        if app.get("api", {}).get(key, []) != []:
+        if app.get("api", {}).get(key, []) != expected["api"][key]:
             raise ValueError("Unexpected registration preauthorization.")
     actual_scopes = app.get("api", {}).get("oauth2PermissionScopes", [])
     expected_scopes = expected["api"]["oauth2PermissionScopes"]
@@ -187,7 +195,9 @@ def verify(app, expected, *, resource=False):
         raise ValueError("Dedicated registration resource URI changed.")
 
 
-def prepare(graph, tenant, name, output, *, apply=False, consent=False):
+def prepare(graph, tenant, name, output, *, apply=False, consent=False, azure_cli=False):
+    if azure_cli and consent:
+        raise ValueError("Azure CLI preauthorization does not use --grant-admin-consent.")
     if consent and not apply:
         raise ValueError("--grant-admin-consent requires --apply.")
     output = Path(output).absolute()
@@ -223,22 +233,28 @@ def prepare(graph, tenant, name, output, *, apply=False, consent=False):
         uuid(receipt["scope_id"])
     if not name or len(name) > 100 or "'" in name or any(ord(c) < 32 for c in name):
         raise ValueError("Use a unique registration name (1–100 characters, no quotes/controls).")
-    cognitive = cognitive_permission(graph)
+    cognitive = None if azure_cli else cognitive_permission(graph)
+    roles = ("api",) if azure_cli else ("api", "client")
     apps = {}
-    # Resolve both names before any write. A private receipt tag identifies our
+    # Resolve the required names before any write. A private receipt tag identifies our
     # own partial creation even if POST succeeded but its response was lost.
-    for role in ("api", "client"):
+    for role in roles:
         expected = manifest(receipt, role, cognitive)
         app = unique(graph, "applications", f"displayName eq '{expected['displayName']}'")
         if app and expected["tags"] != app.get("tags"):
             raise ValueError("Application name already exists; choose a new unique --name.")
         apps[role] = app
-    if apps["client"] and not apps["api"]:
+    if apps.get("client") and not apps["api"]:
         raise ValueError("API registration is missing; do not repoint an existing public client.")
     resource_id = apps["api"]["appId"] if apps["api"] else None
     for role, app in apps.items():
         if app:
-            verify(app, manifest(receipt, role, cognitive, resource_id), resource=role == "api")
+            expected = manifest(receipt, role, cognitive, resource_id, azure_cli=azure_cli)
+            # Explicit CLI mode can add exactly one preauthorization to our
+            # receipt-owned API. Never modify Microsoft's Azure CLI registration.
+            if azure_cli and not app.get("api", {}).get("preAuthorizedApplications"):
+                expected = manifest(receipt, role, cognitive, resource_id)
+            verify(app, expected, resource=role == "api")
             if graph("GET", f"applications/{uuid(app['id'])}/federatedIdentityCredentials")[
                 "value"
             ]:
@@ -248,12 +264,23 @@ def prepare(graph, tenant, name, output, *, apply=False, consent=False):
     # Save the durable operation identity BEFORE creation. Reusing the receipt
     # is mandatory; there is no automatic retry of POST or consent.
     _replace(output, (json.dumps(receipt, indent=2).encode() + b"\n", 0o600))
-    for role in ("api", "client"):
-        expected = manifest(receipt, role, cognitive, resource_id)
+    for role in roles:
+        expected = manifest(receipt, role, cognitive, resource_id, azure_cli=azure_cli)
         app = apps[role]
         if not app:
             app = graph("POST", "applications", expected)
             verify(app, expected, resource=role == "api")
+            apps[role] = app
+        if azure_cli and not app["api"].get("preAuthorizedApplications"):
+            graph(
+                "PATCH",
+                f"applications/{uuid(app['id'])}",
+                {"api": expected["api"]},
+            )
+            app = unique(graph, "applications", f"appId eq '{uuid(app['appId'])}'")
+            if app is None:
+                raise ValueError("Configuration API disappeared; stop for administrator review.")
+            verify(app, expected, resource=True)
             apps[role] = app
         if role == "api":
             resource_id = uuid(app["appId"])
@@ -283,7 +310,7 @@ def prepare(graph, tenant, name, output, *, apply=False, consent=False):
         "mode": "applied",
         "tenant_id": receipt["tenant_id"],
         "configuration_resource_id": resource_id,
-        "public_client_id": uuid(apps["client"]["appId"]),
+        "public_client_id": AZURE_CLI_CLIENT_ID if azure_cli else uuid(apps["client"]["appId"]),
         "scope": "api://" + resource_id + "/" + SCOPE,
         "admin_consent_requested": consent,
     }
@@ -301,6 +328,11 @@ def main():
         "--apply", action="store_true", help="Create only these dedicated registrations"
     )
     parser.add_argument("--grant-admin-consent", action="store_true")
+    parser.add_argument(
+        "--azure-cli",
+        action="store_true",
+        help="Preauthorize Azure CLI for own-configuration reads; no dedicated public client",
+    )
     args = parser.parse_args()
     result = prepare(
         Graph(uuid(args.tenant), uuid(args.subscription)),
@@ -309,6 +341,7 @@ def main():
         args.output,
         apply=args.apply,
         consent=args.grant_admin_consent,
+        azure_cli=args.azure_cli,
     )
     print(json.dumps(result, indent=2))
 

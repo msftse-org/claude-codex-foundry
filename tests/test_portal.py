@@ -1718,6 +1718,37 @@ CONFIG_ORGANIZATION = "00000000-0000-0000-0000-000000000007"
 CONFIG_PATH = "/api/v1/me/client-configuration"
 
 
+def test_cli_enrollment_descriptor_and_configuration_keep_separate_audiences(
+    enrollment_app, org, key, monkeypatch
+):
+    from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
+
+    old, ledger, snapshots, *members = enrollment_app
+    monkeypatch.setenv("PORTAL_ENROLLMENT_CLIENT_ID", AZURE_CLI_CLIENT_ID)
+    monkeypatch.setenv("PORTAL_CONFIGURATION_CLIENT_IDS_JSON", json.dumps([AZURE_CLI_CLIENT_ID]))
+    app = create_app(
+        org, old.state.store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    with TestClient(app) as client:
+        response = client.get("/api/client-enrollment", headers=headers(org, key))
+        assert response.status_code == 200
+        descriptor = response.json()["descriptor"]
+        assert descriptor["schema_version"] == 3
+        assert descriptor["public_client_id"] == AZURE_CLI_CLIENT_ID
+        config_auth = configuration_headers(org, key, azp=AZURE_CLI_CLIENT_ID)
+        assert client.get(CONFIG_PATH, headers=config_auth).status_code == 200
+        assert client.get("/api/state", headers=config_auth).status_code == 401
+        assert client.get(CONFIG_PATH, headers=headers(org, key)).status_code == 401
+        inference_auth = configuration_headers(
+            org,
+            key,
+            azp=AZURE_CLI_CLIENT_ID,
+            aud="https://cognitiveservices.azure.com",
+            scp="user_impersonation",
+        )
+        assert client.get(CONFIG_PATH, headers=inference_auth).status_code == 401
+
+
 @pytest.fixture
 def configuration_app(unified_app, org, monkeypatch):
     application, ledger, snapshots, *members = unified_app

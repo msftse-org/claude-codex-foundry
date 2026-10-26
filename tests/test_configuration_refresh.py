@@ -15,6 +15,7 @@ from test_configuration_client import (
 from claude_foundry import cli, local_update
 from claude_foundry import configuration_refresh as refresh
 from claude_foundry.configuration_client import (
+    AZURE_CLI_CLIENT_ID,
     AccessUnavailable,
     ConfigurationError,
     EnrollmentDescriptor,
@@ -144,6 +145,38 @@ def test_conditional_refresh_never_logs_in_or_changes_routing(pilot):
     after = settings(paths)
     for key in before.keys() - {"status"}:
         assert after[key] == before[key]
+
+
+def test_cli_enrollment_keeps_authentication_mode_through_refresh_and_helper(pilot, monkeypatch):
+    home, descriptor, paths, calls, enroll = pilot
+    value = descriptor_value()
+    value.update(schema_version=3, public_client_id=AZURE_CLI_CLIENT_ID)
+    write(descriptor, value)
+    monkeypatch.setattr(refresh, "EnrolledAzureCli", refresh.EnrolledMsal)
+
+    def not_msal(*_, **__):
+        pytest.fail("Schema-3 enrollment must never fall back to the MSAL provider")
+
+    monkeypatch.setattr(refresh, "EnrolledMsal", not_msal)
+    body, etag = body_and_etag(configuration_value())
+    selected = EnrollmentDescriptor.parse(value)
+    config = _validate(body, etag, selected, SUBJECT)
+    monkeypatch.setattr(refresh, "fetch_initial_configuration", lambda *_: config)
+
+    def fetch(actual, subject, token, *, previous):
+        assert actual == selected and subject == SUBJECT
+        assert token == "configuration-credential" and previous == config
+        return config
+
+    monkeypatch.setattr(refresh, "fetch_configuration", fetch)
+    enroll()
+    assert read(paths["binding"])["descriptor"] == value
+    calls.clear()
+    refresh.refresh(home=home)
+    assert ("login",) not in calls
+    assert all(call[1] == selected and call[3] == SUBJECT for call in calls if call[0] == "auth")
+    assert refresh.inference_token(home=home) == "inference-credential"
+    assert not (home / refresh.STATE / "credentials").exists()
 
 
 def test_explicit_reauthentication_checks_both_audiences_before_applying(pilot):

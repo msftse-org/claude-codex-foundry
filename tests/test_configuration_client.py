@@ -39,6 +39,16 @@ def descriptor_value():
     }
 
 
+def test_descriptor_version_explicitly_pins_cli_or_dedicated_msal():
+    value = descriptor_value()
+    value.update(schema_version=3, public_client_id=client.AZURE_CLI_CLIENT_ID)
+    parsed = client.EnrollmentDescriptor.parse(value)
+    assert parsed.schema_version == 3
+    value["public_client_id"] = PUBLIC_CLIENT
+    with pytest.raises(client.ConfigurationError):
+        client.EnrollmentDescriptor.parse(value)
+
+
 def configuration_value():
     return {
         "schema_version": 1,

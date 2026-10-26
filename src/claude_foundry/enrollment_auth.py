@@ -1,6 +1,7 @@
-"""Encrypted, account-bound credentials for an explicitly enrolled user.
+"""Account-bound credentials for an explicitly enrolled user.
 
-MSAL and the platform key store own token persistence; no plaintext fallback.
+Azure CLI owns schema-3 credentials; encrypted MSAL persistence supports schema 2.
+This adapter never exports a credential cache or falls back between providers.
 JWT payload inspection is only a consistency guard. The configuration API and
 governed inference gateway verify signatures and authorize the actual request.
 """
@@ -11,13 +12,16 @@ import math
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .azure import find_az
 from .config import TOKEN_RESOURCE
 from .configuration_client import (
+    AZURE_CLI_CLIENT_ID,
     EnrollmentDescriptor,
     SignInRequired,
     _pairs,
@@ -29,6 +33,100 @@ SIGN_IN_REQUIRED = (
     "Organization sign-in is required or the enrolled account changed; "
     "run foreground refresh --login. Background helpers cannot sign in."
 )
+
+
+class EnrolledAzureCli:
+    """Reuse CLI-owned sign-in, but never follow its default tenant/user blindly.
+
+    No token files are created by this adapter. Azure CLI owns its credential
+    storage and renewal. The dedicated configuration audience remains separate
+    from Cognitive Services and from the portal administration application.
+    """
+
+    def __init__(self, descriptor, directory, *, subject_id=None):
+        if (
+            not isinstance(descriptor, EnrollmentDescriptor)
+            or descriptor.schema_version != 3
+            or descriptor.public_client_id != AZURE_CLI_CLIENT_ID
+        ):
+            raise SignInRequired("A reviewed Azure CLI enrollment descriptor is required.")
+        self.descriptor = descriptor
+        self.subject_id = _uuid(subject_id) if subject_id is not None else None
+
+    def login(self):
+        return self._token(configuration=True, interactive=True)
+
+    def configuration_token(self):
+        if self.subject_id is None:
+            raise SignInRequired(SIGN_IN_REQUIRED)
+        return self._token(configuration=True)
+
+    def inference_token(self, *, interactive=False):
+        if self.subject_id is None:
+            raise SignInRequired(SIGN_IN_REQUIRED)
+        return self._token(configuration=False, interactive=interactive)
+
+    def _command(self, *args, interactive=False):
+        result = subprocess.run(
+            [find_az(), *args, "--only-show-errors", "--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=300 if interactive else 45,
+            env={**os.environ, "AZURE_CORE_LOGIN_EXPERIENCE_V2": "off"},
+        )
+        if result.returncode or len(result.stdout) > 65536:
+            raise ValueError
+        return json.loads(result.stdout, object_pairs_hook=_pairs) if result.stdout else None
+
+    def _token(self, *, configuration, interactive=False):
+        target = (
+            ("--scope", self.descriptor.scope) if configuration else ("--resource", TOKEN_RESOURCE)
+        )
+        try:
+            try:
+                return self._acquire(target, configuration)
+            except Exception:
+                if not interactive:
+                    raise
+            # Explicit foreground recovery only. Never change the default
+            # subscription, log out other accounts, or start device-code login.
+            self._command(
+                "login",
+                "--tenant",
+                self.descriptor.tenant_id,
+                "--allow-no-subscriptions",
+                "--scope",
+                self.descriptor.scope if configuration else TOKEN_RESOURCE + "/.default",
+                interactive=True,
+            )
+            return self._acquire(target, configuration)
+        except Exception:
+            # CLI stderr can include identities and diagnostic response bodies.
+            raise SignInRequired(SIGN_IN_REQUIRED) from None
+
+    def _acquire(self, target, configuration):
+        result = self._command(
+            "account", "get-access-token", "--tenant", self.descriptor.tenant_id, *target
+        )
+        token = result["accessToken"]
+        claims = _claims(token)
+        subject = _uuid(claims.get("oid"))
+        if (
+            claims.get("tid") != self.descriptor.tenant_id
+            or claims.get("aud")
+            != (self.descriptor.configuration_resource_id if configuration else TOKEN_RESOURCE)
+            or (self.subject_id is not None and subject != self.subject_id)
+            or claims.get("azp", claims.get("appid")) != AZURE_CLI_CLIENT_ID
+            or claims.get("idtyp") == "app"
+            or not isinstance(claims.get("scp"), str)
+            or ("configuration.read" if configuration else "user_impersonation")
+            not in claims["scp"].split()
+            or type(claims.get("exp")) not in {int, float}
+            or not math.isfinite(claims["exp"])
+            or claims["exp"] <= time.time()
+        ):
+            raise ValueError
+        return token
 
 
 def _cache_directory(directory):

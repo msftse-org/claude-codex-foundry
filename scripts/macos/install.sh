@@ -67,7 +67,7 @@ if [[ "$task_install_az" == true ]] && ! command -v az >/dev/null 2>&1; then
     echo 'Azure CLI installation requires Homebrew. Install Homebrew using your organization’s approved method, or request an MSAL profile.' >&2
     exit 1
   fi
-  brew install --cask azure-cli
+  brew install azure-cli
 fi
 task_runtime="$HOME/.local/share/claude-foundry/runtime"
 mkdir -p "$(dirname "$task_runtime")"
@@ -80,6 +80,15 @@ uv pip install --python "$task_runtime/bin/python" --no-deps "$task_root"
 task_codex_app="${CLAUDE_FOUNDRY_CODEX_APP:-/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex}"
 task_codex_cli="${CLAUDE_FOUNDRY_CODEX_CLI:-codex}"
 if [[ -n "$task_descriptor" ]]; then
+  task_auth="$("$task_runtime/bin/python" -c '
+import json,sys
+from claude_foundry.configuration_client import EnrollmentDescriptor
+print(EnrollmentDescriptor.parse(json.load(open(sys.argv[1]))).schema_version)
+' "$task_descriptor")" || { echo 'SETUP DID NOT COMPLETE. The organization enrollment descriptor is invalid. Download a fresh setup package from your trusted organization portal.' >&2; exit 1; }
+  if [[ "$task_auth" == 3 ]] && ! command -v az >/dev/null 2>&1; then
+    echo 'SETUP DID NOT COMPLETE. This organization uses Azure CLI sign-in. Install Azure CLI through your approved method, or rerun bash Install.command --install-azure-cli if Homebrew is approved. No client settings were changed.' >&2
+    exit 1
+  fi
   if [[ ${#task_clients[@]} -eq 0 ]]; then
     # Fixed, reviewed installation choice, not a model grant or executable command.
     task_selection="$("$task_runtime/bin/python" -c '
