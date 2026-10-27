@@ -2,6 +2,21 @@
 
 The standard deployment uses `portal.mode=unified` (the default). It connects every enabled provider to the same member/group policy and budget ledger. The portal shows both model catalogs, exports separate Claude and Codex profiles, and queries the configured APIs for usage and estimated costs. It supports Claude-only and Codex-only installations too.
 
+A fresh standard installation creates **one governed APIM API per enabled provider**:
+`claude-governed` and/or `codex-governed`. It does not create the extra `claude-foundry`
+or `codex-foundry` user-token APIs. Codex qualification is a billable deployment-admin
+operation against the resource's direct Foundry `/openai/v1` endpoint using the
+operator's Entra token and existing Foundry RBAC. The temporary qualification profile
+is never distributed. It checks model protocol support, not gateway/budget enforcement;
+the governed-route acceptance checks below remain required.
+
+Reruns do not recreate or overwrite retired baseline routes. Existing upgrades still
+preserve legacy APIs for an explicit, reviewed client cutover; an API left from an
+older deployment is not needed for the standard two-provider architecture. Back up
+its API definition, operations, policies and diagnostics before retiring it, verify
+clients and portal exports use the governed replacement, then remove the legacy API.
+Never retire an API solely by matching its name in a shared/customer APIM service.
+
 Cost estimates prefer explicit planning rates and otherwise use reviewed enforcement ceilings. They are not Azure invoices.
 
 The shared runtime, Table/Blob storage and private endpoints are deployed automatically. This adds Azure resources and charges compared with the legacy Claude portal. The runtime's [release acceptance checks](budget-enforcement.md#release-acceptance) still apply; selecting the default does not certify a customer rollout.
