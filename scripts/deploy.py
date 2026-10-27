@@ -855,6 +855,27 @@ def verify_portal_setup(url, expected_clients):
             "Deploy the complete portal package with the same settings before distributing installers. "
             "Uploading code alone does not configure gateway connections."
         )
+    # Health can succeed while generated frontend files are unreadable by the
+    # worker. Check the actual public entrypoint and its local JS/CSS, too.
+    try:
+        with urllib.request.urlopen(url + "/", timeout=30) as response:
+            document = response.read(1_048_577).decode("utf-8")
+        assets = set(re.findall(r'(?:src|href)="(/assets/[A-Za-z0-9_.-]+\.(?:js|css))"', document))
+        if (
+            len(document) > 1_048_576
+            or 'id="root"' not in document
+            or not any(path.endswith(".js") for path in assets)
+            or not any(path.endswith(".css") for path in assets)
+        ):
+            raise ValueError("Missing public portal assets")
+        for path in sorted(assets):
+            with urllib.request.urlopen(url + path, timeout=30) as response:
+                if not response.read(1):
+                    raise ValueError("Empty public portal asset")
+    except (OSError, TimeoutError, ValueError):
+        raise DeployError(
+            "Portal API health passed, but the user interface is unavailable. Check HTML/asset package permissions before onboarding users."
+        ) from None
 
 
 def main():

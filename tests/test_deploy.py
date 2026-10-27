@@ -688,9 +688,39 @@ def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
     monkeypatch.setattr(
         deploy.urllib.request,
         "urlopen",
-        lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
+        lambda url, **kwargs: io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"public asset"
+        ),
     )
     deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
+
+
+@pytest.mark.parametrize("failed_path", ["/", "/assets/app.js", "/assets/app.css"])
+def test_health_is_not_sufficient_when_public_portal_files_cannot_be_served(
+    deploy, monkeypatch, failed_path
+):
+    from urllib.error import HTTPError
+
+    status = {"setup_ready": True, "bundle_ready": True, "client_types": ["claude", "codex"]}
+
+    def open_url(url, **kwargs):
+        if url == "https://portal.example.com" + failed_path:
+            raise HTTPError(url, 500, "Unreadable file", {}, None)
+        return io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"asset"
+        )
+
+    monkeypatch.setattr(deploy.urllib.request, "urlopen", open_url)
+    with pytest.raises(deploy.DeployError, match="user interface is unavailable"):
+        deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
 
 
 def test_unified_mode_cannot_be_downgraded(unified_job):
