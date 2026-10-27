@@ -326,7 +326,11 @@ class Deployment:
         )
 
     def claude(self):
-        self.step("Deploying Claude models and the Claude gateway")
+        self.step(
+            "Deploying Claude models"
+            if self.unified
+            else "Deploying Claude models and the Claude gateway"
+        )
         if not self.s.get("accept_marketplace_terms"):
             raise DeployError(
                 "Claude models are paid Azure Marketplace offers. Review docs/administrator.md, "
@@ -341,6 +345,10 @@ class Deployment:
         if self.cli(*args, allowed=(0, 2)) == 2:
             print("Some Claude deployments failed or are pending; see .local/models-report.json")
         self.cli("admin", "--config", config, "sync-models")
+        if self.unified:
+            # Only deploy_runtime creates public routes in the standard deployment.
+            # Do not create or reopen a user-token route around the shared ledger.
+            return
         if self.portal_managed(read_json(config)):
             print("Skipping the baseline gateway: this API is published by the portal.")
         else:
@@ -359,7 +367,11 @@ class Deployment:
         return 'name="governance"' in policy["properties"]["value"]
 
     def codex(self):
-        self.step("Deploying Codex models and the Codex gateway")
+        self.step(
+            "Deploying Codex models"
+            if self.unified
+            else "Deploying Codex models and the Codex gateway"
+        )
         config = self.codex_path
         if not config.exists():
             self.cli("admin", "--config", self.org_path, "init-codex", "--output", config)
@@ -374,11 +386,24 @@ class Deployment:
                 "Some Codex deployments failed or are pending; see .local/codex-deployment-report.json"
             )
         self.cli("admin", "--config", config, "sync-models")
-        self.cli("admin", "--config", config, "gateway")
-        self.cli("admin", "--config", config, "observability")
+        if not self.unified:
+            self.cli("admin", "--config", config, "gateway")
+            self.cli("admin", "--config", config, "observability")
         org = read_json(config)
         pending = [m for m in org["models"] if m.get("qualified") is not True]
         if pending:
+            if self.unified:
+                # The deploying operator already has Foundry RBAC for qualification.
+                # Keep these billable admin probes off public baseline APIs. This
+                # private copy is never exported or used by installed clients.
+                config = self.local / "codex-qualification-direct-config.json"
+                org = {
+                    **org,
+                    "gateway_url": org["foundry_url"].rstrip("/") + "/v1",
+                    "auth_mode": "azure-cli",
+                }
+                org.pop("client_id", None)
+                write_json(config, org)
             # Three small billable requests per model; failing models are left unpublished.
             if len(pending) == len(org["models"]):
                 code = self.cli(
@@ -420,7 +445,15 @@ class Deployment:
                 write_json(config, org)
             if code != 0:
                 print("Some Codex models failed qualification and were not published.")
-            self.cli("admin", "--config", config, "gateway")
+            if self.unified:
+                qualified = read_json(config)
+                original = read_json(self.codex_path)
+                original.update(
+                    models=qualified["models"], default_model=qualified["default_model"]
+                )
+                write_json(self.codex_path, original)
+            else:
+                self.cli("admin", "--config", config, "gateway")
 
     def maximize_model_capacity(self):
         if not self.s["maximize_model_capacity"]:
@@ -712,9 +745,9 @@ class Deployment:
     def summary(self, group):
         org = read_json(self.org_path)
         print("\nDeployment complete.")
-        if self.s["claude"]["enabled"]:
+        if self.s["claude"]["enabled"] and not self.unified:
             print(f"  Claude gateway:  {org['gateway_url']}")
-        if self.s["codex"]["enabled"]:
+        if self.s["codex"]["enabled"] and not self.unified:
             print(f"  Codex gateway:   {read_json(self.codex_path)['gateway_url']}")
         if self.state.get("portal_url"):
             print(f"  Portal:          {self.state['portal_url']} (owner: {self.user['email']})")
