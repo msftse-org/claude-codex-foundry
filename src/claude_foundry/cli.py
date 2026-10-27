@@ -44,7 +44,8 @@ def parser():
         help="Enable Claude's import wizard; conversations are copied only after user selection",
     )
     enroll = actions.add_parser(
-        "enroll", help="Sign in and enroll macOS clients using a reviewed organization descriptor"
+        "enroll",
+        help="Sign in, enroll macOS clients and start automatic configuration refresh",
     )
     enroll.add_argument("--descriptor", type=Path, required=True)
     enroll.add_argument("--client", choices=["claude", "codex"], action="append", dest="clients")
@@ -66,7 +67,7 @@ def parser():
         "enrolled-token", help="Print the enrolled user's inference token; never sign in"
     )
     actions.add_parser("configuration-status", help="Show the last successful enrolled refresh")
-    actions.add_parser("enable-refresh", help="Enable the enrolled per-user background refresh job")
+    actions.add_parser("enable-refresh", help="Resume or retry the enrolled background refresh job")
     actions.add_parser("disable-refresh", help="Pause automatic refresh without removing settings")
     actions.add_parser("refresh-background", help="Run one quiet noninteractive refresh attempt")
     actions.add_parser(
@@ -199,6 +200,9 @@ def main():
                     codex_binary=args.codex_binary,
                     migrate_existing=args.migrate_existing,
                 )
+                # Scheduling is part of enrollment, not an optional installer step.
+                # Apply and close the settings transaction before launchd can refresh.
+                result.update(configuration_schedule.configure(enabled=True))
             elif args.action == "refresh":
                 result = configuration_refresh.refresh(login=args.login)
             elif args.action == "enrolled-token":

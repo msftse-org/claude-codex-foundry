@@ -50,7 +50,7 @@ export function EnrollmentOnboarding({
     }, [state.revision, retry]);
     const enrollment = result?.value;
     const prompt = enrollment
-        ? `Set up ${selection === "both" ? "Claude and Codex" : selection === "codex" ? "Codex" : "Claude"} on my Mac using claude-foundry-enrollment-macos.zip from our trusted organization portal. Extract it, read README.md, AGENTS.md, enrollment.json and installation.json, then run bash Install.command. The configuration service must be ${enrollment.descriptor.configuration_url}. Let me complete Microsoft sign-in. Preserve unrelated settings and conversations. Ask me before migrating an existing installation or enabling background refresh. Report success only after SETUP COMPLETE, then help me fully reopen the app and test an approved model.`
+        ? `Set up ${selection === "both" ? "Claude and Codex" : selection === "codex" ? "Codex" : "Claude"} on my Mac using claude-foundry-enrollment-macos.zip from our trusted organization portal. Extract it, read README.md, AGENTS.md, enrollment.json and installation.json, then run bash Install.command. The configuration service must be ${enrollment.descriptor.configuration_url}. Let me complete Microsoft sign-in. Preserve unrelated settings and conversations. Background refresh is automatic as part of enrollment; do not ask me to enable it separately. Ask me before migrating an existing installation. Report success only after SETUP COMPLETE, then help me fully reopen the app and test an approved model.`
         : "";
     const copy = async (value: string) => {
         try {
@@ -212,24 +212,19 @@ export function EnrollmentOnboarding({
                     <div className="onboardingstep">
                         <span className="stepnumber">{manager ? 3 : 2}</span>
                         <div>
-                            <h2>Sign in once, enable refresh</h2>
+                            <h2>Sign in and stay up to date</h2>
                             <p>
                                 Extract the ZIP and open{" "}
                                 <code>Install.command</code>. Complete Microsoft
                                 sign-in and follow the result. After SETUP
                                 COMPLETE, save work and fully reopen the apps.
                                 Existing JSON installations require an explicit
-                                migration; background refresh is a separate
-                                choice.
+                                migration. Background refresh starts
+                                automatically as part of enrollment.
                             </p>
                             <p>
-                                Run{" "}
-                                <code>
-                                    ~/.local/share/claude-foundry/runtime/bin/claude-foundry
-                                    enable-refresh
-                                </code>{" "}
-                                to enable model updates about every 15 minutes
-                                while logged into your Mac. Reopen an
+                                Published model updates arrive about every 15
+                                minutes while logged into your Mac. Reopen an
                                 already-running client to reload its picker. No
                                 automatic restart or instant hot-reload is
                                 promised.

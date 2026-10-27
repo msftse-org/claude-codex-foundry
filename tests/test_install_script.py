@@ -206,11 +206,12 @@ def enrollment_files(clients=None):
     }
 
 
-def test_enrollment_installer_uses_fixed_entrypoint_and_explicit_background_choice(tmp_path):
+def test_enrollment_installer_uses_fixed_entrypoint_without_refresh_choice(tmp_path):
     calls, result = install(tmp_path, enrollment_files())
     assert calls == ["enroll --descriptor enrollment.json --client claude"]
     assert "SETUP COMPLETE" in result.stdout
-    assert "To enable automatic model updates" in result.stdout
+    assert "Automatic model updates are active" in result.stdout
+    assert "enable-refresh" not in result.stdout and "disable-refresh" not in result.stdout
     assert "restore --client" not in result.stdout
 
 
@@ -231,20 +232,27 @@ def test_invalid_enrollment_descriptor_stops_before_client_changes(tmp_path):
     assert "enrollment descriptor is invalid" in result.stderr
 
 
-def test_enrollment_installer_both_apps_migration_and_scheduler_are_explicit(tmp_path):
+def test_enrollment_installer_both_apps_requires_only_explicit_migration(tmp_path):
     calls, result = install(
         tmp_path,
         enrollment_files(["codex", "claude"]),
-        args=["--migrate-existing", "--enable-refresh"],
+        args=["--migrate-existing"],
         codex_installed=True,
     )
     assert calls == [
         "enroll --descriptor enrollment.json --client claude --client codex "
         f"--codex-binary {tmp_path}/codex --migrate-existing",
-        "enable-refresh",
     ]
     assert "SETUP COMPLETE" in result.stdout
-    assert "To enable automatic" not in result.stdout
+    assert "Automatic model updates are active" in result.stdout
+
+
+def test_enrollment_installer_has_no_refresh_opt_in_flag(tmp_path):
+    calls, result = install(
+        tmp_path, enrollment_files(), args=["--enable-refresh"], expected_code=2
+    )
+    assert calls == []
+    assert "Usage:" in result.stderr and "--enable-refresh" not in result.stderr
 
 
 @pytest.mark.parametrize("flag", ["--no-login", "--enable-history-import"])
@@ -282,17 +290,15 @@ def test_selected_missing_codex_is_not_silently_skipped(tmp_path):
     assert calls == [] and "approved Codex" in result.stderr
 
 
-@pytest.mark.parametrize("command", ["enroll", "enable-refresh"])
-def test_enrollment_and_scheduler_failure_never_reports_setup_complete(tmp_path, command):
+def test_enrollment_failure_never_reports_setup_complete(tmp_path):
     calls, result = install(
         tmp_path,
         enrollment_files(),
-        args=["--enable-refresh"],
-        fail_command=command,
+        fail_command="enroll",
         expected_code=1,
     )
-    assert len(calls) == (1 if command == "enroll" else 2)
+    assert len(calls) == 1
     assert "SETUP COMPLETE" not in result.stdout
-    assert (
-        "SETUP DID NOT COMPLETE" if command == "enroll" else "ENROLLMENT COMPLETE"
-    ) in result.stderr
+    assert "SETUP DID NOT COMPLETE" in result.stderr
+    assert "background-job error" in result.stderr
+    assert "Client settings may already be configured" in result.stderr

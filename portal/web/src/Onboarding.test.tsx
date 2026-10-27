@@ -215,7 +215,7 @@ const enrollment = {
 };
 const enrolledState = { ...state, client_enrollment_enabled: true } as State;
 
-it("offers one stable enrollment link and only an application choice", async () => {
+it("offers one stable enrollment link with automatic refresh and only an application choice", async () => {
     vi.mocked(api).mockResolvedValue(enrollment);
     render(
         <Onboarding
@@ -262,6 +262,11 @@ it("offers one stable enrollment link and only an application choice", async () 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
         expect.stringContaining("Ask me before migrating"),
     );
+    const prompt = vi.mocked(navigator.clipboard.writeText).mock.lastCall?.[0];
+    expect(prompt).toContain("Background refresh is automatic as part of enrollment");
+    expect(prompt).not.toContain("or enabling background refresh");
+    expect(screen.getByText(/Background refresh starts automatically/)).toBeTruthy();
+    expect(screen.queryByText(/enable-refresh/)).toBeNull();
 });
 
 it("enrollment failures offer retry without a partial ZIP or a group override", async () => {

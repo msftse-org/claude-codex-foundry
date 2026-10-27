@@ -118,9 +118,8 @@ user's current published policy determines the available models and server-side 
 2. Save active work, extract the ZIP, open the `claude-foundry` folder, then run
    `bash Install.command` (or double-click it).
 3. Review the connection details and complete Microsoft work-account sign-in and MFA.
-4. Follow the installer's result; reopen the app only after `SETUP COMPLETE`.
-5. To receive future published model changes, explicitly enable background refresh:
-   `~/.local/share/claude-foundry/runtime/bin/claude-foundry enable-refresh`.
+4. Setup automatically starts background refresh. Follow the installer's result; reopen the
+   app only after `SETUP COMPLETE`, then choose an approved model and send a short test message.
 
 Background refresh runs about every 15 minutes while you are logged into this Mac. Reopen an
 already-running client to reload its model picker. Refresh cannot grant access or bypass the
@@ -134,8 +133,11 @@ Unexpected routing changes or managed preferences stop setup for review.
 
 Use `~/.local/share/claude-foundry/runtime/bin/claude-foundry configuration-status` for status,
 `refresh` for a noninteractive update, or `refresh --login` when explicit sign-in is needed.
-Use `disable-refresh` to stop the background job. Do not use the legacy `restore` command on an
-enrolled installation; see [the pilot guide](docs/client-configuration-refresh.md) for limitations.
+For troubleshooting only, `disable-refresh` pauses the background job and `enable-refresh`
+resumes it or retries loading it. If loading fails, setup reports a failure even if client
+settings were already configured; retry from your Mac's GUI session.
+Do not use the legacy `restore` command on an enrolled installation;
+see [the pilot guide](docs/client-configuration-refresh.md) for limitations.
 
 {credential_help}
 Background refresh never starts login. Conditional Access may occasionally require foreground
@@ -150,7 +152,8 @@ descriptor, or substitute a legacy client profile. Follow the descriptor's authe
 never copy a credential cache or fall back to a different authentication provider.
 
 Let the user complete explicit Microsoft sign-in. Never print, request or copy access tokens.
-Existing JSON migration and enabling background refresh each require the user's explicit choice.
+Background refresh is part of enrollment; do not ask the user to enable it separately.
+Existing JSON migration still requires the user's explicit choice.
 Do not work around managed settings or routing-conflict errors. Report a setup failure honestly;
 only report success after SETUP COMPLETE. Preserve unrelated settings and conversations.
 """

@@ -9,7 +9,6 @@ task_login=true
 task_history=false
 task_descriptor=""
 task_clients=()
-task_refresh=false
 task_migrate=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,9 +25,8 @@ while [[ $# -gt 0 ]]; do
     --install-azure-cli) task_install_az=true; shift ;;
     --no-login) task_login=false; shift ;;
     --enable-history-import) task_history=true; shift ;;
-    --enable-refresh) task_refresh=true; shift ;;
     --migrate-existing) task_migrate=true; shift ;;
-    *) echo "Usage: install.sh [--config FILE]... [--descriptor FILE] [--client claude|codex]... [--enable-refresh] [--migrate-existing] [--install-azure-cli] [--no-login] [--enable-history-import]" >&2; exit 2 ;;
+    *) echo "Usage: install.sh [--config FILE]... [--descriptor FILE] [--client claude|codex]... [--migrate-existing] [--install-azure-cli] [--no-login] [--enable-history-import]" >&2; exit 2 ;;
   esac
 done
 if [[ -z "$task_descriptor" && ${#task_profiles[@]} -eq 0 && -f "$task_root/enrollment.json" ]]; then
@@ -38,8 +36,8 @@ fi
 if [[ -n "$task_descriptor" ]]; then
   [[ ${#task_profiles[@]} -eq 0 && "$task_login" == true && "$task_history" == false ]] || { echo 'Enrollment cannot be combined with legacy profile, no-login or history-import options.' >&2; exit 2; }
   [[ -f "$task_descriptor" ]] || { echo 'Missing organization enrollment descriptor.' >&2; exit 1; }
-elif [[ ${#task_clients[@]} -gt 0 || "$task_refresh" == true || "$task_migrate" == true ]]; then
-  echo 'Client selection, refresh and migration options require enrollment.' >&2
+elif [[ ${#task_clients[@]} -gt 0 || "$task_migrate" == true ]]; then
+  echo 'Client selection and migration options require enrollment.' >&2
   exit 2
 fi
 # A combined bundle also carries codex-client.json. Codex is configured only where it is installed.
@@ -117,20 +115,13 @@ print("\n".join(sorted(a)))
   done
   if [[ "$task_migrate" == true ]]; then task_enroll_args+=(--migrate-existing); fi
   if ! "$task_runtime/bin/claude-foundry" "${task_enroll_args[@]}"; then
-    echo 'SETUP DID NOT COMPLETE. Resolve the sign-in, published-access or settings conflict above, then rerun this installer. Do not restart the app yet.' >&2
-    exit 1
-  fi
-  if [[ "$task_refresh" == true ]] && ! "$task_runtime/bin/claude-foundry" enable-refresh; then
-    echo "ENROLLMENT COMPLETE, but background refresh was not enabled. Retry: $task_runtime/bin/claude-foundry enable-refresh" >&2
+    echo 'SETUP DID NOT COMPLETE. Resolve the sign-in, published-access, settings or background-job error above, then rerun this installer. Client settings may already be configured. Do not restart the app yet.' >&2
     exit 1
   fi
   echo 'SETUP COMPLETE. Save active work and fully quit and reopen the enrolled apps.'
   echo 'Choose an approved model and send a short test message. Existing conversations and unrelated settings are preserved.'
-  if [[ "$task_refresh" == false ]]; then
-    echo "To enable automatic model updates, run: $task_runtime/bin/claude-foundry enable-refresh"
-  fi
+  echo 'Automatic model updates are active, about every 15 minutes while logged into this Mac. Reopen an already-running app to reload its model picker.'
   echo "Status: $task_runtime/bin/claude-foundry configuration-status"
-  echo "Stop background refresh: $task_runtime/bin/claude-foundry disable-refresh"
   exit 0
 fi
 task_signed_in="|"

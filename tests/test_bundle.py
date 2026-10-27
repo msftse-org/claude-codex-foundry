@@ -194,7 +194,11 @@ def test_enrollment_bundle_contains_only_trust_anchors_and_app_selection(clients
         assert archive.getinfo("claude-foundry/Install.command").external_attr >> 16 & 0o111
         readme = archive.read("claude-foundry/README.md").decode()
         assert descriptor["configuration_url"] in readme
-        assert "--migrate-existing" in readme and "enable-refresh" in readme
+        assert "--migrate-existing" in readme and "--enable-refresh" not in readme
+        assert "Setup automatically starts background refresh" in readme
+        instructions = archive.read("claude-foundry/AGENTS.md").decode()
+        assert "do not ask the user to enable it separately" in instructions
+        assert "migration still requires the user's explicit choice" in instructions
         assert "SETUP COMPLETE" in readme and "last good local configuration" in readme
         assert "no plaintext fallback" in readme and "Azure CLI is not required" in readme
         assert not any("/.local/" in name or "/.git/" in name for name in archive.namelist())

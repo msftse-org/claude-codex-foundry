@@ -200,9 +200,10 @@ The setup ZIP pins connection details, not model grants; future model selections
 come from the active published policy. The screenshot above shows the existing
 JSON flow, not the pilot.
 
-The pilot requires explicit enrollment and opt-in background refresh. Existing
-installations require explicit migration, and open apps may need reopening to
-show new picker entries. It is disabled by default and is not release-qualified:
+The pilot requires explicit enrollment, which automatically starts background
+refresh. Existing installations require explicit migration, and open apps may need
+reopening to show new picker entries. The server-side pilot rollout remains
+disabled by default and is not release-qualified:
 encrypted credential storage, native-client behavior and recovery remain gates
 before rollout. Gateway access and spending policy continue to be enforced
 server-side even when local files are stale.

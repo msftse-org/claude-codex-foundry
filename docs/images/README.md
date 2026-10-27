@@ -13,3 +13,12 @@ Images were cropped at capture time to exclude operator identities, email addres
 When updating screenshots, follow [CONTRIBUTING.md](../../CONTRIBUTING.md#documentation-and-screenshot-standards). Save private originals outside Git, check the actual saved files, and update the capture date/build provenance. The [portal guide](../portal-guide.md) supplies captions, feature context, and limitations for each image.
 
 `portal-content-response.jpg` was captured on **2026-10-15** from the deployed `feat/codex-azure` content-log preview. It shows a real synthetic Claude streaming response retrieved through the portal managed identity. Access was audited. The capture-time crop excludes both pointers, request/developer identifiers, and browser chrome; message values have not been edited.
+
+`enrollment-automatic-refresh.png` was captured on **2026-10-27** from the
+actual `EnrollmentOnboarding` component on `codex/default-configuration-refresh`
+using a local Vite UI fixture and headless Chrome. The fixture supplies synthetic
+enrollment data, not a deployed backend or real sign-in. The capture-time crop
+shows only the setup instructions, excluding URLs, identifiers and pointers.
+The wording is rendered by the application unchanged. Desktop and 390-pixel
+layouts were checked; this is copy/layout evidence, not native-client,
+Entra or launchd qualification.

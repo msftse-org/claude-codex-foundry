@@ -1,4 +1,4 @@
-"""Explicit per-user launchd scheduling; no server-supplied job or commands."""
+"""Per-user launchd scheduling for enrollment; no server-supplied job or commands."""
 
 import hashlib
 import os
@@ -59,7 +59,7 @@ def _launchctl(*arguments):
 
 
 def configure(*, enabled, home=None):
-    """Foreground opt-in/pause, refusing a job edited outside this installation."""
+    """Enroll/resume/pause, refusing a job edited outside this installation."""
     home = home or Path.home()
     binding, _, _ = refresh._binding(home)
     refresh.status(home=home)  # Require a completed enrollment, not just a binding.

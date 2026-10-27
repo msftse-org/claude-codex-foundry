@@ -270,8 +270,6 @@ updates. A reviewed descriptor can be used directly:
 claude-foundry enroll --descriptor /path/to/reviewed-organization.json
 claude-foundry refresh
 claude-foundry configuration-status
-claude-foundry enable-refresh
-claude-foundry disable-refresh
 ```
 
 Use repeated `--client claude` / `--client codex` options to select clients.
@@ -293,17 +291,19 @@ installer-owned helper/catalog and preserves unrelated preferences and history.
 Unknown routes, remote Codex catalogs, custom `CODEX_HOME`, MDM ownership and
 unrecognized installations stop for review. Legacy profiles are retained.
 
-After successful enrollment, `enable-refresh` explicitly installs a per-user
-macOS LaunchAgent. It performs one noninteractive attempt at login and roughly
-every 15 minutes, with up to 60 seconds of jitter. The computer is not woken;
+Enrollment automatically installs and loads a per-user macOS LaunchAgent; there
+is no separate opt-in or installer flag. It performs one noninteractive attempt
+at login and roughly every 15 minutes, with up to 60 seconds of jitter. The computer is not woken;
 macOS may defer attempts while asleep or logged out. There is no retry loop,
 background login prompt, client restart or server-provided job definition.
-`disable-refresh` unloads the job and retains its disabled definition and
-ownership record; it does not remove client settings or credentials. Enabling
-again resumes it. Unknown or locally modified jobs stop for review.
+For troubleshooting, `disable-refresh` unloads the job and retains its disabled
+definition and ownership record; it does not remove client settings or credentials.
+Enabling again with `enable-refresh` resumes it. Explicitly rerunning enrollment
+also resumes automatic refresh. Unknown or locally modified jobs stop for review.
 
-If the job is saved but macOS cannot load it, the command reports that failure;
-retry `enable-refresh` explicitly from the user's GUI session. Routine job
+If the job is saved but macOS cannot load it, enrollment exits unsuccessfully and
+the installer does not print `SETUP COMPLETE`, even if client settings were
+already configured; retry `enable-refresh` explicitly from the user's GUI session. Routine job
 output is discarded. `configuration-status` retains the last successful time
 and, after a failed background attempt, a safe error code and attempt time.
 `sign_in_required` needs foreground `refresh --login`; `access_unavailable`
@@ -370,13 +370,12 @@ headers and forwarded headers cannot select token destinations.
 
 Users review the connection details in the ZIP, install their approved applications,
 and run `bash Install.command`. The installer explicitly signs in, verifies
-access, and prints `SETUP COMPLETE` only after the selected apps are configured.
+access, and prints `SETUP COMPLETE` only after the selected apps are configured
+and automatic background refresh is loaded.
 A missing selected Codex app, failed sign-in, or settings conflict is not silently
 skipped. Matching existing installations need explicit `--migrate-existing`.
-Automatic refresh is enabled separately with `claude-foundry enable-refresh`,
-or explicitly with `bash Install.command --enable-refresh`. No background job is
-installed merely by downloading a ZIP. Save active work and fully quit/reopen the
-apps after setup; live picker refresh is not promised.
+No background job is installed merely by downloading a ZIP. Save active work and
+fully quit/reopen the apps after setup; live picker refresh is not promised.
 
 This packaging alone does not close the live release gates. Do not
 enable it for general rollout until tenant authentication/Conditional Access,

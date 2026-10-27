@@ -1,11 +1,14 @@
 import json
 import plistlib
 import subprocess
+from pathlib import Path
 
 import pytest
 from test_configuration_refresh import pilot as pilot
 from test_configuration_refresh import read, settings, write
 
+from claude_foundry import cli
+from claude_foundry import configuration_refresh as refresh
 from claude_foundry import configuration_schedule as schedule
 from claude_foundry.configuration_client import (
     AccessUnavailable,
@@ -33,6 +36,121 @@ def launchctl(monkeypatch):
 
     monkeypatch.setattr(schedule, "_launchctl", command)
     return calls, loaded
+
+
+@pytest.fixture
+def enrollment_command(pilot, monkeypatch):
+    """Exercise the public enroll command with real settings and a disposable home."""
+    home, descriptor, _, _, _ = pilot
+    executable = home.parent / "claude-foundry"
+    monkeypatch.setattr(Path, "home", classmethod(lambda _: home))
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    monkeypatch.setattr(cli.sys, "executable", str(executable.with_name("python")))
+    monkeypatch.setattr(refresh.client, "check_managed_preferences", lambda: None)
+    monkeypatch.setattr(refresh.codex_client, "check_managed_preferences", lambda: None)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+
+    def command(clients=("claude", "codex")):
+        arguments = ["claude-foundry", "enroll", "--descriptor", str(descriptor)]
+        for client in clients:
+            arguments.extend(["--client", client])
+        arguments.extend(["--codex-binary", str(executable)])
+        monkeypatch.setattr(cli.sys, "argv", arguments)
+        return cli.main()
+
+    return command
+
+
+@pytest.mark.parametrize("clients", [("claude",), ("codex",), ("claude", "codex")])
+def test_enroll_automatically_loads_refresh_after_settings_commit(
+    pilot, enrollment_command, launchctl, monkeypatch, capsys, clients
+):
+    home, _, paths, _, _ = pilot
+    launch = schedule._launchctl
+
+    def command(*args):
+        if args[0] == "bootstrap":
+            # RunAtLoad can start immediately: files must be complete and unlocked.
+            refresh.refresh(home=home)
+        return launch(*args)
+
+    monkeypatch.setattr(schedule, "_launchctl", command)
+    assert enrollment_command(clients) == 0
+    result = capsys.readouterr()
+    assert '"automatic_refresh": true' in result.out and not result.err
+    assert '"interval_seconds": 900' in result.out
+    assert read(paths["binding"])["clients"] == list(clients)
+    assert paths["claude_cli"].exists() == ("claude" in clients)
+    assert paths["codex"].exists() == ("codex" in clients)
+    job = plistlib.loads(schedule._paths(home)[1].read_bytes())
+    assert job["ProgramArguments"] == [str(home.parent / "claude-foundry"), "refresh-background"]
+    assert not job["Disabled"] and job["StartInterval"] == 900 and job["RunAtLoad"]
+    assert len(launchctl[1]) == 1
+    assert [c[0] for c in launchctl[0]] == ["print", "bootstrap"]
+
+
+def test_repeated_enrollment_loads_once_and_resumes_a_troubleshooting_pause(
+    pilot, enrollment_command, launchctl
+):
+    home, _, _, _, _ = pilot
+    assert enrollment_command() == 0
+    assert enrollment_command() == 0
+    assert [c[0] for c in launchctl[0]].count("bootstrap") == 1
+    schedule.configure(enabled=False, home=home)
+    assert not launchctl[1]
+    assert enrollment_command() == 0
+    assert len(launchctl[1]) == 1
+    assert [c[0] for c in launchctl[0]].count("bootstrap") == 2
+
+
+def test_enrollment_scheduler_failure_is_not_success_and_rerun_recovers(
+    pilot, enrollment_command, launchctl, monkeypatch, capsys
+):
+    home, _, paths, _, _ = pilot
+    launch = schedule._launchctl
+    monkeypatch.setattr(
+        schedule, "_launchctl", lambda *args: 5 if args[0] == "bootstrap" else launch(*args)
+    )
+    assert enrollment_command() == 1
+    result = capsys.readouterr()
+    assert not result.out and "could not be loaded" in result.err
+    assert "enable-refresh in a GUI session" in result.err
+    assert paths["binding"].is_file() and schedule._paths(home)[1].is_file()
+    before = settings(paths)
+    assert not launchctl[1]
+    monkeypatch.setattr(schedule, "_launchctl", launch)
+    assert enrollment_command() == 0
+    assert len(launchctl[1]) == 1
+    for key in before.keys() - {"status"}:
+        assert settings(paths)[key] == before[key]
+
+
+def test_failed_enrollment_never_installs_or_loads_refresh(
+    pilot, enrollment_command, launchctl, monkeypatch, capsys
+):
+    home, _, paths, _, _ = pilot
+
+    def unavailable(*_):
+        raise AccessUnavailable("Published access unavailable")
+
+    monkeypatch.setattr(refresh, "fetch_initial_configuration", unavailable)
+    assert enrollment_command() == 1
+    assert "Published access unavailable" in capsys.readouterr().err
+    assert not paths["binding"].exists() and not schedule._paths(home)[1].exists()
+    assert not launchctl[0]
+
+
+def test_enrollment_never_replaces_a_foreign_refresh_job(
+    pilot, enrollment_command, launchctl, capsys
+):
+    home, _, _, _, _ = pilot
+    _, plist, record = schedule._paths(home)
+    write(plist, b"not owned by enrollment")
+    assert enrollment_command() == 1
+    result = capsys.readouterr()
+    assert not result.out and "changed locally" in result.err
+    assert plist.read_bytes() == b"not owned by enrollment"
+    assert not record.exists() and not launchctl[0]
 
 
 def test_enable_uses_only_fixed_local_job_and_preserves_client_files(pilot, launchctl):
