@@ -35,6 +35,12 @@ def build(output, root):
                 if path.is_symlink() or path.suffix == ".map":
                     raise ValueError(f"Unexpected static asset: {path}")
                 bundle.write(path, "static/" + str(path.relative_to(web / "dist")))
+        # Public, allowlisted server files must be readable by Azure's worker,
+        # even when npm/builds run with a private operator umask (for example 077).
+        # Change ZIP metadata only, never the source files' local permissions.
+        for entry in bundle.infolist():
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
     return output
 
 
