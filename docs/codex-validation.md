@@ -149,3 +149,25 @@ New shared-route policies were exercised in the authorized demo using temporary 
 Initial API creation attempts returned ARM HTTP 502 with the earlier display label. Isolated ASCII-label creation succeeded; the helper now uses an ASCII label and explicit HTTP backend metadata. Body inspection is confined to inference operations, and the deployer waits for the new route's authentication guard to propagate. Stream verification reconstructs text deltas rather than assuming a marker remains contiguous across SSE events. All temporary APIs were deleted, and an inventory confirmed zero validation APIs remained. Existing production APIs and spending policy were not replaced.
 
 A complete fresh cloud installation, visual native desktop acceptance, maximum-context quality and sustained load remain unverified. These source/default changes do not remove the documented customer release checks. Private evidence remains outside Git.
+
+
+## Terminal enrollment preview — 2026-10-27
+
+In the authorized preview, command-based enrollment and default automatic refresh
+configured the real user installation. Codex CLI **0.145.0** and desktop bundled
+engine **0.164.0-alpha.11.1** each used the retained approved **gpt-6-luna** selection,
+executed a read-only local file command, returned the fixture phrase, and correctly
+repeated it in a subsequent resumed conversation. The desktop engine also accepted
+strict configuration parsing. Existing unrelated configuration and the native
+Codex sign-in file were preserved. Raw sessions remain private.
+
+An additional `gpt-4.1-nano` check with the user's existing connectors failed on a
+connector's top-level tool schema. A retry disabling connectors for that invocation
+returned successfully but chose an unavailable MCP server instead of reading the
+file; it is a failed tool-use check. These results do not qualify that model with
+this plugin set. No global connector setting was changed. The retained default
+model passed with the normal connector configuration.
+
+Visual desktop acceptance remains outstanding because the Mac locked during the
+journey; bundled-engine success does not close that gate. This check does not
+requalify every catalog model, plugin, Conditional Access policy or budget scenario.

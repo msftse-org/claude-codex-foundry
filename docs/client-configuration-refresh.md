@@ -460,3 +460,34 @@ journeys, new-model publication-to-picker timing, published revocation with stal
 files/local rollback, and shared-budget denial/failure-boundary checks for this
 increment. Do not merge or broaden rollout until these pass. Raw native logs,
 identities, tokens and customer configuration remain outside Git.
+
+
+### Terminal onboarding qualification — 2026-10-27
+
+The authorized Azure preview served the combined **Download setup & copy command**
+button. Edge downloaded a ZIP for both applications; its SHA-256 matched the
+filename and command. The combined copy succeeded on repeat, and **Copy command**
+also copied the displayed text. An initial immediate clipboard read was empty;
+first-click clipboard behavior remains part of the final browser acceptance.
+
+The first real installation stopped before enrollment because macOS supplies a
+system-symlink temporary path. The command now canonicalizes its freshly created
+private directory with physical `pwd`; settings/descriptor symlink protections
+remain unchanged. The corrected command, generated from the same frontend source
+and applied to the actual Edge-downloaded ZIP, completed enrollment. It configured
+nine Claude and 33 Codex models and loaded the per-user 900-second job automatically.
+A successful launchd run advanced the configuration status without a manual refresh.
+Unrelated settings and the existing Codex sign-in were preserved.
+
+Claude Code 2.1.296 with `claude-haiku-4-5`, Codex CLI 0.145.0, and desktop bundled
+engine 0.164.0-alpha.11.1 with the retained approved `gpt-6-luna` selection passed
+real local-file tool calls and conversation follow-ups. Anonymous, wrong-audience,
+account-selector and configuration-token-to-administration probes were rejected;
+authorized configuration and conditional reads returned 200 and 304.
+
+The final corrected browser roundtrip and visual desktop acceptance remain open:
+the Mac locked during testing. The command was executed with the shell execution
+tool, not by controlling Terminal's UI. The hosted portal used the real owner's
+sign-in; this is not a second real developer-account sign-in qualification. Keep
+the change draft/unmerged until the required interactive journey is completed.
+This is preview evidence, not general rollout or all-model/plugin qualification.
