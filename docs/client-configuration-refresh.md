@@ -371,8 +371,17 @@ They cannot target another user or override group membership. Their responses
 are private/no-store. The deployment supplies the pinned origin; incoming Host
 headers and forwarded headers cannot select token destinations.
 
-Users review the connection details in the ZIP, install their approved applications,
-and run `bash Install.command`. The installer explicitly signs in, verifies
+Users install their approved applications and Azure CLI when using CLI authentication,
+then choose **Download setup & copy command**. The existing authenticated endpoint
+supplies a credential-free ZIP. The browser names it by SHA-256 and copies a fixed
+Terminal command containing only that validated digest. The command privately copies,
+verifies, and extracts the ZIP before running `bash scripts/macos/install.sh`. A
+missing Downloads file prompts for its full path, without evaluating the entered text.
+Clipboard failures retain a visible command and a retry button. Digest verification
+protects against a different/corrupted local ZIP, not a compromised portal. An unsigned
+script still needs IT permission to execute; no endpoint security settings are changed.
+
+Users can also review an already extracted bundle and run `bash scripts/macos/install.sh`. The installer explicitly signs in, verifies
 access, and prints `SETUP COMPLETE` only after the selected apps are configured
 and automatic background refresh is loaded.
 A missing selected Codex app, failed sign-in, or settings conflict is not silently

@@ -66,6 +66,43 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+it("downloads the authenticated enrollment bytes using their SHA-256 filename", async () => {
+    identity.getActiveAccount.mockReturnValue({ homeAccountId: "account" });
+    const bytes = new TextEncoder().encode("abc").buffer;
+    const digest =
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    const anchor = { click: vi.fn(), href: "", download: "" };
+    vi.stubGlobal("document", { createElement: vi.fn(() => anchor) });
+    const createObjectURL = vi.fn(() => "blob:setup");
+    vi.stubGlobal(
+        "URL",
+        class extends URL {
+            static createObjectURL = createObjectURL;
+            static revokeObjectURL = vi.fn();
+        },
+    );
+    vi.mocked(fetch)
+        .mockResolvedValueOnce({
+            ok: true,
+            json: async () => configuration,
+        } as Response)
+        .mockResolvedValueOnce({
+            ok: true,
+            arrayBuffer: async () => bytes,
+        } as Response);
+    const { downloadSetup } = await import("./api");
+    expect(
+        await downloadSetup("/api/client-enrollment-bundle?client=both"),
+    ).toBe(digest);
+    expect(anchor.download).toBe(`claude-foundry-setup-${digest}.zip`);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    const [, options] = vi.mocked(fetch).mock.calls[1];
+    expect(new Headers(options?.headers).get("Authorization")).toBe(
+        "Bearer synthetic-token",
+    );
+});
+
 it("downloads ZIP bytes with authentication and refreshes a rejected read once", async () => {
     identity.getActiveAccount.mockReturnValue({ homeAccountId: "account" });
     const blob = new Blob(["synthetic ZIP bytes"], { type: "application/zip" });

@@ -210,6 +210,20 @@ The setup ZIP pins connection details, not model grants; future model selections
 come from the active published policy. The screenshot above shows the existing
 JSON flow, not the pilot.
 
+Use **Download setup & copy command** to download the authenticated setup ZIP and
+copy a single Terminal command. Wait for the browser download to finish, paste the
+command into Terminal, and press Enter. The command checks the exact ZIP's SHA-256,
+extracts a private temporary copy, and runs the bundled installer. If the ZIP was
+saved outside Downloads, it asks for its full path without quotes. If clipboard
+access fails, the command remains visible with **Copy command** for retry. Changing
+the application selection clears the old command; download again for the new choice.
+
+The command contains no credentials and does not download executable code from an
+anonymous endpoint. Its checksum detects a different or damaged ZIP; both bytes and
+digest still depend on the trusted portal. This distribution is unsigned; execution
+must comply with device policy. No Gatekeeper or quarantine changes are performed.
+Legacy ZIP onboarding above retains the separate Apple approval instructions.
+
 The pilot requires explicit enrollment, which automatically starts background
 refresh. Existing installations require explicit migration, and open apps may need
 reopening to show new picker entries. Low-level portal deployments without the

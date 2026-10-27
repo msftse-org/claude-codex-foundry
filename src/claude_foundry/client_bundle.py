@@ -131,13 +131,21 @@ user's current published policy determines the available models and server-side 
 ## Install
 
 1. Install your organization's approved {target}. {prerequisite}
-2. Save active work, extract the ZIP, open the `claude-foundry` folder, then run
-   `bash Install.command` (or double-click it).
+2. On the organization portal, use **Download setup & copy command**. Wait for the
+   ZIP download to finish, then paste the copied command into Terminal and press Enter.
+   It verifies the downloaded ZIP's SHA-256 before extracting and running setup.
+   If saved outside Downloads, enter the full ZIP path without quotes when prompted.
+   The ZIP and digest must come from your trusted organization portal; the checksum
+   detects changed bytes, not a compromised portal or an Apple-verified publisher.
+   There is no need to extract or double-click the ZIP. For a previously extracted,
+   reviewed bundle, `bash scripts/macos/install.sh` remains available.
 3. Review the connection details and complete Microsoft work-account sign-in and MFA.
 4. Setup automatically starts background refresh. Follow the installer's result; reopen the
    app only after `SETUP COMPLETE`, then choose an approved model and send a short test message.
 
-{MAC_SECURITY_HELP}
+This is an explicit Terminal script installation. It is not Apple-signed or notarized.
+Your device policy must permit it. Setup does not remove quarantine or change Gatekeeper
+or managed security policy; ask IT for an approved installation if scripts are blocked.
 
 Background refresh runs about every 15 minutes while you are logged into this Mac. Reopen an
 already-running client to reload its model picker. Refresh cannot grant access or bypass the

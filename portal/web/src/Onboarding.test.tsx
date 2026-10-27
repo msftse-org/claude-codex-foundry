@@ -7,7 +7,7 @@ import {
     waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, downloadFile } from "./api";
+import { api, downloadFile, downloadSetup } from "./api";
 import { Onboarding } from "./Onboarding";
 import { MAC_SECURITY_SETTINGS } from "./MacInstallHelp";
 import type { State } from "./types";
@@ -16,6 +16,7 @@ vi.mock("./api", () => ({
     api: vi.fn(),
     download: vi.fn(),
     downloadFile: vi.fn(),
+    downloadSetup: vi.fn(),
 }));
 const profile = {
     gateway_url: "https://organization.azure-api.net/claude-budget-preview",
@@ -37,6 +38,7 @@ beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(api).mockResolvedValue(profile);
     vi.mocked(downloadFile).mockResolvedValue(undefined);
+    vi.mocked(downloadSetup).mockResolvedValue("a".repeat(64));
     Object.defineProperty(navigator, "clipboard", {
         configurable: true,
         value: { writeText: vi.fn().mockResolvedValue(undefined) },
@@ -244,33 +246,18 @@ it("offers one stable enrollment link with automatic refresh and only an applica
         target: { value: "codex" },
     });
     fireEvent.click(
-        screen.getByRole("button", { name: "Download enrollment setup ZIP" }),
+        screen.getByRole("button", { name: "Download setup & copy command" }),
     );
     await waitFor(() =>
-        expect(downloadFile).toHaveBeenCalledWith(
+        expect(downloadSetup).toHaveBeenCalledWith(
             "/api/client-enrollment-bundle?client=codex",
-            "claude-foundry-enrollment-macos.zip",
         ),
     );
-    fireEvent.click(
-        screen.getByRole("button", {
-            name: "Copy enrollment prompt for Codex",
-        }),
-    );
+    await screen.findByLabelText("Setup command");
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        expect.stringContaining(enrollment.descriptor.configuration_url),
+        expect.stringContaining("/bin/bash -c"),
     );
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        expect.stringContaining("Ask me before migrating"),
-    );
-    const prompt = vi.mocked(navigator.clipboard.writeText).mock.lastCall?.[0];
-    expect(prompt).toContain(
-        "Background refresh is automatic as part of enrollment",
-    );
-    expect(prompt).not.toContain("or enabling background refresh");
-    expect(
-        screen.getByText(/Background refresh starts automatically/),
-    ).toBeTruthy();
+    expect(screen.getByText(/Background refresh starts/)).toBeTruthy();
     expect(screen.queryByText(/enable-refresh/)).toBeNull();
 });
 
@@ -291,7 +278,7 @@ it("enrollment failures offer retry without a partial ZIP or a group override", 
     );
     await screen.findByText("Publish model access first");
     expect(
-        screen.queryByRole("button", { name: "Download enrollment setup ZIP" }),
+        screen.queryByRole("button", { name: "Download setup & copy command" }),
     ).toBeNull();
     expect(screen.queryByRole("button", { name: "Manage members" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
@@ -304,8 +291,8 @@ it("enrollment failures offer retry without a partial ZIP or a group override", 
     expect(api).toHaveBeenLastCalledWith("/api/client-enrollment");
 });
 
-it.each([false, true])(
-    "provides a fixed, explicit Mac security handoff (enrollment=%s)",
+it.each([false])(
+    "provides a fixed, explicit Mac security handoff for legacy ZIPs (enrollment=%s)",
     async (enroll) => {
         vi.mocked(api).mockResolvedValue(enroll ? enrollment : profile);
         render(
@@ -331,7 +318,7 @@ it.each([false, true])(
         fireEvent.click(
             screen.getByRole("button", {
                 name: enroll
-                    ? "Download enrollment setup ZIP"
+                    ? "Download setup & copy command"
                     : "Download Mac setup ZIP",
             }),
         );
@@ -379,4 +366,83 @@ it("discards a pending enrollment response when published state changes", async 
     expect(
         screen.queryByRole("option", { name: "Claude and Codex" }),
     ).toBeNull();
+});
+
+it("keeps a visible command and retry copy button when clipboard access fails", async () => {
+    vi.mocked(api).mockResolvedValue(enrollment);
+    vi.mocked(navigator.clipboard.writeText).mockRejectedValue(
+        new Error("Clipboard denied"),
+    );
+    render(
+        <Onboarding
+            state={enrolledState}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    fireEvent.click(
+        await screen.findByRole("button", {
+            name: "Download setup & copy command",
+        }),
+    );
+    await screen.findByLabelText("Setup command");
+    await waitFor(() =>
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining("clipboard access was unavailable"),
+            true,
+        ),
+    );
+    expect(screen.getByRole("button", { name: "Copy command" })).toBeTruthy();
+    expect(
+        screen.queryByRole("region", { name: "Mac installation and security" }),
+    ).toBeNull();
+});
+
+it("offers retry after a rejected download without presenting an install command", async () => {
+    vi.mocked(api).mockResolvedValue(enrollment);
+    vi.mocked(downloadSetup).mockRejectedValue(
+        new Error("Access no longer published"),
+    );
+    render(
+        <Onboarding
+            state={enrolledState}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    fireEvent.click(
+        await screen.findByRole("button", {
+            name: "Download setup & copy command",
+        }),
+    );
+    await waitFor(() =>
+        expect(notify).toHaveBeenCalledWith("Access no longer published", true),
+    );
+    expect(screen.queryByLabelText("Setup command")).toBeNull();
+    expect(
+        screen
+            .getByRole("button", { name: "Download setup & copy command" })
+            .hasAttribute("disabled"),
+    ).toBe(false);
+});
+
+it("discards a prepared command when application selection changes", async () => {
+    vi.mocked(api).mockResolvedValue(enrollment);
+    render(
+        <Onboarding
+            state={enrolledState}
+            onMembers={vi.fn()}
+            notify={notify}
+        />,
+    );
+    fireEvent.click(
+        await screen.findByRole("button", {
+            name: "Download setup & copy command",
+        }),
+    );
+    await screen.findByLabelText("Setup command");
+    fireEvent.change(screen.getByLabelText("Application"), {
+        target: { value: "codex" },
+    });
+    expect(screen.queryByLabelText("Setup command")).toBeNull();
 });

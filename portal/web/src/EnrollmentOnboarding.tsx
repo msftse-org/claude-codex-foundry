@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, Copy, DownloadSimple } from "@phosphor-icons/react";
-import { api, download, downloadFile } from "./api";
+import { ArrowRight, Copy } from "@phosphor-icons/react";
+import { api, download } from "./api";
 import { Notice, PageHead } from "./components";
-import { MacInstallHelp } from "./MacInstallHelp";
+import { TerminalSetup } from "./TerminalSetup";
 import type { State } from "./types";
 
 interface Enrollment {
@@ -50,9 +50,6 @@ export function EnrollmentOnboarding({
         };
     }, [state.revision, retry]);
     const enrollment = result?.value;
-    const prompt = enrollment
-        ? `Set up ${selection === "both" ? "Claude and Codex" : selection === "codex" ? "Codex" : "Claude"} on my Mac using claude-foundry-enrollment-macos.zip from our trusted organization portal. Extract it, read README.md, AGENTS.md, enrollment.json and installation.json, then run bash Install.command. The configuration service must be ${enrollment.descriptor.configuration_url}. Let me complete Microsoft sign-in. Preserve unrelated settings and conversations. Background refresh is automatic as part of enrollment; do not ask me to enable it separately. Ask me before migrating an existing installation. Report success only after SETUP COMPLETE, then help me fully reopen the app and test an approved model.`
-        : "";
     const copy = async (value: string) => {
         try {
             await navigator.clipboard.writeText(value);
@@ -165,47 +162,18 @@ export function EnrollmentOnboarding({
                                         ))}
                                     </select>
                                 </label>
-                                <p>
-                                    Install your organization’s approved app
-                                    first. The ZIP contains trusted connection
-                                    details and setup tools, not model grants or
-                                    credentials.
-                                </p>
-                                <button
-                                    className="button primary"
-                                    disabled={busy}
-                                    onClick={async () => {
-                                        setBusy(true);
-                                        try {
-                                            await downloadFile(
-                                                `/api/client-enrollment-bundle?client=${selection}`,
-                                                "claude-foundry-enrollment-macos.zip",
-                                            );
-                                            notify(
-                                                "Enrollment ZIP downloaded. Follow Install on your Mac below, including Apple approval if prompted.",
-                                            );
-                                        } catch (error) {
-                                            notify(
-                                                (error as Error).message,
-                                                true,
-                                            );
-                                        } finally {
-                                            setBusy(false);
-                                        }
-                                    }}
-                                >
-                                    <DownloadSimple />
-                                    {busy
-                                        ? "Preparing enrollment ZIP…"
-                                        : "Download enrollment setup ZIP"}
-                                </button>
+                                <TerminalSetup
+                                    key={`${state.revision}:${selection}`}
+                                    selection={selection}
+                                    notify={notify}
+                                    onBusy={setBusy}
+                                />
                                 <p className="footnote">
                                     This download is for your signed-in
                                     account’s published access. Administrators
                                     cannot select a different user or group
                                     here.
                                 </p>
-                                <MacInstallHelp />
                             </>
                         )}
                     </div>
@@ -216,13 +184,13 @@ export function EnrollmentOnboarding({
                         <div>
                             <h2>Sign in and stay up to date</h2>
                             <p>
-                                Extract the ZIP and open{" "}
-                                <code>Install.command</code>. Complete Microsoft
-                                sign-in and follow the result. After SETUP
-                                COMPLETE, save work and fully reopen the apps.
-                                Existing JSON installations require an explicit
-                                migration. Background refresh starts
-                                automatically as part of enrollment.
+                                Paste the copied setup command into Terminal.
+                                Complete Microsoft sign-in and follow the
+                                result. After SETUP COMPLETE, save work and
+                                fully reopen the apps. Existing JSON
+                                installations require an explicit migration.
+                                Background refresh starts automatically as part
+                                of enrollment.
                             </p>
                             <p>
                                 Published model updates arrive about every 15
@@ -236,13 +204,6 @@ export function EnrollmentOnboarding({
                                 gateway access and shared budget policy. An old
                                 local model list cannot restore revoked access.
                             </p>
-                            <button
-                                className="button"
-                                onClick={() => copy(prompt)}
-                            >
-                                <Copy /> Copy enrollment prompt for Codex
-                            </button>
-                            <pre className="codewell setupprompt">{prompt}</pre>
                         </div>
                     </div>
                 )}

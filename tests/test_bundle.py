@@ -60,10 +60,18 @@ def test_download_explains_file_specific_apple_approval_not_security_bypass(org,
     with zipfile.ZipFile(io.BytesIO(body)) as bundle:
         readme = bundle.read("claude-foundry/README.md").decode()
         assert "not Apple-signed or notarized" in readme
-        assert "Open Anyway" in readme and "Keep Gatekeeper enabled" in readme
-        assert "IT-managed restriction" in readme
+        if enrollment:
+            assert "Download setup & copy command" in readme
+            assert "SHA-256 before extracting" in readme
+            assert "does not remove quarantine" in readme
+            assert "Open Anyway" not in readme
+            assert "device policy must permit it" in readme
+            assert "only after `SETUP COMPLETE`" in readme
+        else:
+            assert "Open Anyway" in readme and "Keep Gatekeeper enabled" in readme
+            assert "IT-managed restriction" in readme
+            assert "wait for **SETUP COMPLETE**" in readme
         assert "xattr -" not in readme and "spctl --" not in readme
-        assert "wait for **SETUP COMPLETE**" in readme
 
 
 def test_history_policy_reaches_customer_bundle_without_admin_data(org, tmp_path):

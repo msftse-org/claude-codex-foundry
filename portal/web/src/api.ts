@@ -4,6 +4,7 @@ import type {
 } from "@azure/msal-browser";
 import type { Bootstrap } from "./types";
 import { csvText } from "./csv";
+import { setupFilename } from "./setupCommand";
 let msal: PublicClientApplication | undefined;
 let interactionRequired: typeof InteractionRequiredAuthError | undefined;
 let config: Bootstrap;
@@ -186,6 +187,19 @@ export function download(name: string, value: unknown) {
 export async function downloadFile(path: string, name: string) {
     const response = await apiResponse(path);
     saveBlob(name, await response.blob());
+}
+export async function downloadSetup(path: string): Promise<string> {
+    const response = await apiResponse(path);
+    const bytes = await response.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+    ).join("");
+    saveBlob(
+        setupFilename(sha256),
+        new Blob([bytes], { type: "application/zip" }),
+    );
+    return sha256;
 }
 function saveBlob(name: string, blob: Blob) {
     const url = URL.createObjectURL(blob);

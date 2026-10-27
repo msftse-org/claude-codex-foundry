@@ -2,6 +2,25 @@
 
 Use Claude Desktop Chat, Desktop Code, and the Code CLI with the models approved by your organization. Your platform team deploys Azure and supplies the installation bundle; you do not need to clone this repository or administer Azure.
 
+## Organization-link enrollment
+
+If your portal offers **Download setup & copy command**, install your approved client
+apps and Azure CLI when required, select the applications, and click that button.
+It downloads a credential-free setup ZIP and copies one command. Wait for the download,
+open Terminal, paste the command and press Enter. No manual extraction or double-click
+is needed. If you saved outside Downloads, enter the full ZIP path without quotes
+when prompted. If clipboard access fails, use **Copy command** or select the visible
+command. The command verifies the ZIP checksum before running setup in a private
+temporary folder. Both ZIP and checksum must come from your trusted organization portal.
+
+Complete Microsoft sign-in when requested. **Automatic refresh starts as part of
+enrollment**; there is no separate enable step. Wait for **SETUP COMPLETE**, then save
+work and fully reopen your apps. Existing installations need explicit migration.
+The command does not change Gatekeeper, quarantine or managed security policies.
+If IT blocks scripts, request an approved managed installation.
+
+The remaining instructions describe legacy JSON installation bundles.
+
 ## Before you begin
 
 You need a Mac, your work Microsoft account, your organization’s installation ZIP, and permission to use its models. Install the approved Claude apps first. Keep any current Claude work safe and quit the app before changing its connection settings. Internet access is needed for runtime/dependency downloads and Microsoft sign-in.
