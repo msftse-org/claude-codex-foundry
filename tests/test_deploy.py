@@ -16,6 +16,8 @@ USER = "00000000-0000-0000-0000-000000000003"
 GROUP = "00000000-0000-0000-0000-000000000009"
 DESKTOP = "00000000-0000-0000-0000-000000000010"
 PORTAL_APP = "00000000-0000-0000-0000-000000000011"
+CONFIGURATION_APP = "00000000-0000-0000-0000-000000000012"
+ENROLLMENT_APP = "00000000-0000-0000-0000-000000000013"
 
 
 @pytest.fixture
@@ -90,6 +92,25 @@ class FakeRunner:
         name = Path(command[0]).name
         if name == "register_client_app.py":
             return json.dumps({"client_id": DESKTOP})
+        if name == "register_enrollment.py":
+            from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
+
+            write_json(
+                Path(command[command.index("--output") + 1]),
+                {
+                    "name": command[command.index("--name") + 1],
+                    "tenant_id": TENANT,
+                },
+            )
+            return json.dumps(
+                {
+                    "tenant_id": TENANT,
+                    "configuration_resource_id": CONFIGURATION_APP,
+                    "public_client_id": AZURE_CLI_CLIENT_ID
+                    if "--azure-cli" in command
+                    else ENROLLMENT_APP,
+                }
+            )
         if name == "register_portal.py":
             write_json(Path(command[command.index("--output") + 1]), {"client_id": PORTAL_APP})
         if name in {"prepare_portal.py", "build_client_bundle.py", "build_portal.py"}:
@@ -139,7 +160,7 @@ def organization(org):
 
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
     monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
-    monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients: None)
+    monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients, **kw: None)
 
     class FakeAzure:
         def __init__(self, subscription):
@@ -485,7 +506,9 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
 
     monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
     monkeypatch.setattr(
-        deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
+        deploy,
+        "verify_portal_setup",
+        lambda url, clients, **kw: cloud.append(("setup", url, clients)),
     )
     monkeypatch.setattr(
         "claude_foundry.budget_gateway.deploy",
@@ -573,6 +596,64 @@ def test_unified_rerun_does_not_recreate_retired_routes(unified_job):
     assert not any("gateway" in c or "observability" in c for c in runner.calls)
     assert not any("qualify" in c for c in runner.calls)
     assert [c[1] for c in cloud if c[0] == "route"] == ["claude-governed", "codex-governed"]
+
+
+def test_standard_deployment_reproduces_enrollment_without_manual_app_settings(unified_job):
+    from claude_foundry.configuration_client import AZURE_CLI_CLIENT_ID
+
+    job, runner, _ = unified_job
+    job.deploy(verify=False)
+    params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
+    assert params["configurationResourceId"]["value"] == CONFIGURATION_APP
+    assert params["enrollmentClientId"]["value"] == AZURE_CLI_CLIENT_ID
+    bounds = json.loads((job.local / "unified/runtime-models.json").read_text())
+    assert params["configurationDeployments"]["value"] == bounds
+    calls = [c for c in runner.calls if c[1].endswith("register_enrollment.py")]
+    assert len(calls) == 1 and "--azure-cli" in calls[0]
+    assert "--grant-admin-consent" not in calls[0]
+    assert calls[0][calls[0].index("--output") + 1].endswith("portal/enrollment-receipt.json")
+    assert not any(c[:4] == ["az", "functionapp", "config", "appsettings"] for c in runner.calls)
+
+
+def test_live_enrollment_without_its_receipt_stops_before_registration(unified_job, deploy):
+    job, runner, _ = unified_job
+    with pytest.raises(deploy.DeployError, match="receipt"):
+        job.enrollment({"PORTAL_CONFIGURATION_RESOURCE_ID": CONFIGURATION_APP})
+    assert not runner.calls
+
+
+def test_live_enrollment_identity_drift_is_not_repointed(unified_job, deploy):
+    job, runner, _ = unified_job
+    receipt = job.local / "portal/enrollment-receipt.json"
+    write_json(receipt, {"name": "Existing customer registration"})
+    with pytest.raises(deploy.DeployError, match="identity drift"):
+        job.enrollment({"PORTAL_CONFIGURATION_RESOURCE_ID": ENROLLMENT_APP})
+    assert not any("deployment" in c for c in runner.calls)
+
+
+def test_normal_rerun_preserves_existing_subnet_security_groups(unified_job):
+    job, _, _ = unified_job
+    original = job.azure
+    nsgs = {"functions": "functions-guardrail", "endpoints": "endpoints-guardrail"}
+
+    class GuardrailedAzure(original):
+        def request(self, method, path, *args, **kwargs):
+            if "/virtualNetworks/" in path:
+                return {
+                    "properties": {
+                        "subnets": [
+                            {"name": name, "properties": {"networkSecurityGroup": {"id": value}}}
+                            for name, value in nsgs.items()
+                        ]
+                    }
+                }
+            return super().request(method, path, *args, **kwargs)
+
+    job.azure = GuardrailedAzure
+    job.deploy(verify=False)
+    params = json.loads((job.local / "portal/parameters.json").read_text())["parameters"]
+    assert params["functionsNetworkSecurityGroupId"]["value"] == nsgs["functions"]
+    assert params["endpointsNetworkSecurityGroupId"]["value"] == nsgs["endpoints"]
 
 
 def test_deployment_enables_stream_capture_with_content_logs(unified_job):
@@ -691,6 +772,12 @@ def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
         lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
     )
     deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
+    with pytest.raises(deploy.DeployError, match="client setup"):
+        deploy.verify_portal_setup(
+            "https://portal.example.com", ["claude", "codex"], enrollment=True
+        )
+    status["client_enrollment_enabled"] = True
+    deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"], enrollment=True)
 
 
 def test_unified_mode_cannot_be_downgraded(unified_job):

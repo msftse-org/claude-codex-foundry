@@ -1,7 +1,9 @@
 # Client configuration refresh — experimental components
 
-These are opt-in server/client increments of automatic configuration refresh,
-not yet qualified for rollout. The API and enrollment page are disabled by default. Existing
+These are preview components of automatic configuration refresh, not yet qualified
+for general rollout. The standard unified deployer now prepares the dedicated
+registration and template-managed API/onboarding settings automatically. A low-level
+portal deployment without that identity remains disabled/fail-closed. Existing
 JSON installations and inference authentication are unchanged unless a user
 explicitly enrolls or migrates.
 
@@ -20,8 +22,9 @@ Services inference tokens are not configuration credentials. Configuration
 credentials cannot administer the portal or perform inference. This endpoint
 rejects application-only tokens and user/group selectors.
 
-The dedicated registration helper is available below. Deployed wiring
-and native client qualification are still release gates. Do not reuse the
+The standard deployer calls the dedicated registration helper below and preserves
+its receipt at `.local/portal/enrollment-receipt.json`. Standalone/manual deployments
+can use the same helper. Native client qualification is still a release gate. Do not reuse the
 portal application to enable this endpoint.
 
 ## Dedicated Entra registrations
@@ -82,12 +85,12 @@ or downloaded refresh response:
 
 | Setting | Meaning |
 | --- | --- |
-| `PORTAL_CLIENT_CONFIGURATION_ENABLED` | Exactly `1` to opt in; `0` by default |
+| `PORTAL_CLIENT_CONFIGURATION_ENABLED` | Template-managed `1` in standard unified deployment; low-level default `0` |
 | `PORTAL_CONFIGURATION_RESOURCE_ID` | Distinct configuration resource application UUID |
 | `PORTAL_CONFIGURATION_CLIENT_IDS_JSON` | JSON array of 1–10 distinct authorized public-client UUIDs |
 | `BUDGET_ORGANIZATION_ID` | Stable organization UUID, already used by the shared runtime |
 | `PORTAL_CONFIGURATION_DEPLOYMENTS_JSON` | Reviewed deployment map matching the budget runtime's bounds |
-| `PORTAL_CLIENT_ENROLLMENT_ENABLED` | Exactly `1` enables the experimental link/ZIP onboarding page; `0` by default |
+| `PORTAL_CLIENT_ENROLLMENT_ENABLED` | Template-managed `1` in standard unified deployment; low-level default `0` |
 | `PORTAL_ENROLLMENT_ORIGIN` | Reviewed canonical HTTPS portal origin, without path, query or trailing slash |
 | `PORTAL_ENROLLMENT_CLIENT_ID` | Azure CLI public-client UUID for schema 3; dedicated organization public-client UUID for legacy schema 2; must be in the configuration client allowlist |
 
@@ -352,7 +355,7 @@ health guarantee. Stale data cannot restore server-revoked access or bypass
 current budget admission. Routine status output contains no account identifiers
 or tokens. Never capture `enrolled-token` output in support logs.
 
-## Opt-in organization-link onboarding
+## Organization-link onboarding
 
 With both flags enabled and the credential client explicitly allowed, the portal's
 `/?page=onboarding` link becomes the stable entrypoint. It uses the existing browser

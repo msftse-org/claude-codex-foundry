@@ -17,6 +17,28 @@ its API definition, operations, policies and diagnostics before retiring it, ver
 clients and portal exports use the governed replacement, then remove the legacy API.
 Never retire an API solely by matching its name in a shared/customer APIM service.
 
+The standard unified deployer also prepares organization-link enrollment. Azure CLI
+mode creates one dedicated read-only configuration API registration and preauthorizes
+only its `configuration.read` scope for Azure CLI. It does not modify Microsoft's
+registration or request tenant-wide admin consent. Explicit MSAL mode uses a separate
+public enrollment client and its consent requirements instead. Tenant policy and
+the operator's directory-management permissions still apply.
+
+The receipt at `.local/portal/enrollment-receipt.json` is part of deployment state.
+Keep it on every rerun. When adopting an existing pilot, preserve its original receipt
+there before upgrading; the deployer refuses to replace a live configuration identity
+or rebind existing clients. Template-managed settings enable enrollment and use exactly
+the same reviewed model bounds as the budget runtime. No post-deployment feature-flag
+commands are required. A new empty deployment still needs owner-reviewed publication
+before a developer can enroll or infer. Share the portal's onboarding link instead of
+redistributing JSON files. This remains preview software with the documented native
+client, scheduling, security-distribution and recovery release gates.
+
+Rerunning the portal template preserves existing subnet NSG associations, including
+organization-policy guardrails. The deployer reads these before ARM deployment and
+records them as template parameters; it does not silently detach them. Private
+storage and its managed-identity access remain enabled.
+
 Cost estimates prefer explicit planning rates and otherwise use reviewed enforcement ceilings. They are not Azure invoices.
 
 The shared runtime, Table/Blob storage and private endpoints are deployed automatically. This adds Azure resources and charges compared with the legacy Claude portal. The runtime's [release acceptance checks](budget-enforcement.md#release-acceptance) still apply; selecting the default does not certify a customer rollout.

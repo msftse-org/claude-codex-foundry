@@ -539,6 +539,50 @@ class Deployment:
     def unified(self):
         return self.s["portal"]["enabled"] and self.s["portal"]["mode"] == "unified"
 
+    def enrollment(self, live_settings):
+        """Reproduce the read-only configuration identity; never replace a live binding."""
+        receipt = self.local / "portal/enrollment-receipt.json"
+        if live_settings.get("PORTAL_CONFIGURATION_RESOURCE_ID") and not receipt.exists():
+            raise DeployError(
+                "Preserve the live enrollment registration receipt at .local/portal/enrollment-receipt.json before upgrading; no replacement registration was created"
+            )
+        name = (
+            read_json(receipt)["name"]
+            if receipt.exists()
+            else f"Claude & Codex Configuration ({self.s['suffix']})"
+        )
+        args = [
+            "--tenant",
+            self.s["tenant_id"],
+            "--subscription",
+            self.s["subscription_id"],
+            "--name",
+            name,
+            "--output",
+            receipt,
+            "--apply",
+        ]
+        if self.s["auth_mode"] == "azure-cli":
+            args.append("--azure-cli")
+        elif self.s["grant_admin_consent"]:
+            args.append("--grant-admin-consent")
+        result = json.loads(self.script("register_enrollment.py", *args, capture=True))
+        resource = _uuid(result.get("configuration_resource_id"), "configuration resource")
+        client = _uuid(result.get("public_client_id"), "enrollment client")
+        if (
+            result.get("tenant_id") != self.s["tenant_id"]
+            or (
+                live_settings.get("PORTAL_CONFIGURATION_RESOURCE_ID")
+                and live_settings["PORTAL_CONFIGURATION_RESOURCE_ID"] != resource
+            )
+            or (
+                live_settings.get("PORTAL_ENROLLMENT_CLIENT_ID")
+                and live_settings["PORTAL_ENROLLMENT_CLIENT_ID"] != client
+            )
+        ):
+            raise DeployError("Enrollment identity drift; preserve the existing tenant and binding")
+        return {"configurationResourceId": resource, "enrollmentClientId": client}
+
     def portal(self, client_id):
         self.step(
             "Deploying shared Claude/Codex administration"
@@ -572,6 +616,8 @@ class Deployment:
                 raise DeployError(
                     "The live portal uses a different budget ledger. Adopt its existing configuration before upgrading; no Azure deployment was made"
                 )
+            unified_settings.update(self.enrollment(live_settings))
+            unified_settings["configurationDeployments"] = runtime_models
         else:
             self.script("prepare_portal.py", "--organization", self.org_path, "--output", config)
         entra = portal_dir / "entra.json"
@@ -628,6 +674,23 @@ class Deployment:
             ):
                 if live_settings.get(env):
                     parameters[key] = live_settings[env]
+        # Organizational policy can attach NSGs after initial deployment. A
+        # vanilla rerun must not silently remove those network protections.
+        network_scope = f"/subscriptions/{self.s['subscription_id']}/resourceGroups/{self.n['portal_resource_group']}/providers/Microsoft.Network/virtualNetworks/{self.n['portal']}-vnet"
+        try:
+            network = self.azure(self.s["subscription_id"]).request("GET", network_scope)
+        except AzureError as error:
+            if error.status != 404:
+                raise
+            network = {}
+        for subnet in network.get("properties", {}).get("subnets", []):
+            parameter = {
+                "functions": "functionsNetworkSecurityGroupId",
+                "endpoints": "endpointsNetworkSecurityGroupId",
+            }.get(subnet["name"])
+            nsg = subnet.get("properties", {}).get("networkSecurityGroup", {}).get("id")
+            if parameter and nsg:
+                parameters[parameter] = nsg
         write_json(path, deployment_parameters(parameters))
         group = self.n["portal_resource_group"]
         self.az("group", "create", "--name", group, "--location", self.s["location"])
@@ -685,6 +748,7 @@ class Deployment:
         verify_portal_setup(
             url,
             list(unified_settings["providerConfigs"]) if self.unified else ["claude"],
+            enrollment=self.unified,
         )
         self.save(portal_url=url)
 
@@ -768,7 +832,12 @@ class Deployment:
             print("\nRequired administrator actions: none for developer sign-in (Azure CLI mode).")
         print("\nOnboard developers:")
         print("  uv run python scripts/onboard_users.py alice@example.com bob@example.com")
-        print("  Send them the installer ZIP. They open Install.command and sign in once.")
+        if self.unified:
+            print(
+                f"  Share {self.state['portal_url']}/?page=onboarding. Users sign in and download setup; published model updates then refresh automatically."
+            )
+        else:
+            print("  Send them the installer ZIP. They open Install.command and sign in once.")
 
     def upgrade_portal(self):
         """Reuse models, foundation, original portal storage and identities during cutover."""
@@ -836,7 +905,7 @@ def wait_for_health(url, attempts=40, delay=15):
     raise DeployError(f"{url} did not become healthy; check the Function app deployment logs")
 
 
-def verify_portal_setup(url, expected_clients):
+def verify_portal_setup(url, expected_clients, *, enrollment=False):
     """Do not report success while users would receive an unusable setup download."""
     try:
         with urllib.request.urlopen(url + "/api/health", timeout=30) as response:
@@ -849,6 +918,7 @@ def verify_portal_setup(url, expected_clients):
         status.get("setup_ready") is not True
         or status.get("bundle_ready") is not True
         or set(status.get("client_types", [])) != set(expected_clients)
+        or (enrollment and status.get("client_enrollment_enabled") is not True)
     ):
         raise DeployError(
             "The portal is online, but client setup is not connected to every enabled gateway. "

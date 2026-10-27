@@ -4,6 +4,8 @@ param storageId string
 param vnetAddressPrefix string
 param functionsSubnetPrefix string
 param endpointsSubnetPrefix string
+param functionsNetworkSecurityGroupId string = ''
+param endpointsNetworkSecurityGroupId string = ''
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   name: '${portalName}-vnet'
@@ -15,6 +17,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         name: 'functions'
         properties: {
           addressPrefix: functionsSubnetPrefix
+          networkSecurityGroup: empty(functionsNetworkSecurityGroupId) ? null : { id: functionsNetworkSecurityGroupId }
           delegations: [{
             name: 'flex-consumption'
             properties: { serviceName: 'Microsoft.App/environments' }
@@ -25,6 +28,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
         name: 'endpoints'
         properties: {
           addressPrefix: endpointsSubnetPrefix
+          networkSecurityGroup: empty(endpointsNetworkSecurityGroupId) ? null : { id: endpointsNetworkSecurityGroupId }
           privateEndpointNetworkPolicies: 'Disabled'
         }
       }

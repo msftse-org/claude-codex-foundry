@@ -21,11 +21,20 @@ param budgetStorageAccount string = ''
 param budgetOrganizationId string = ''
 param providerConfigs object = {}
 param initialBudgetPrices array = []
+@description('Dedicated read-only own-user configuration API; prepared by the standard unified deployer.')
+param configurationResourceId string = ''
+@description('Azure CLI public client by default, or a dedicated enrollment public client for explicit MSAL mode.')
+param enrollmentClientId string = ''
+@description('Same independently reviewed deployment bounds passed to the shared budget runtime.')
+param configurationDeployments object = {}
 @description('Use private Blob networking. Keep enabled where organizational policy requires private storage.')
 param privateStorage bool = true
 param vnetAddressPrefix string = '10.91.0.0/24'
 param functionsSubnetPrefix string = '10.91.0.0/26'
 param endpointsSubnetPrefix string = '10.91.0.64/27'
+@description('Preserve the existing/organization-policy NSG on a rerun; empty does not add one on a fresh network.')
+param functionsNetworkSecurityGroupId string = ''
+param endpointsNetworkSecurityGroupId string = ''
 
 @allowed([512, 2048, 4096])
 param memoryMB int = 512
@@ -37,6 +46,7 @@ var tags = { solution: 'claude-codex-foundry', component: 'admin-portal', releas
 @description('Set explicitly to the existing account when redeploying a pre-rename installation.')
 param storageAccountName string = 'ccfadmin${uniqueString(resourceGroup().id, portalName)}'
 var storageName = storageAccountName
+var enrollmentEnabled = !empty(budgetStorageAccount) && !empty(configurationResourceId) && !empty(enrollmentClientId)
 var blobOwnerRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -73,6 +83,8 @@ module network 'modules/portal-network.bicep' = if (privateStorage) {
     vnetAddressPrefix: vnetAddressPrefix
     functionsSubnetPrefix: functionsSubnetPrefix
     endpointsSubnetPrefix: endpointsSubnetPrefix
+    functionsNetworkSecurityGroupId: functionsNetworkSecurityGroupId
+    endpointsNetworkSecurityGroupId: endpointsNetworkSecurityGroupId
   }
 }
 resource blobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
@@ -182,6 +194,13 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_ORGANIZATION_ID', value: budgetOrganizationId }
         { name: 'PORTAL_PROVIDER_CONFIGS_JSON', value: string(providerConfigs) }
         { name: 'PORTAL_INITIAL_BUDGET_PRICES_JSON', value: string(initialBudgetPrices) }
+        { name: 'PORTAL_CLIENT_CONFIGURATION_ENABLED', value: enrollmentEnabled ? '1' : '0' }
+        { name: 'PORTAL_CONFIGURATION_RESOURCE_ID', value: configurationResourceId }
+        { name: 'PORTAL_CONFIGURATION_CLIENT_IDS_JSON', value: enrollmentEnabled ? string([enrollmentClientId]) : '[]' }
+        { name: 'PORTAL_CONFIGURATION_DEPLOYMENTS_JSON', value: string(configurationDeployments) }
+        { name: 'PORTAL_CLIENT_ENROLLMENT_ENABLED', value: enrollmentEnabled ? '1' : '0' }
+        { name: 'PORTAL_ENROLLMENT_ORIGIN', value: 'https://${portalName}.azurewebsites.net' }
+        { name: 'PORTAL_ENROLLMENT_CLIENT_ID', value: enrollmentClientId }
         { name: 'PORTAL_STATIC_DIR', value: '/home/site/wwwroot/static' }
         { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
         { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }

@@ -203,8 +203,8 @@ Users follow the [Mac installation guide](macos.md). For MSAL without Azure CLI,
 
 ### Experimental organization-link onboarding
 
-An operator can opt into the separate [configuration-refresh pilot](client-configuration-refresh.md).
-It replaces this page's group/profile export flow with one stable organization
+The standard unified deployer prepares the [configuration-refresh preview](client-configuration-refresh.md)
+and its dedicated read-only registration. It replaces this page's group/profile export flow with one stable organization
 link, the user's own Entra sign-in, and a choice of eligible applications.
 The setup ZIP pins connection details, not model grants; future model selections
 come from the active published policy. The screenshot above shows the existing
@@ -212,8 +212,8 @@ JSON flow, not the pilot.
 
 The pilot requires explicit enrollment, which automatically starts background
 refresh. Existing installations require explicit migration, and open apps may need
-reopening to show new picker entries. The server-side pilot rollout remains
-disabled by default and is not release-qualified:
+reopening to show new picker entries. Low-level portal deployments without the
+separate identity stay disabled/fail-closed. The preview is not release-qualified:
 encrypted credential storage, native-client behavior and recovery remain gates
 before rollout. Gateway access and spending policy continue to be enforced
 server-side even when local files are stale.

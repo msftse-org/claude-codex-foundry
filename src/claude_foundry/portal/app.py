@@ -961,6 +961,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             or bool(os.getenv("BUDGET_CLAUDE_GATEWAY_URL")),
             "client_types": list(providers) or [config.get("client_type", "claude")],
             "bundle_ready": local or bundle_template_ready(),
+            "client_enrollment_enabled": enrollment_descriptor is not None,
         }
 
     static = Path(os.getenv("PORTAL_STATIC_DIR", "portal/web/dist")).resolve()

@@ -137,6 +137,15 @@ For **baseline access**, the group grant is sufficient after propagation. Instal
 
 For **unified administration**, complete [model verification and shared publication](unified-administration.md) for both providers. For **legacy Claude portal governance**, use the authenticated owner/admin portal session and [member-import workflow](portal-guide.md#members-and-bulk-onboarding):
 
+The unified deployer also prepares organization-link configuration refresh and its
+separate read-only API registration; preserve `.local/portal/enrollment-receipt.json`.
+No manual app-setting enablement is required. After publication, share
+`https://YOUR_PORTAL/?page=onboarding`, not repeated JSON exports. An existing pilot
+must retain its original receipt and configuration identity before upgrading.
+The [Mac security instructions](macos.md#apple-security-approval) apply to the current
+unsigned script ZIP. Native-client, scheduling and recovery qualification remain
+required before rollout; template wiring alone does not close those gates.
+
 1. Create the intended portal groups and review their allowed/default models and quotas. Portal groups do not synchronize with Entra groups.
 2. Import the generated CSV under **Members → Import CSV**, selecting the appropriate default portal group. Split the file by team if needed. The portal accepts up to 2,500 new developers per file. Exclude the existing owner and other already registered members; duplicate object IDs are rejected rather than updated.
 3. Validate and save the import. The import creates developers; it cannot grant administrative roles. Assign any approved roles separately and confirm the owner retains access.
