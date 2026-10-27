@@ -7,6 +7,8 @@ import {
     rmSync,
     writeFileSync,
     existsSync,
+    realpathSync,
+    symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,7 +31,7 @@ function fixture() {
     });
     writeFileSync(
         join(payload, "claude-foundry/scripts/macos/install.sh"),
-        '#!/bin/bash\nprintf "%s" "$PWD" > "$SETUP_TEST_MARKER"\nexit "${SETUP_TEST_EXIT:-0}"\n',
+        '#!/bin/bash\nprintf "%s" "$0" > "$SETUP_TEST_MARKER"\nexit "${SETUP_TEST_EXIT:-0}"\n',
     );
     // Spaces and shell syntax are data, including when a user supplies another path.
     const archive = join(root, "setup $(touch unexpected) ' copy.zip");
@@ -99,6 +101,23 @@ it.runIf(process.platform === "darwin")(
         expect(
             execFileSync("ls", ["-A", item.temporary], { encoding: "utf8" }),
         ).toBe("");
+    },
+);
+
+it.runIf(process.platform === "darwin")(
+    "passes physical paths to the installer even when macOS supplies a temporary-directory symlink",
+    () => {
+        const item = fixture();
+        const alias = join(item.root, "linked-temp");
+        symlinkSync(item.temporary, alias);
+        const result = item.run(item.archive, { TMPDIR: alias });
+        expect(result.status, result.stderr).toBe(0);
+        expect(
+            readFileSync(item.marker, "utf8").startsWith(
+                realpathSync(item.temporary) + "/",
+            ),
+        ).toBe(true);
+        expect(readFileSync(item.marker, "utf8")).not.toContain("linked-temp");
     },
 );
 

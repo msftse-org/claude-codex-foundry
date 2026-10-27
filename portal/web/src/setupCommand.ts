@@ -15,6 +15,7 @@ export function terminalSetupCommand(sha256: string): string {
         'if [ ! -f "$archive" ]; then printf "%s\\n" "ZIP not found in Downloads. Enter the ZIP full path without quotes, then press Enter:"; IFS= read -r archive; fi',
         '[ -f "$archive" ] || { printf "%s\\n" "SETUP DID NOT COMPLETE. Download setup again from your trusted organization portal." >&2; exit 1; }',
         'work="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/claude-foundry-setup.XXXXXX")"',
+        'work="$(cd "$work" && /bin/pwd -P)"',
         'cleanup() { /bin/rm -rf -- "$work"; }',
         "trap cleanup EXIT",
         '/bin/cp "$archive" "$work/setup.zip"',
