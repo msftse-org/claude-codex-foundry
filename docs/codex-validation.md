@@ -168,6 +168,10 @@ file; it is a failed tool-use check. These results do not qualify that model wit
 this plugin set. No global connector setting was changed. The retained default
 model passed with the normal connector configuration.
 
-Visual desktop acceptance remains outstanding because the Mac locked during the
-journey; bundled-engine success does not close that gate. This check does not
-requalify every catalog model, plugin, Conditional Access policy or budget scenario.
+The final native Edge download/copy/paste/install roundtrip passed after the Mac
+was unlocked, as did actual Claude Desktop Chat and Code. Codex Desktop visual
+acceptance remains outstanding because computer-use safety controls explicitly
+block that app; the user has been asked to verify the displayed provider/model and
+a synthetic response after fully reopening it. Bundled-engine success does not
+close this gate. This check does not requalify every catalog model, plugin,
+Conditional Access policy or budget scenario.

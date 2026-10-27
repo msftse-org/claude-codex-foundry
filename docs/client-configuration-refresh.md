@@ -465,19 +465,20 @@ identities, tokens and customer configuration remain outside Git.
 ### Terminal onboarding qualification — 2026-10-27
 
 The authorized Azure preview served the combined **Download setup & copy command**
-button. Edge downloaded a ZIP for both applications; its SHA-256 matched the
-filename and command. The combined copy succeeded on repeat, and **Copy command**
-also copied the displayed text. An initial immediate clipboard read was empty;
-first-click clipboard behavior remains part of the final browser acceptance.
+button. A fresh native Edge tab completed Microsoft SSO. The first native click
+both downloaded the ZIP and copied the corrected command into the real system
+clipboard. A native paste matched the reviewed source and the actual ZIP's SHA-256.
+Browser automation maintains a separate clipboard state; its initial stale read was
+not a product copy failure. The exact native-pasted command ran through the shell
+execution tool and printed `SETUP COMPLETE` for both applications.
 
-The first real installation stopped before enrollment because macOS supplies a
+The first real installation had stopped before enrollment because macOS supplies a
 system-symlink temporary path. The command now canonicalizes its freshly created
 private directory with physical `pwd`; settings/descriptor symlink protections
-remain unchanged. The corrected command, generated from the same frontend source
-and applied to the actual Edge-downloaded ZIP, completed enrollment. It configured
-nine Claude and 33 Codex models and loaded the per-user 900-second job automatically.
-A successful launchd run advanced the configuration status without a manual refresh.
-Unrelated settings and the existing Codex sign-in were preserved.
+remain unchanged. Enrollment configured nine Claude and 33 Codex models, loaded
+the 900-second job automatically, and preserved unrelated settings and the existing
+Codex sign-in. A successful launchd run advanced configuration status without a
+manual refresh. Repeating the exact downloaded command also completed successfully.
 
 Claude Code 2.1.296 with `claude-haiku-4-5`, Codex CLI 0.145.0, and desktop bundled
 engine 0.164.0-alpha.11.1 with the retained approved `gpt-6-luna` selection passed
@@ -485,9 +486,16 @@ real local-file tool calls and conversation follow-ups. Anonymous, wrong-audienc
 account-selector and configuration-token-to-administration probes were rejected;
 authorized configuration and conditional reads returned 200 and 304.
 
-The final corrected browser roundtrip and visual desktop acceptance remain open:
-the Mac locked during testing. The command was executed with the shell execution
-tool, not by controlling Terminal's UI. The hosted portal used the real owner's
-sign-in; this is not a second real developer-account sign-in qualification. Keep
-the change draft/unmerged until the required interactive journey is completed.
-This is preview evidence, not general rollout or all-model/plugin qualification.
+After a verified full quit and relaunch, Claude Desktop 3.6556.2 selected the
+Organization gateway profile, enrollment helper and nine-model list. Its native
+connection test completed a one-token inference through the helper. Actual Desktop
+Chat passed a prompt and follow-up; actual Desktop Code read the synthetic fixture
+from this worktree and correctly repeated its contents in a subsequent turn.
+
+**Remaining merge gate:** computer-use safety controls explicitly deny access to
+Codex Desktop. Its visual provider/model/response check is handed to the user;
+bundled-engine success does not close it. Terminal UI control is also unavailable;
+command execution evidence above is from the shell execution tool. The hosted portal
+used the real owner's sign-in, not a second developer account. Keep the change draft
+and unmerged until the required user check is complete. This is preview evidence,
+not general rollout or all-model/plugin/budget qualification.

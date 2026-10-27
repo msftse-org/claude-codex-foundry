@@ -210,6 +210,13 @@ The setup ZIP pins connection details, not model grants; future model selections
 come from the active published policy. The screenshot above shows the existing
 JSON flow, not the pilot.
 
+![Download setup and copy a verified Terminal command](images/enrollment-terminal-setup.png)
+
+Actual Azure preview in Microsoft Edge, October 27, 2026, application build
+`496b773`. Cropped during capture to exclude identities, addresses, ZIP identifiers
+and pointers. Native Microsoft SSO, download, first-click system copy/paste, command
+execution and launchd refresh passed; Codex Desktop visual acceptance remains pending.
+
 Use **Download setup & copy command** to download the authenticated setup ZIP and
 copy a single Terminal command. Wait for the browser download to finish, paste the
 command into Terminal, and press Enter. The command checks the exact ZIP's SHA-256,

@@ -22,3 +22,12 @@ shows only the setup instructions, excluding URLs, identifiers and pointers.
 The wording is rendered by the application unchanged. Desktop and 390-pixel
 layouts were checked; this is copy/layout evidence, not native-client,
 Entra or launchd qualification.
+
+
+`enrollment-terminal-setup.png` was captured on **2026-10-27** from the real Azure
+preview in Microsoft Edge, application build `496b773`. Native Microsoft SSO and
+the first download/copy/system-paste roundtrip were exercised. The capture-time
+crop includes only generic instructions and the primary button, excluding names,
+URLs, ZIP fingerprints and pointers. No displayed values were edited. The exact
+copied command completed enrollment with automatic launchd refresh. Codex Desktop
+visual acceptance remains a separate user check because computer use blocks the app.
