@@ -9,6 +9,7 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, downloadFile } from "./api";
 import { Onboarding } from "./Onboarding";
+import { MAC_SECURITY_SETTINGS } from "./MacInstallHelp";
 import type { State } from "./types";
 
 vi.mock("./api", () => ({
@@ -263,9 +264,13 @@ it("offers one stable enrollment link with automatic refresh and only an applica
         expect.stringContaining("Ask me before migrating"),
     );
     const prompt = vi.mocked(navigator.clipboard.writeText).mock.lastCall?.[0];
-    expect(prompt).toContain("Background refresh is automatic as part of enrollment");
+    expect(prompt).toContain(
+        "Background refresh is automatic as part of enrollment",
+    );
     expect(prompt).not.toContain("or enabling background refresh");
-    expect(screen.getByText(/Background refresh starts automatically/)).toBeTruthy();
+    expect(
+        screen.getByText(/Background refresh starts automatically/),
+    ).toBeTruthy();
     expect(screen.queryByText(/enable-refresh/)).toBeNull();
 });
 
@@ -298,6 +303,48 @@ it("enrollment failures offer retry without a partial ZIP or a group override", 
     expect(screen.queryByRole("option", { name: "Claude" })).toBeNull();
     expect(api).toHaveBeenLastCalledWith("/api/client-enrollment");
 });
+
+it.each([false, true])(
+    "provides a fixed, explicit Mac security handoff (enrollment=%s)",
+    async (enroll) => {
+        vi.mocked(api).mockResolvedValue(enroll ? enrollment : profile);
+        render(
+            <Onboarding
+                state={enroll ? enrolledState : state}
+                onMembers={vi.fn()}
+                notify={notify}
+            />,
+        );
+        const help = await screen.findByRole("region", {
+            name: "Mac installation and security",
+        });
+        expect(help.textContent).toContain("Open Anyway");
+        expect(help.textContent).toContain("not Apple-signed or notarized");
+        expect(help.textContent).toContain("do not remove quarantine");
+        expect(help.textContent).toContain("contact IT");
+        const link = screen.getByRole("link", {
+            name: "Open macOS Privacy & Security",
+        });
+        expect(link.getAttribute("href")).toBe(MAC_SECURITY_SETTINGS);
+        expect(link.getAttribute("href")).not.toContain("portal.example.com");
+        expect(notify).not.toHaveBeenCalled();
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: enroll
+                    ? "Download enrollment setup ZIP"
+                    : "Download Mac setup ZIP",
+            }),
+        );
+        await waitFor(() =>
+            expect(notify).toHaveBeenCalledWith(
+                expect.stringContaining("Apple approval if prompted"),
+            ),
+        );
+        expect(notify).not.toHaveBeenCalledWith(
+            expect.stringContaining("SETUP COMPLETE"),
+        );
+    },
+);
 
 it("discards a pending enrollment response when published state changes", async () => {
     let resolveOld!: (value: unknown) => void;

@@ -22,6 +22,22 @@ CLIENT_FIELDS = {
     "default_model",
 }
 
+MAC_SECURITY_HELP = """### If Apple blocks Install.command
+
+This source/script installer is not Apple-signed or notarized. Only continue if you
+downloaded it from your trusted organization portal and your device policy permits it.
+Click **Done** in Apple's warning, then use **Open macOS Privacy & Security** on the
+portal onboarding page. Alternatively, open Apple menu → System Settings → Privacy &
+Security. Find `Install.command`, choose **Open Anyway**, and confirm. The browser may
+ask permission to open System Settings; some browsers block this shortcut.
+
+This approves only this installer. Keep Gatekeeper enabled. Do not remove quarantine,
+disable system-wide security, or work around an IT-managed restriction. If approval
+is unavailable, contact IT for an approved distribution. Approval is not installation
+success: continue Microsoft sign-in and wait for **SETUP COMPLETE**.
+See [Apple's guidance](https://support.apple.com/102445).
+"""
+
 
 def build_template(root):
     """Package only public installer files; this template contains no profile."""
@@ -120,6 +136,8 @@ user's current published policy determines the available models and server-side 
 3. Review the connection details and complete Microsoft work-account sign-in and MFA.
 4. Setup automatically starts background refresh. Follow the installer's result; reopen the
    app only after `SETUP COMPLETE`, then choose an approved model and send a short test message.
+
+{MAC_SECURITY_HELP}
 
 Background refresh runs about every 15 minutes while you are logged into this Mac. Reopen an
 already-running client to reload its model picker. Refresh cannot grant access or bypass the
@@ -271,6 +289,8 @@ tenant, and model settings automatically. Each user signs in with their own Micr
    From a terminal or coding assistant in this folder, run `bash Install.command`.
 3. Complete Microsoft sign-in and your organization's MFA in the browser.
 4. Fully quit and reopen the app, select an approved model, and send a short test message.
+
+{MAC_SECURITY_HELP}
 
 The installer supports macOS and downloads its isolated runtime and pinned dependencies.
 {cli_help}

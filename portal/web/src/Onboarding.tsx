@@ -3,6 +3,7 @@ import { ArrowRight, Copy, DownloadSimple } from "@phosphor-icons/react";
 import { api, download, downloadFile } from "./api";
 import { Notice, PageHead } from "./components";
 import { EnrollmentOnboarding } from "./EnrollmentOnboarding";
+import { MacInstallHelp } from "./MacInstallHelp";
 import type { State } from "./types";
 
 interface ClientProfile {
@@ -94,7 +95,7 @@ function LegacyOnboarding({
                 "claude-foundry-macos.zip",
             );
             notify(
-                "Setup ZIP downloaded. Extract it and open Install.command, or use the Codex prompt below.",
+                "Setup ZIP downloaded. Follow Install on your Mac below, including Apple approval if prompted.",
             );
         } catch (error) {
             notify((error as Error).message, true);
@@ -266,6 +267,7 @@ function LegacyOnboarding({
                                     Microsoft work account. Local setup
                                     currently supports macOS.
                                 </p>
+                                <MacInstallHelp />
                             </>
                         )}
                     </div>

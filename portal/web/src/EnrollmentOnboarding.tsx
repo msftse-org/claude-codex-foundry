@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowRight, Copy, DownloadSimple } from "@phosphor-icons/react";
 import { api, download, downloadFile } from "./api";
 import { Notice, PageHead } from "./components";
+import { MacInstallHelp } from "./MacInstallHelp";
 import type { State } from "./types";
 
 interface Enrollment {
@@ -181,7 +182,7 @@ export function EnrollmentOnboarding({
                                                 "claude-foundry-enrollment-macos.zip",
                                             );
                                             notify(
-                                                "Enrollment ZIP downloaded. Extract it and open Install.command.",
+                                                "Enrollment ZIP downloaded. Follow Install on your Mac below, including Apple approval if prompted.",
                                             );
                                         } catch (error) {
                                             notify(
@@ -204,6 +205,7 @@ export function EnrollmentOnboarding({
                                     cannot select a different user or group
                                     here.
                                 </p>
+                                <MacInstallHelp />
                             </>
                         )}
                     </div>
