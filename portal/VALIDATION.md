@@ -2,6 +2,12 @@
 
 Status: **preview**. The portal, Codex and content-log sources are maintained in `main`. This record is evidence for the isolated Azure preview and for one authorized shared-route acceptance, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
 
+## Dependency verification on 2026-10-25
+
+Updated only `certifi` from 2026.7.22 to 2026.10.23 in the resolver-generated Python and hash-verified Mac authentication locks. This removes the version affected by the critical emSign CA-bundle advisory. The complete pinned authentication and portal runtime export reports **no known vulnerabilities** with `pip-audit --no-deps --disable-pip`, with no skipped packages. This is a dated advisory check, not a guarantee against undisclosed vulnerabilities.
+
+The offline suite passes **374 tests**, Ruff checks/format, installer shell syntax and package build. No application behavior, customer configuration or live deployment changed in this dependency check; running installations require a later package update to receive the fixed bundle. Frontend dependencies were not changed or re-audited in this check.
+
 ## Verification recorded on 2026-10-23: one shared Claude route
 
 [PR #7](https://github.com/msftse-org/claude-codex-foundry/pull/7) makes the existing Claude API the default target for clients, portal reporting, profile export and governance publication. An isolated API remains an explicit testing option. The rollout below was performed in one authorized environment; backups, configuration, telemetry and recovery snapshots remain private.

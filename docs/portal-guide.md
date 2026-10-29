@@ -187,6 +187,16 @@ Local development verification with synthetic organization data, October 25, 202
 
 Extract the ZIP and open `Install.command`, or use **Copy setup prompt for Codex** on the Mac being configured. The ZIP contains the scoped `client.json`, installer, gateway details in `README.md`, and `AGENTS.md` instructions for a coding assistant. Each person signs in with their own Microsoft work account. No repository checkout or administrator packaging step is needed.
 
+The page's **Install on your Mac** instructions cover Apple's verification warning.
+For this unsigned source/script distribution, **Open macOS Privacy & Security** is an
+explicit, fixed OS-settings shortcut, not automatic approval. The user must approve
+only their trusted `Install.command` using **Open Anyway**. Browsers may block the
+shortcut; the manual settings path remains visible. Managed devices may prohibit
+exceptions. Never disable Gatekeeper or strip quarantine; contact IT instead.
+Downloading or approving the ZIP does not mean setup completed. Wait for **SETUP COMPLETE**.
+An Apple-signed, notarized distribution requires an approved Apple Developer team and
+is not available in this pilot. See [Mac security and installation](macos.md#apple-security-approval).
+
 The **Advanced: connection profile only** section retains the JSON export for an existing installer or managed rollout. That file alone does not contain the installer or setup instructions.
 
 Users follow the [Mac installation guide](macos.md). For MSAL without Azure CLI, the portal deployment must be configured with the separate desktop public-client ID. The portal does not push device policies or track installation completion; use your MDM platform for managed rollout.

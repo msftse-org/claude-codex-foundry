@@ -521,6 +521,58 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     assert not any(c[3:4] == ["verify"] for c in runner.calls)
     assert any("closed until" in w for w in job.warnings)
     assert job.state["governance_mode"] == "unified"
+    assert not any(
+        c[3:4] == ["admin"] and c[6:7] in (["gateway"], ["observability"]) for c in runner.calls
+    )
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_unified_qualifies_with_operator_directly_without_creating_baseline_api(
+    unified_job, partial
+):
+    job, runner, cloud = unified_job
+    write_json(job.org_path, runner.org)
+    original_tool = runner.tool
+    probes = []
+
+    def tool(command, capture):
+        if command[:1] == ["admin"] and command[3] == "qualify":
+            probes.append(json.loads(Path(command[2]).read_text()))
+        result = original_tool(command, capture)
+        if command[:1] == ["admin"] and command[3] == "sync-models":
+            path = Path(command[2])
+            value = json.loads(path.read_text())
+            value["models"][0]["qualified"] = partial
+            if partial:
+                value["models"].append({"name": "new-model", "model": "gpt-test"})
+            write_json(path, value)
+        return result
+
+    runner.tool = tool
+    job.codex()
+    assert len(probes) == 1
+    assert probes[0]["gateway_url"].endswith(".openai.azure.com/openai/v1")
+    assert probes[0]["auth_mode"] == "azure-cli"
+    assert "client_id" not in probes[0]
+    assert [m["name"] for m in probes[0]["models"]] == (["new-model"] if partial else ["gpt-test"])
+    saved = json.loads(job.codex_path.read_text())
+    assert saved["gateway_url"].endswith("/codex/v1")
+    assert ".openai.azure.com" not in saved["gateway_url"]
+    assert all(m["qualified"] for m in saved["models"])
+    assert len(saved["models"]) == (2 if partial else 1)
+    assert not any("gateway" in c or "observability" in c for c in runner.calls)
+    assert not cloud
+
+
+def test_unified_rerun_does_not_recreate_retired_routes(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=False)
+    runner.calls.clear()
+    cloud.clear()
+    job.deploy(verify=False)
+    assert not any("gateway" in c or "observability" in c for c in runner.calls)
+    assert not any("qualify" in c for c in runner.calls)
+    assert [c[1] for c in cloud if c[0] == "route"] == ["claude-governed", "codex-governed"]
 
 
 def test_deployment_enables_stream_capture_with_content_logs(unified_job):
@@ -636,9 +688,39 @@ def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
     monkeypatch.setattr(
         deploy.urllib.request,
         "urlopen",
-        lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
+        lambda url, **kwargs: io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"public asset"
+        ),
     )
     deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
+
+
+@pytest.mark.parametrize("failed_path", ["/", "/assets/app.js", "/assets/app.css"])
+def test_health_is_not_sufficient_when_public_portal_files_cannot_be_served(
+    deploy, monkeypatch, failed_path
+):
+    from urllib.error import HTTPError
+
+    status = {"setup_ready": True, "bundle_ready": True, "client_types": ["claude", "codex"]}
+
+    def open_url(url, **kwargs):
+        if url == "https://portal.example.com" + failed_path:
+            raise HTTPError(url, 500, "Unreadable file", {}, None)
+        return io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"asset"
+        )
+
+    monkeypatch.setattr(deploy.urllib.request, "urlopen", open_url)
+    with pytest.raises(deploy.DeployError, match="user interface is unavailable"):
+        deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
 
 
 def test_unified_mode_cannot_be_downgraded(unified_job):
