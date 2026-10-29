@@ -219,6 +219,18 @@ def test_access_tokens_reject_wrong_claims(org, app, key, overrides):
         assert result.status_code == 401
 
 
+def test_azure_cli_tokens_are_accepted_with_the_same_role_checks(org, app, key):
+    from claude_foundry.portal.auth import AZURE_CLI_CLIENT_ID
+
+    with TestClient(app) as client:
+        cli = {"Authorization": "Bearer " + token(org, key, azp=AZURE_CLI_CLIENT_ID)}
+        assert client.get("/api/state", headers=cli).status_code == 200
+        stranger = {
+            "Authorization": "Bearer " + token(org, key, azp=AZURE_CLI_CLIENT_ID, oid=str(uuid4()))
+        }
+        assert client.get("/api/state", headers=stranger).status_code == 403
+
+
 def test_token_signature_is_verified(org, key, monkeypatch):
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     auth = Authenticator(org["tenant_id"], CLIENT)

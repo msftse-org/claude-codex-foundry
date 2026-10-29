@@ -10,6 +10,23 @@ from uuid import UUID, uuid4
 
 from claude_foundry.azure import az_json
 from claude_foundry.config import load_org, write_json
+from claude_foundry.portal.auth import AZURE_CLI_CLIENT_ID
+
+
+def preauthorize(graph, object_id, api, scope_id):
+    """Pre-authorize Azure CLI for access_as_user; resend the whole api block."""
+    graph(
+        "PATCH",
+        "applications/" + object_id,
+        {
+            "api": {
+                **api,
+                "preAuthorizedApplications": [
+                    {"appId": AZURE_CLI_CLIENT_ID, "delegatedPermissionIds": [scope_id]}
+                ],
+            }
+        },
+    )
 
 
 def register(config, name, redirects, app_id=None):
@@ -61,6 +78,21 @@ def register(config, name, redirects, app_id=None):
         ),
         str(uuid4()),
     )
+    api = {
+        "requestedAccessTokenVersion": 2,
+        "oauth2PermissionScopes": [
+            {
+                "id": scope_id,
+                "value": "access_as_user",
+                "type": "User",
+                "isEnabled": True,
+                "adminConsentDisplayName": "Use Claude & Codex Admin",
+                "adminConsentDescription": "Access this organization's Claude & Codex administration portal as the signed-in user. The portal enforces each member's assigned role.",
+                "userConsentDisplayName": "Use Claude & Codex Admin",
+                "userConsentDescription": "Use your organization's Claude & Codex administration portal with your assigned permissions.",
+            }
+        ],
+    }
     # Use a dedicated registration. This command intentionally owns its manifest.
     graph(
         "PATCH",
@@ -69,21 +101,7 @@ def register(config, name, redirects, app_id=None):
             "signInAudience": "AzureADMyOrg",
             "identifierUris": ["api://" + app["appId"]],
             "spa": {"redirectUris": redirects},
-            "api": {
-                "requestedAccessTokenVersion": 2,
-                "oauth2PermissionScopes": [
-                    {
-                        "id": scope_id,
-                        "value": "access_as_user",
-                        "type": "User",
-                        "isEnabled": True,
-                        "adminConsentDisplayName": "Use Claude & Codex Admin",
-                        "adminConsentDescription": "Access this organization's Claude & Codex administration portal as the signed-in user. The portal enforces each member's assigned role.",
-                        "userConsentDisplayName": "Use Claude & Codex Admin",
-                        "userConsentDescription": "Use your organization's Claude & Codex administration portal with your assigned permissions.",
-                    }
-                ],
-            },
+            "api": api,
             "requiredResourceAccess": [
                 {
                     "resourceAppId": app["appId"],
@@ -92,6 +110,9 @@ def register(config, name, redirects, app_id=None):
             ],
         },
     )
+    # Once the scope exists, let Azure CLI request it without a consent prompt, so
+    # deploy and onboarding scripts publish through the same audited portal API.
+    preauthorize(graph, app["id"], api, scope_id)
     existing = graph(
         "GET", "servicePrincipals?" + urlencode({"$filter": f"appId eq '{app['appId']}'"})
     )["value"]
