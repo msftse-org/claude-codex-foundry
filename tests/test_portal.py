@@ -1,9 +1,12 @@
 """Authorization, policy compilation, and publication failure boundaries."""
 
 import copy
+import io
 import json
 import time
 import xml.etree.ElementTree as ET
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from claude_foundry.client_bundle import build_template
 from claude_foundry.portal.app import create_app
 from claude_foundry.portal.auth import Authenticator
 from claude_foundry.portal.domain import Change, apply_change, import_members, seed
@@ -628,6 +632,85 @@ def test_profile_is_scoped_and_has_valid_defaults(app, org, key, monkeypatch):
         data["groups"][0].update(model_ids=[], default_model="")
         app.state.store.save(data, etag)
         assert client.get("/api/client-profile", headers=headers(org, key)).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "role", ["owner", "admin", "group_admin", "developer", "auditor", "billing"]
+)
+def test_setup_bundle_has_same_profile_and_scope_as_export(
+    app, org, key, monkeypatch, tmp_path, role
+):
+    template = tmp_path / "client-bundle.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    data, etag = app.state.store.read()
+    member = add_member(data, role)
+    app.state.store.save(data, etag)
+    auth = headers(org, key, member["id"])
+    with TestClient(app) as client:
+        assert client.get("/api/client-bundle").status_code == 401
+        response = client.get("/api/client-bundle", headers=auth)
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["cache-control"] == "no-store"
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            profile = json.loads(archive.read("claude-foundry/client.json"))
+            assert profile == client.get("/api/client-profile", headers=auth).json()
+            assert profile["gateway_url"] in archive.read("claude-foundry/README.md").decode()
+            assert archive.getinfo("claude-foundry/Install.command").external_attr >> 16 & 0o111
+        assert client.get(
+            "/api/client-bundle", params={"group_id": member["group_id"]}, headers=auth
+        ).status_code == (200 if role in {"owner", "admin", "group_admin"} else 403)
+        data, etag = app.state.store.read()
+        member = next(m for m in data["members"] if m["id"] == member["id"])
+        member["status"] = "suspended"
+        app.state.store.save(data, etag)
+        assert client.get("/api/client-bundle", headers=auth).status_code == 403
+
+
+def test_setup_bundle_reports_missing_template_after_authorization(
+    app, org, key, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(tmp_path / "missing.zip"))
+    with TestClient(app) as client:
+        assert client.get("/api/client-bundle").status_code == 401
+        assert client.get("/api/client-bundle", headers=headers(org, key)).status_code == 503
+
+
+def test_budget_setup_bundle_uses_published_gateway_and_access(
+    org, state, key, monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    template = tmp_path / "client-bundle.zip"
+    template.write_bytes(build_template(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("PORTAL_CLIENT_BUNDLE_TEMPLATE", str(template))
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    monkeypatch.setenv("PORTAL_CLIENT_ID", CLIENT)
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda *args: SimpleNamespace(key=key.public_key()),
+    )
+    published = copy.deepcopy(state)
+    store = LocalStore(tmp_path / "state.json", state)
+    budget = (
+        SimpleNamespace(active=lambda: "published"),
+        SimpleNamespace(get=lambda _: copy.deepcopy(published)),
+    )
+    app = create_app(org, store=store, credential=object(), local=False, budget=budget)
+    gateway = "https://test-apim.azure-api.net/claude-budget-preview"
+    with TestClient(app) as client:
+        auth = headers(org, key)
+        assert client.get("/api/client-bundle", headers=auth).status_code == 409
+        monkeypatch.setenv("BUDGET_CLAUDE_GATEWAY_URL", gateway)
+        response = client.get("/api/client-bundle", headers=auth)
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert json.loads(archive.read("claude-foundry/client.json"))["gateway_url"] == gateway
+            assert gateway in archive.read("claude-foundry/README.md").decode()
+        published["groups"][0].update(model_ids=[], default_model="")
+        assert client.get("/api/client-bundle", headers=auth).status_code == 409
 
 
 def test_publication_timeout_restores_every_attempt_even_when_first_restore_fails(org, state):

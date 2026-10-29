@@ -66,6 +66,7 @@ export interface AccessRequest {
 export interface State {
     revision: number;
     budget_configured?: boolean;
+    recovery_operator?: boolean;
     budget_prices?: BudgetPrice[];
     viewer: Member;
     members: Member[];

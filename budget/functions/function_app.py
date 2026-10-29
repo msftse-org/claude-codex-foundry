@@ -10,9 +10,10 @@ from azurefunctions.extensions.http.fastapi import Request, StreamingResponse
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
-from claude_foundry.portal.budget_ledger import AzureRows, BudgetDenied, Ledger
-from claude_foundry.portal.budget_policy import Snapshots, snapshot
+from claude_foundry.portal.budget_ledger import BudgetDenied
+from claude_foundry.portal.budget_policy import Snapshots
 from claude_foundry.portal.budget_proxy import MAX_BODY, BudgetProxy, GatewayIdentity
+from claude_foundry.portal.budget_recovery import open_ledger
 from claude_foundry.portal.policy_cache import ApimPolicyCache
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
@@ -24,7 +25,12 @@ identity = GatewayIdentity(
 )
 account = os.environ["BUDGET_STORAGE_ACCOUNT"]
 proxy = BudgetProxy(
-    Ledger(AzureRows(account, os.environ["BUDGET_ORGANIZATION_ID"], credential)),
+    open_ledger(
+        account,
+        os.environ["BUDGET_ORGANIZATION_ID"],
+        credential,
+        os.getenv("BUDGET_RECOVERY_STORAGE_ACCOUNT"),
+    ),
     Snapshots(
         account,
         credential,
@@ -44,15 +50,6 @@ proxy = BudgetProxy(
 async def inference(req: Request) -> StreamingResponse:
     try:
         await asyncio.to_thread(identity.validate, req.headers.get("authorization"))
-        bootstrap = os.getenv("BUDGET_BOOTSTRAP_JSON")
-        if bootstrap:
-            # Server-side one-time seed for private storage; an existing ledger is
-            # never reset or overwritten, even if an operator leaves this setting.
-            meta, _ = await asyncio.to_thread(proxy.ledger.rows.read, "policy")
-            if not meta:
-                reviewed = snapshot(json.loads(bootstrap))
-                await asyncio.to_thread(proxy.snapshots.put, reviewed)
-                await asyncio.to_thread(proxy.ledger.activate, reviewed, expected="")
         provider, operation = req.path_params["provider"], req.path_params["operation"]
         principal = req.headers.get("x-budget-principal-id", "")
         request_id = req.headers.get("x-budget-request-id", "")

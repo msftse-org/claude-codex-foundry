@@ -49,4 +49,6 @@ if [[ "$task_history" == true ]]; then
 fi
 "$task_runtime/bin/claude-foundry" "${task_install_args[@]}"
 task_client="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("client_type", "claude"))' "$task_profile")"
+task_gateway="$("$task_runtime/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1]))["gateway_url"])' "$task_profile")"
+echo "Gateway: $task_gateway"
 echo "Installed. Reopen the desktop app. Recovery: $task_runtime/bin/claude-foundry restore --client $task_client"

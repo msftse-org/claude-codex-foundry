@@ -19,6 +19,9 @@ param portalVnetName string
 param privateStorage bool = true
 @description('Optional machine-only APIM policy snapshot endpoint. Empty uses local memory and private Blob only.')
 param policyCacheUrl string = ''
+@description('Separately deployed, private recovery storage with a locked retention policy. Required before use.')
+param recoveryStorageAccount string
+param recoveryStorageResourceId string
 param storageName string = 'ccfbudget${uniqueString(resourceGroup().id, name)}'
 
 var tags = { solution: 'claude-codex-foundry', component: 'budget-runtime', release: 'unreleased' }
@@ -52,7 +55,7 @@ module network 'modules/budget-network.bicep' = if (privateStorage) {
 resource blobs 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
   parent: storage
   name: 'default'
-  properties: { isVersioningEnabled: true, deleteRetentionPolicy: { enabled: true, days: 30 } }
+  properties: { isVersioningEnabled: true, deleteRetentionPolicy: { enabled: true, days: 30 }, containerDeleteRetentionPolicy: { enabled: true, days: 30 } }
 }
 resource containers 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = [for container in ['deployment', 'budget-policies']: {
   parent: blobs
@@ -123,6 +126,8 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_FOUNDRY_ENDPOINT', value: 'https://${foundryName}.services.ai.azure.com' }
         { name: 'BUDGET_DEPLOYMENTS_JSON', value: string(deployments) }
         { name: 'BUDGET_POLICY_CACHE_URL', value: policyCacheUrl }
+        { name: 'BUDGET_RECOVERY_STORAGE_ACCOUNT', value: recoveryStorageAccount }
+        { name: 'BUDGET_RECOVERY_STORAGE_RESOURCE_ID', value: recoveryStorageResourceId }
       ]
     }
   }

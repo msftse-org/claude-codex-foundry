@@ -55,7 +55,7 @@ class Azure:
             self._expiry = time.time() + 240
         return self._token
 
-    def request(self, method, path, body=None, version="2024-05-01"):
+    def request(self, method, path, body=None, version="2024-05-01", headers=None):
         url = "https://management.azure.com" + path + "?" + urlencode({"api-version": version})
         req = Request(
             url,
@@ -65,6 +65,7 @@ class Azure:
                 "Authorization": "Bearer " + self.token(),
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                **(headers or {}),
             },
         )
         try:

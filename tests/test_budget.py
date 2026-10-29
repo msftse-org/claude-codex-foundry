@@ -124,6 +124,7 @@ def test_month_rollover_keeps_original_reservation(ledger, policy):
     before = datetime(2026, 10, 31, 23, 59, tzinfo=UTC)
     after = before + timedelta(minutes=2)
     reservation = admit(ledger, policy, at=before)
+    ledger.prepare_month(policy, at=after)
     assert (
         ledger.balances(policy, policy["members"][0]["id"], after)["scopes"][0][
             "reserved_micro_usd"

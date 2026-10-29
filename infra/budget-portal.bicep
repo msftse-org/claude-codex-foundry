@@ -24,6 +24,12 @@ param contentLogsConfig object = {}
 @description('Optional dedicated budget audience for the machine-only snapshot origin; configure with policyCacheApimPrincipalId.')
 param policyCacheAudience string = ''
 param policyCacheApimPrincipalId string = ''
+param recoveryStorageAccount string
+param recoveryStorageResourceId string
+@description('Explicit Entra object IDs allowed to operate recovery. Portal owner role is required too.')
+param recoveryOperatorIds array = []
+@description('Enable synthetic storage-only fault drills; leave off in a customer production deployment.')
+param enableRecoveryDrill bool = false
 
 var tags = { solution: 'claude-codex-foundry', component: 'budget-admin-portal', release: 'preview' }
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = { name: budgetStorageAccount }
@@ -105,6 +111,10 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'PORTAL_CONTENT_LOGS_JSON', value: empty(contentLogsConfig) ? '' : string(contentLogsConfig) }
         { name: 'PORTAL_STATIC_DIR', value: '/home/site/wwwroot/static' }
         { name: 'BUDGET_STORAGE_ACCOUNT', value: storage.name }
+        { name: 'BUDGET_RECOVERY_STORAGE_ACCOUNT', value: recoveryStorageAccount }
+        { name: 'BUDGET_RECOVERY_STORAGE_RESOURCE_ID', value: recoveryStorageResourceId }
+        { name: 'BUDGET_RECOVERY_OPERATOR_IDS', value: string(recoveryOperatorIds) }
+        { name: 'BUDGET_RECOVERY_DRILL_ENABLED', value: enableRecoveryDrill ? '1' : '0' }
         { name: 'BUDGET_ORGANIZATION_ID', value: organizationId }
         { name: 'BUDGET_CLAUDE_GATEWAY_URL', value: claudeGatewayUrl }
         { name: 'PORTAL_BUDGET_MODELS_JSON', value: string(additionalModels) }

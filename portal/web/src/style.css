@@ -985,6 +985,34 @@ fieldset {
     max-width: 65ch;
     color: var(--ink-3);
 }
+.onboardingstep > div {
+    min-width: 0;
+    width: 100%;
+}
+.setupgroup {
+    display: grid;
+    gap: 8px;
+    max-width: 360px;
+    margin: 16px 0;
+}
+.setupdetails {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 16px;
+    margin: 20px 0;
+}
+.setupdetails dt {
+    color: var(--ink-3);
+}
+.setupdetails dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+.setupprompt {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-width: 75ch;
+}
 @keyframes spin {
     to {
         transform: rotate(360deg);

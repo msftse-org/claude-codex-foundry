@@ -8,6 +8,8 @@ You need a Mac, your work Microsoft account, your organization’s installation 
 
 Obtain the installation bundle from your organization and unzip it. The bundle must include `client.json`. Use your organization's approved distribution of Claude Desktop and, if needed, the Claude Code CLI. The installer configures those apps; it does not replace or update them.
 
+In the administration portal, open **Developer onboarding** and choose **Download Mac setup ZIP**. Your gateway address is shown on that page and in the ZIP's `README.md`; the installer reads it automatically from `client.json`. To have Codex perform setup, use **Copy setup prompt for Codex** and paste it into Codex on your Mac after downloading. The ZIP includes `AGENTS.md` with setup instructions, so the assistant does not need this repository. A Claude profile configures Claude even when Codex runs the installer.
+
 ## Install and sign in
 
 Double-click `Install.command`, or run this from the extracted folder:
