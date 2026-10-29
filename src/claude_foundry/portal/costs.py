@@ -16,19 +16,28 @@ BREAKDOWN_LIMIT = 2500
 
 
 def planning_prices(state):
-    """Use explicit planning rates first, then reviewed enforcement ceilings."""
+    """Use explicit planning rates first, then reviewed list rates or ceilings."""
     prices = list(state.get("prices", []))
     explicit = {p["model"] for p in prices}
     for value in state.get("budget_prices", []):
         if value["model"] not in explicit:
+            rates = value.get("rates")
             prices.append(
                 {
                     "model": value["model"],
-                    "input_per_million": float(value["input_ceiling_per_million"]),
-                    "output_per_million": float(value["output_ceiling_per_million"]),
+                    "input_per_million": float(
+                        rates["input"] if rates else value["input_ceiling_per_million"]
+                    ),
+                    "output_per_million": float(
+                        rates["output"] if rates else value["output_ceiling_per_million"]
+                    ),
                     "source_url": value["source_url"],
                     "verified_on": value["verified_at"][:10],
-                    "note": "Planning estimate at reviewed enforcement ceilings; not an Azure invoice.",
+                    "note": (
+                        "Planning estimate at reviewed list rates; not an Azure invoice."
+                        if rates
+                        else "Planning estimate at reviewed enforcement ceilings; not an Azure invoice."
+                    ),
                 }
             )
     return prices

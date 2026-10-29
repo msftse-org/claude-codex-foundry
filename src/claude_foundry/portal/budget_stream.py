@@ -63,6 +63,11 @@ class UsageStream:
             self.invalid = True
 
     def tokens(self):
+        return usage_tokens(self.provider, self.final())
+
+    def final(self):
+        """Authoritative terminal usage, or an error that keeps the reservation held."""
         if not self.complete or self.invalid or self.decoder.getstate()[0]:
             raise ValueError("No trustworthy terminal usage; reservation retained")
-        return usage_tokens(self.provider, self.usage)
+        usage_tokens(self.provider, self.usage)
+        return self.usage

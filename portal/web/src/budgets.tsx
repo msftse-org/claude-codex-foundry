@@ -282,7 +282,7 @@ export function BudgetPanel({
                                 <th>Model</th>
                                 <th>Input ceiling / 1M</th>
                                 <th>Output ceiling / 1M</th>
-                                <th>Valid until</th>
+                                <th>Review by</th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -296,6 +296,9 @@ export function BudgetPanel({
                                         {new Date(
                                             p.valid_until,
                                         ).toLocaleDateString()}
+                                        {new Date(p.valid_until) <= new Date()
+                                            ? " · review due"
+                                            : ""}
                                     </td>
                                     <td>
                                         <button
@@ -502,6 +505,14 @@ export function BudgetPanel({
                                 value[k] = new Date(
                                     String(value[k]) + "Z",
                                 ).toISOString();
+                            // Keep the reviewed list rates for the same model
+                            // so settlement still charges each token category.
+                            if (price && price.model === value.model) {
+                                const extra = value as Record<string, unknown>;
+                                if (price.rates) extra.rates = price.rates;
+                                if (price.long_context)
+                                    extra.long_context = price.long_context;
+                            }
                             if (await save("budget_pricing", value))
                                 setEditing(null);
                         }}
@@ -606,7 +617,7 @@ export function BudgetPanel({
                                     )}
                                 />
                             </Field>
-                            <Field label="Valid until (UTC, within 31 days)">
+                            <Field label="Review by (UTC, within 366 days)">
                                 <input
                                     name="valid_until"
                                     type="datetime-local"

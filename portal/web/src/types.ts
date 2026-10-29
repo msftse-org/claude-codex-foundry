@@ -142,8 +142,12 @@ export interface BudgetPrice {
     default_output_tokens: number;
     input_ceiling_per_million: string;
     output_ceiling_per_million: string;
+    // Actual list rates (USD per 1M tokens) used for settlement, when known.
+    rates?: Record<string, string | null> | null;
+    long_context?: Record<string, string | number | null> | null;
     source_url: string;
     verified_at: string;
+    // Review-by date. Past it, access continues unless the owner enforces review.
     valid_until: string;
     note: string;
 }

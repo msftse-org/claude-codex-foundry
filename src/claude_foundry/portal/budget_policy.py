@@ -82,7 +82,7 @@ def snapshot(state):
     if not prices or len(prices) != len(result["budget_prices"]):
         raise ValueError("Unique verified prices are required")
     for p in prices.values():
-        BudgetPrice.model_validate(p).check_current()
+        BudgetPrice.model_validate(p).check_current(enforce=settings["enforce_price_review"])
     for group in groups.values():
         if group["spend_ceiling_usd"] is None and not group["spend_ceiling_unlimited"]:
             raise ValueError(

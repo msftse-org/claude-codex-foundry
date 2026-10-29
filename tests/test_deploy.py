@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from claude_foundry.azure import AzureError
-from claude_foundry.config import write_json
+from claude_foundry.config import read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 TENANT = "00000000-0000-0000-0000-000000000001"
@@ -472,6 +472,7 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
     settings.write_text(json.dumps(value))
     runner = UnifiedRunner(organization(org))
     cloud = []
+    deployed = []
 
     class FakeAzure:
         def __init__(self, subscription):
@@ -481,8 +482,11 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
             cloud.append((method, path, body))
             if path.endswith("/config/appsettings/list") or path.endswith("/policies/policy"):
                 raise AzureError(404, "missing")
+            if method == "GET" and path.endswith("/deployments"):
+                return {"value": list(deployed)}
             return {"identity": {"principalId": GROUP}}
 
+    FakeAzure.deployed = deployed
     monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
     monkeypatch.setattr(
         deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
@@ -776,3 +780,39 @@ def test_missing_local_manifest_recovers_existing_runtime_bounds(unified_job):
     job.azure = ExistingRuntime
     (job.local / "unified/runtime-models.json").unlink()
     assert prepare(job)[2] == manifest
+
+
+def test_fresh_unified_deploy_prices_pinned_deployments_from_the_catalog(unified_job):
+    job, _, _ = unified_job
+    # The catalog matches the deployed model, whatever the deployment is named.
+    job.azure.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-sonnet-4-6", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "NoAutoUpgrade",
+            },
+        }
+    )
+    job.deploy(verify=False)
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [p["model"] for p in prices] == ["claude-test"]
+    assert prices[0]["rates"]["cache_read"] == "0.3"
+    assert read_json(job.local / "unified/portal-settings.json")["initialBudgetPrices"] == prices
+    manifest = read_json(job.local / "unified/runtime-models.json")
+    assert manifest["claude-test"]["version"] == "1"
+    assert not any("Governed inference is closed" in w for w in job.warnings)
+    assert any("gpt-test (not deployed)" in w for w in job.warnings)
+
+
+def test_established_runtime_keeps_its_reviewed_prices_on_rerun(unified_job):
+    from claude_foundry.unified_deployment import prepare
+
+    job, _, cloud = unified_job
+    job.deploy(verify=False)
+    write_json(job.local / "unified/runtime-models.json", {"reviewed": {}})
+    cloud.clear()
+    assert prepare(job)[2] == {"reviewed": {}}
+    assert not any(c[0] == "GET" and c[1].endswith("/deployments") for c in cloud)

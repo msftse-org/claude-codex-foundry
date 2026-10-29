@@ -19,6 +19,11 @@ LOG = logging.getLogger(__name__)
 MAX_BODY = 8 * 1024 * 1024
 
 
+def enforce_review(policy):
+    """Owners opt into refusing models whose rate review date has passed."""
+    return bool(policy["settings"].get("enforce_price_review", False))
+
+
 class GatewayIdentity:
     """Validate an app-only MI token for this service, from this APIM identity only."""
 
@@ -116,7 +121,7 @@ class BudgetProxy:
         if len(values) != 1:
             raise BudgetDenied("Verified model pricing is required")
         price = BudgetPrice.model_validate(values[0])
-        price.prepare({**body, "max_tokens": 1})
+        price.prepare({**body, "max_tokens": 1}, enforce_review(policy))
         allowed = {"model", "messages", "tools", "system", "thinking", "tool_choice"}
         if set(body) - allowed:
             raise ValueError("Unsupported token-counting fields")
@@ -158,7 +163,7 @@ class BudgetProxy:
             raise BudgetDenied(
                 "The deployment's pinned capacity/version does not match reviewed pricing"
             )
-        payload, maximum, output_bound = price.prepare(body)
+        payload, maximum, output_bound = price.prepare(body, enforce_review(policy))
         if provider == "openai" and deployment.get("supports_reasoning") is False:
             # Mirrors the qualified baseline profile for non-reasoning models.
             # This capability is server-owned, never supplied by the client.
@@ -209,13 +214,15 @@ class BudgetProxy:
             "Cache-Control": "no-store",
         }
 
-        async def settle(tokens):
-            inputs, outputs = tokens
+        async def settle(usage_value):
+            inputs, outputs = usage_tokens(provider, usage_value)
             # Violations never release money, even if another rate happens to mask it.
             if inputs > price.max_input_tokens or outputs > output_bound:
                 await asyncio.to_thread(self.ledger.settle, request_id, maximum + 1)
                 return
-            await asyncio.to_thread(self.ledger.settle, request_id, price.cost(inputs, outputs))
+            await asyncio.to_thread(
+                self.ledger.settle, request_id, price.usage_cost(provider, usage_value)
+            )
 
         if payload.get("stream") and response.is_success:
             usage = UsageStream(provider)
@@ -253,12 +260,12 @@ class BudgetProxy:
                         # Native clients can disconnect immediately after the terminal
                         # event. Commit its authoritative usage before exposing it.
                         if usage.complete and not settled:
-                            await settle(usage.tokens())
+                            await settle(usage.final())
                             settled = True
                         yield chunk
                     if not settled:
                         try:
-                            await settle(usage.tokens())
+                            await settle(usage.final())
                             settled = True
                         except Exception:
                             # Normalize every unsettled terminal path. Some compatible
@@ -313,7 +320,7 @@ class BudgetProxy:
             value = json.loads(raw)
             if response.is_success:
                 try:
-                    await settle(usage_tokens(provider, value.get("usage")))
+                    await settle(value.get("usage"))
                 except Exception:
                     LOG.warning("Response usage not settled; check reservation: %s", request_id)
             # Even a 4xx/5xx can follow billable work. No automatic refund.

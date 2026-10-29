@@ -11,6 +11,7 @@ from urllib.request import urlopen
 from claude_foundry.azure import AzureError, account_path, api_path
 from claude_foundry.config import read_json, write_json
 from claude_foundry.models import CS_VERSION
+from claude_foundry.price_catalog import catalog_prices
 from claude_foundry.unified import provider_configs, reviewed_deployments
 
 
@@ -77,13 +78,29 @@ def prepare(job):
             "The model policy file must contain a reviewed price list or budget_prices"
         )
     deployments = {}
-    if prices:
+    manifest = job.local / "unified/runtime-models.json"
+    # A fresh installation prices its pinned deployments from the public catalog.
+    # Established runtimes keep their reviewed manifest unless a policy file is given.
+    use_catalog = (
+        not prices
+        and not manifest.exists()
+        and not existing_runtime.get("BUDGET_DEPLOYMENTS_JSON")
+        and job.s["portal"].get("price_catalog", True)
+    )
+    if prices or use_catalog:
         actual = job.azure(job.s["subscription_id"]).request(
             "GET", account_path(primary) + "/deployments", version=CS_VERSION
         )["value"]
+        if use_catalog:
+            prices, skipped = catalog_prices(providers, actual)
+            write_json(job.local / "unified/model-policy.json", {"budget_prices": prices})
+            if skipped:
+                job.warnings.append(
+                    "These models stay closed until an owner reviews their price: "
+                    + "; ".join(f"{name} ({reason})" for name, reason in skipped.items())
+                )
         deployments = reviewed_deployments(providers, prices, actual)
     # Preserve an established runtime manifest if no new model policy was supplied.
-    manifest = job.local / "unified/runtime-models.json"
     if not prices and manifest.exists():
         deployments = read_json(manifest)
     if not prices and existing_runtime.get("BUDGET_DEPLOYMENTS_JSON"):
