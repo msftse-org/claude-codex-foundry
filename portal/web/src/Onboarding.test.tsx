@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, downloadFile } from "./api";
+import { MAC_SECURITY_SETTINGS } from "./MacInstallHelp";
 import { Onboarding } from "./Onboarding";
 import type { State } from "./types";
 
@@ -201,5 +202,33 @@ it("starts with Codex setup when the group's default is an OpenAI model", async 
     expect(downloadFile).toHaveBeenCalledWith(
         "/api/client-bundle?client=codex&group_id=platform",
         "claude-foundry-macos.zip",
+    );
+});
+
+it("provides a fixed, explicit Mac security handoff", async () => {
+    vi.mocked(api).mockResolvedValue(profile);
+    render(<Onboarding state={state} onMembers={vi.fn()} notify={notify} />);
+    const help = await screen.findByRole("region", {
+        name: "Mac installation and security",
+    });
+    expect(help.textContent).toContain("Open Anyway");
+    expect(help.textContent).toContain("not Apple-signed or notarized");
+    expect(help.textContent).toContain("do not remove quarantine");
+    expect(help.textContent).toContain("contact IT");
+    const link = screen.getByRole("link", {
+        name: "Open macOS Privacy & Security",
+    });
+    expect(link.getAttribute("href")).toBe(MAC_SECURITY_SETTINGS);
+    expect(notify).not.toHaveBeenCalled();
+    fireEvent.click(
+        screen.getByRole("button", { name: "Download Mac setup ZIP" }),
+    );
+    await waitFor(() =>
+        expect(notify).toHaveBeenCalledWith(
+            expect.stringContaining("Apple approval if prompted"),
+        ),
+    );
+    expect(notify).not.toHaveBeenCalledWith(
+        expect.stringContaining("SETUP COMPLETE"),
     );
 });
