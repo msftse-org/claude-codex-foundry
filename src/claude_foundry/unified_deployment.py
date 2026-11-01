@@ -80,14 +80,12 @@ def prepare(job):
         )
     deployments = {}
     manifest = job.local / "unified/runtime-models.json"
-    # A fresh installation prices its pinned deployments from the public catalog.
-    # Established runtimes keep their reviewed manifest unless a policy file is given.
-    use_catalog = (
-        not prices
-        and not manifest.exists()
-        and not existing_runtime.get("BUDGET_DEPLOYMENTS_JSON")
-        and job.s["portal"].get("price_catalog", True)
-    )
+    live = existing_runtime.get("BUDGET_DEPLOYMENTS_JSON")
+    established = json.loads(live) if live else read_json(manifest) if manifest.exists() else {}
+    # A runtime with no reviewed models, fresh or deployed unpriced (recorded as {}),
+    # prices its pinned deployments from the public catalog. Established runtimes
+    # keep their reviewed manifest unless a policy file is given.
+    use_catalog = not prices and not established and job.s["portal"].get("price_catalog", True)
     if prices or use_catalog:
         actual = job.azure(job.s["subscription_id"]).request(
             "GET", account_path(primary) + "/deployments", version=CS_VERSION
@@ -102,10 +100,8 @@ def prepare(job):
                 )
         deployments = reviewed_deployments(providers, prices, actual)
     # Preserve an established runtime manifest if no new model policy was supplied.
-    if not prices and manifest.exists():
-        deployments = read_json(manifest)
-    if not prices and existing_runtime.get("BUDGET_DEPLOYMENTS_JSON"):
-        deployments = json.loads(existing_runtime["BUDGET_DEPLOYMENTS_JSON"])
+    if not prices:
+        deployments = established
     write_json(manifest, deployments)
     settings = {
         "budgetStorageAccount": storage_name,

@@ -842,6 +842,45 @@ def test_fresh_unified_deploy_prices_pinned_deployments_from_the_catalog(unified
     assert any("gpt-test (not deployed)" in w for w in job.warnings)
 
 
+def test_upgrade_prices_a_runtime_that_main_deployed_without_prices(unified_job):
+    from claude_foundry.unified_deployment import prepare
+
+    job, _, _ = unified_job
+    job.deploy(verify=False)
+    settings = json.loads((job.local / "unified/portal-settings.json").read_text())
+    write_json(job.local / "unified/runtime-models.json", {})
+    original = job.azure
+    original.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-sonnet-4-6", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "NoAutoUpgrade",
+            },
+        }
+    )
+
+    class UnpricedRuntime(original):
+        def request(self, method, path, body=None, **kwargs):
+            if "/sites/ccf-budget-" in path and path.endswith("/config/appsettings/list"):
+                return {
+                    "properties": {
+                        "BUDGET_STORAGE_ACCOUNT": settings["budgetStorageAccount"],
+                        "BUDGET_ORGANIZATION_ID": SUBSCRIPTION,
+                        "BUDGET_TENANT_ID": TENANT,
+                        "BUDGET_DEPLOYMENTS_JSON": "{}",
+                    }
+                }
+            return super().request(method, path, body, **kwargs)
+
+    job.azure = UnpricedRuntime
+    assert list(prepare(job)[2]) == ["claude-test"]
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [p["model"] for p in prices] == ["claude-test"]
+
+
 def test_established_runtime_keeps_its_reviewed_prices_on_rerun(unified_job):
     from claude_foundry.unified_deployment import prepare
 
