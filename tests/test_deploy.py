@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from claude_foundry import function_package
 from claude_foundry.azure import AzureError
 from claude_foundry.config import read_json, write_json
 
@@ -137,8 +138,19 @@ def organization(org):
     }
 
 
+def skip_restart_waits(monkeypatch, served=None):
+    # Fake builds write no real package; record which build each app must serve.
+    monkeypatch.setattr(function_package, "package_build", lambda path: "build-" + Path(path).stem)
+    monkeypatch.setattr(function_package, "RESTART_SECONDS", 0)
+    monkeypatch.setattr(
+        function_package,
+        "wait_for_build",
+        lambda url, build: served.append(("serving", url, build)) if served is not None else None,
+    )
+
+
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
-    monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    skip_restart_waits(monkeypatch)
     monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients: None)
 
     class FakeAzure:
@@ -487,7 +499,7 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
             return {"identity": {"principalId": GROUP}}
 
     FakeAzure.deployed = deployed
-    monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    skip_restart_waits(monkeypatch, cloud)
     monkeypatch.setattr(
         deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
     )
@@ -527,6 +539,29 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     assert job.state["governance_mode"] == "unified"
     assert not any(
         c[3:4] == ["admin"] and c[6:7] in (["gateway"], ["observability"]) for c in runner.calls
+    )
+
+
+def test_each_function_app_restarts_onto_its_new_build_before_use(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=True)
+    seen = commands(runner)
+    for name in ["ccf-budget-contoso1", "ccf-admin-contoso1"]:
+        upload = next(i for i, c in enumerate(seen) if "config-zip" in c and name in c)
+        stop = next(i for i, c in enumerate(seen) if "functionapp stop" in c and name in c)
+        start = next(i for i, c in enumerate(seen) if "functionapp start" in c and name in c)
+        assert upload < stop < start
+    events = [c[0:2] for c in cloud if c[0] in {"serving", "route", "setup"}]
+    assert events == [
+        ("serving", "https://ccf-budget-contoso1.azurewebsites.net/health"),
+        ("route", "claude-governed"),
+        ("route", "codex-governed"),
+        ("serving", "https://ccf-admin-contoso1.azurewebsites.net/api/health"),
+        ("setup", "https://ccf-admin-contoso1.azurewebsites.net"),
+    ]
+    builds = {c[1]: c[2] for c in cloud if c[0] == "serving"}
+    assert builds["https://ccf-budget-contoso1.azurewebsites.net/health"] == (
+        "build-claude-codex-budget"
     )
 
 

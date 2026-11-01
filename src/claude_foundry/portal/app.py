@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from ..client_bundle import build_bundle, build_template
 from ..config import export_client, load_org
+from ..function_package import read_build
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator
 from .boundary import RequestBoundary
@@ -828,6 +829,8 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             or bool(os.getenv("BUDGET_CLAUDE_GATEWAY_URL")),
             "client_types": list(providers) or [config.get("client_type", "claude")],
             "bundle_ready": local or bundle_template_ready(),
+            # Deployment waits for this to match the uploaded package before handover.
+            "build": read_build(Path(__file__).resolve().parents[2]),
         }
 
     static = Path(os.getenv("PORTAL_STATIC_DIR", "portal/web/dist")).resolve()

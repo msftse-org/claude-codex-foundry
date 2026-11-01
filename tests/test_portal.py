@@ -1586,6 +1586,7 @@ def test_shared_portal_lists_both_providers_and_exports_correct_profiles(unified
             "setup_ready": True,
             "client_types": ["claude", "codex"],
             "bundle_ready": False,
+            "build": "development",
         }
         data = client.get("/api/state", headers=auth).json()
         assert data["client_types"] == ["claude", "codex"]

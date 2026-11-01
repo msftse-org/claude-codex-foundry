@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import azure.functions as func
 from azure.identity import ManagedIdentityCredential
@@ -10,6 +11,7 @@ from azurefunctions.extensions.http.fastapi import Request, StreamingResponse
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
+from claude_foundry.function_package import read_build
 from claude_foundry.portal.budget_ledger import AzureRows, BudgetDenied, Ledger
 from claude_foundry.portal.budget_policy import Snapshots, snapshot
 from claude_foundry.portal.budget_proxy import MAX_BODY, BudgetProxy, GatewayIdentity
@@ -46,6 +48,15 @@ proxy = BudgetProxy(
     if os.getenv("BUDGET_CONTENT_LOGS_ENABLED") == "true"
     else None,
 )
+
+
+@app.route(route="health", methods=["GET"])
+async def health(req: Request) -> JSONResponse:
+    # Unauthenticated, content-free: lets deployment confirm the new package serves.
+    return JSONResponse(
+        {"status": "ok", "build": read_build(Path(__file__).resolve().parent)},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.route(route="{provider}/v1/{operation}", methods=["GET", "POST"])

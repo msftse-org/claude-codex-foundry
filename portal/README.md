@@ -102,9 +102,15 @@ The administrator needs permissions to create resources and scoped role assignme
      --subscription '<subscription>' --resource-group '<preview-resource-group>' \
      --name '<portal-name>' --src dist/claude-foundry-admin-preview.zip \
      --build-remote true --timeout 600
+   # Flex Consumption keeps the old package until stopped for over a minute.
+   az functionapp stop --subscription '<subscription>' \
+     --resource-group '<preview-resource-group>' --name '<portal-name>'
+   sleep 75
+   az functionapp start --subscription '<subscription>' \
+     --resource-group '<preview-resource-group>' --name '<portal-name>'
    ```
 
-   A successful infrastructure deployment is not proof that code deployment or private networking works. Verify `/api/health`, the sign-in flow, an authenticated state read/write, telemetry, and publication with the app’s managed identity. Treat storage `403` during deployment as an unresolved access/network problem; do not enable shared keys or remove network restrictions to get a green result.
+   Confirm that the `build` in `/api/health` matches `build.json` in the package before you continue. A successful infrastructure deployment is not proof that code deployment or private networking works. Verify `/api/health`, the sign-in flow, an authenticated state read/write, telemetry, and publication with the app’s managed identity. Treat storage `403` during deployment as an unresolved access/network problem; do not enable shared keys or remove network restrictions to get a green result.
 
 5. Sign in as the configured owner. Existing gateway traffic should appear after ingestion; Application Insights queries are scoped to this configured API, not every model call in the subscription. Direct Foundry requests bypass gateway reporting.
 

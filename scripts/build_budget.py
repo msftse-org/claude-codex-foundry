@@ -6,6 +6,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+from claude_foundry.function_package import stamp
+
 
 def build(output, root):
     requirements = subprocess.check_output(
@@ -25,6 +27,8 @@ def build(output, root):
         for entry in bundle.infolist():
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16
+    # Deployment waits until /health reports this content-derived build ID.
+    stamp(output)
     return output
 
 

@@ -21,6 +21,7 @@ from uuid import UUID
 
 from claude_foundry.azure import Azure, AzureError, api_path
 from claude_foundry.config import read_json, write_json
+from claude_foundry.function_package import publish
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = (
@@ -659,29 +660,8 @@ class Deployment:
             )
         package = self.dist / "claude-foundry-admin-preview.zip"
         self.script("build_portal.py", "--output", package)
-        self.run(
-            [
-                "az",
-                "functionapp",
-                "deployment",
-                "source",
-                "config-zip",
-                "--resource-group",
-                group,
-                "--name",
-                self.n["portal"],
-                "--src",
-                package,
-                "--build-remote",
-                "true",
-                "--timeout",
-                900,
-                "--only-show-errors",
-                "--output",
-                "none",
-            ]
-        )
-        wait_for_health(url + "/api/health")
+        # Flex Consumption keeps serving the old package until restarted.
+        publish(self.run, group, self.n["portal"], package, url + "/api/health")
         verify_portal_setup(
             url,
             list(unified_settings["providerConfigs"]) if self.unified else ["claude"],
@@ -821,19 +801,6 @@ def merge_organization(existing, deployed, settings):
     if settings["claude"]["enabled"]:
         org["model_provider_data"] = copy.deepcopy(settings["marketplace"])
     return org
-
-
-def wait_for_health(url, attempts=40, delay=15):
-    for _ in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=30) as response:
-                if response.status == 200:
-                    print(f"Healthy: {url}")
-                    return
-        except (urllib.error.URLError, TimeoutError):
-            pass
-        time.sleep(delay)
-    raise DeployError(f"{url} did not become healthy; check the Function app deployment logs")
 
 
 def verify_portal_setup(url, expected_clients):

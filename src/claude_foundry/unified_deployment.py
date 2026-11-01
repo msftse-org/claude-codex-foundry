@@ -10,6 +10,7 @@ from urllib.request import urlopen
 
 from claude_foundry.azure import AzureError, account_path, api_path
 from claude_foundry.config import read_json, write_json
+from claude_foundry.function_package import publish
 from claude_foundry.models import CS_VERSION
 from claude_foundry.price_catalog import catalog_prices
 from claude_foundry.unified import provider_configs, reviewed_deployments
@@ -200,27 +201,13 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity, content
     )
     package = job.dist / "claude-codex-budget.zip"
     job.script("build_budget.py", "--output", package)
-    job.run(
-        [
-            "az",
-            "functionapp",
-            "deployment",
-            "source",
-            "config-zip",
-            "-g",
-            job.n["portal_resource_group"],
-            "-n",
-            name,
-            "--src",
-            package,
-            "--build-remote",
-            "true",
-            "--timeout",
-            "900",
-            "--only-show-errors",
-            "-o",
-            "none",
-        ]
+    # Restart onto the new package before APIM routes traffic to it.
+    publish(
+        job.run,
+        job.n["portal_resource_group"],
+        name,
+        package,
+        f"https://{name}.azurewebsites.net/health",
     )
     for client, config in settings["providerConfigs"].items():
         # The helper owns new APIs only; it cannot replace an existing baseline API.
