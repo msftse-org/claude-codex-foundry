@@ -199,7 +199,8 @@ def main():
     if unified:
         print()
         for r in [r for r in results if "portal" in r]:
-            state_text = "access live" if r["published"] else r.get("note") or "not published"
+            done = "access revoked" if args.remove else "access live"
+            state_text = done if r["published"] else r.get("note") or "not published"
             print(f"portal: {r['portal']:<13} {r['email']}  ({state_text})")
         if args.remove:
             print("Suspended members can no longer use the governed routes.")
