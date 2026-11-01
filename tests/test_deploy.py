@@ -945,6 +945,39 @@ def test_upgrade_prices_a_runtime_that_main_deployed_without_prices(unified_job)
     assert [p["model"] for p in prices] == ["claude-test"]
 
 
+def test_catalog_pricing_pins_auto_upgrading_deployments_first(unified_job):
+    job, _, cloud = unified_job
+    job.azure.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "DataZoneStandard"},
+            "properties": {
+                "model": {"name": "claude-haiku-5-5", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+            },
+        }
+    )
+    job.azure.deployed.append(
+        {
+            "name": "unoffered",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-haiku-5-5", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+            },
+        }
+    )
+    job.deploy(verify=False)
+    pins = [c for c in cloud if c[0] == "PATCH" and "/deployments/" in c[1]]
+    assert [(c[1].rsplit("/", 1)[1], c[2]) for c in pins] == [
+        ("claude-test", {"properties": {"versionUpgradeOption": "NoAutoUpgrade"}})
+    ]
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [(p["model"], p["deployment_version"]) for p in prices] == [("claude-test", "1")]
+    assert "Data Zone" in prices[0]["note"]
+
+
 def test_established_runtime_keeps_its_reviewed_prices_on_rerun(unified_job):
     from claude_foundry.unified_deployment import prepare
 

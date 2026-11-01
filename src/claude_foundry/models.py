@@ -120,7 +120,10 @@ def apply(c, azure, plan, report_path, wait_seconds=600):
                         "format": item.get("format", "Anthropic"),
                         "name": item["name"],
                         "version": item["version"],
-                    }
+                    },
+                    # Pin the deployed version so its reviewed enforcement price stays
+                    # valid. Azure still retires versions on its published schedule.
+                    "versionUpgradeOption": "NoAutoUpgrade",
                 },
             }
             if c.get("model_provider_data") and item.get("format", "Anthropic") == "Anthropic":

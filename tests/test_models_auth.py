@@ -118,6 +118,9 @@ def test_model_deployment_retries_etag_conflict_with_identical_request(org, tmp_
     assert report[0]["state"] == "Succeeded"
     assert azure.request.call_count == 2
     assert azure.request.call_args_list[0] == azure.request.call_args_list[1]
+    # New deployments are pinned so their catalog or reviewed price stays valid.
+    body = azure.request.call_args_list[0].args[2]
+    assert body["properties"]["versionUpgradeOption"] == "NoAutoUpgrade"
 
 
 @pytest.mark.parametrize("status,attempts", [(412, 4), (400, 1)])

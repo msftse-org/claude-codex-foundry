@@ -12,7 +12,7 @@ from claude_foundry.azure import AzureError, account_path, api_path
 from claude_foundry.config import read_json, write_json
 from claude_foundry.function_package import publish
 from claude_foundry.models import CS_VERSION
-from claude_foundry.price_catalog import catalog_prices
+from claude_foundry.price_catalog import catalog_prices, pinnable
 from claude_foundry.unified import provider_configs, reviewed_deployments
 
 
@@ -31,6 +31,44 @@ def wait_for_route(url, attempts=30, delay=10):
     raise RuntimeError(
         "The governed APIM route is not ready; reconcile its operations and policy before distributing profiles"
     )
+
+
+def pin_offered(job, primary, providers, deployed):
+    """Pin the current version of each offered deployment the catalog can price.
+
+    Catalog prices name an exact model version; an auto-upgrading deployment could
+    change under its price. Capacity, SKU and all other properties are unchanged.
+    """
+    offered = {m["name"] for p in providers.values() for m in p["models"]}
+    result = []
+    for deployment in deployed:
+        properties = deployment.get("properties", {})
+        if (
+            deployment["name"] in offered
+            and properties.get("versionUpgradeOption") != "NoAutoUpgrade"
+            and pinnable(deployment["name"], deployment)
+        ):
+            path = account_path(primary) + "/deployments/" + deployment["name"]
+            for attempt in range(8):
+                try:
+                    job.azure(job.s["subscription_id"]).request(
+                        "PATCH",
+                        path,
+                        {"properties": {"versionUpgradeOption": "NoAutoUpgrade"}},
+                        version=CS_VERSION,
+                    )
+                    break
+                except AzureError as error:
+                    # Another deployment operation on the account is still running.
+                    if error.status not in {409, 412} or attempt == 7:
+                        raise
+                    time.sleep(3)
+            version = properties["model"]["version"]
+            print(f"Pinned {deployment['name']} at version {version} for its catalog price.")
+            properties = {**properties, "versionUpgradeOption": "NoAutoUpgrade"}
+            deployment = {**deployment, "properties": properties}
+        result.append(deployment)
+    return result
 
 
 def prepare(job):
@@ -91,6 +129,7 @@ def prepare(job):
             "GET", account_path(primary) + "/deployments", version=CS_VERSION
         )["value"]
         if use_catalog:
+            actual = pin_offered(job, primary, providers, actual)
             prices, skipped = catalog_prices(providers, actual)
             write_json(job.local / "unified/model-policy.json", {"budget_prices": prices})
             if skipped:

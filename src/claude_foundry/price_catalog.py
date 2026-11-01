@@ -95,6 +95,12 @@ def price_for(name, deployment, catalog=None):
     return price, None
 
 
+def pinnable(name, deployment, catalog=None):
+    """Whether the catalog would price this deployment once its version is pinned."""
+    properties = {**deployment.get("properties", {}), "versionUpgradeOption": "NoAutoUpgrade"}
+    return price_for(name, {**deployment, "properties": properties}, catalog)[0] is not None
+
+
 def catalog_prices(providers, deployed, catalog=None):
     """Price every deployment the client profiles publish; report what was skipped."""
     catalog = catalog or load()

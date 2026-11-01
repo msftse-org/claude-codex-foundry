@@ -24,7 +24,7 @@ The shared runtime, Table/Blob storage and private endpoints are deployed automa
 ## Fresh installation
 
 1. Follow the [quick start](quickstart.md). Leave `portal.mode` as `unified`. The deployer provisions the foundation, qualifies Codex models, creates the shared runtime, connects the portal and packages profiles for `/claude-governed` and `/codex-governed/v1`.
-2. The deployer prices every succeeded, version-pinned deployment from the built-in public price catalog and turns on governed access: it publishes a policy with hard enforcement and unlimited organization and group limits, so spend is metered per user. Set `portal.monthly_limit_usd` in the deployment settings to start with an organization cap instead. Models without a catalog price, or not pinned to a version, are reported and stay closed. A deployment that already has a published policy keeps it unchanged.
+2. The deployer pins the current version of each succeeded deployment the built-in public price catalog covers (`versionUpgradeOption=NoAutoUpgrade`), prices it from the catalog and turns on governed access: it publishes a policy with hard enforcement and unlimited organization and group limits, so spend is metered per user. Set `portal.monthly_limit_usd` in the deployment settings to start with an organization cap instead. Models without a catalog price are reported and stay closed. Azure still retires pinned versions on its published schedule. A deployment that already has a published policy keeps it unchanged.
 3. Add developers by email, UPN or object ID:
 
    ```sh
