@@ -122,6 +122,7 @@ def seed(config, owner_id, owner_name="Organization owner", owner_email="owner@e
                 name="Platform team",
                 description="Initial group for the organization owner.",
                 model_ids=models,
+                delegated_models=models,
                 default_model=next(
                     (
                         m["name"]

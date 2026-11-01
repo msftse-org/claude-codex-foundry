@@ -149,8 +149,34 @@ def skip_restart_waits(monkeypatch, served=None):
     )
 
 
+def fake_portal(monkeypatch, record=None, initialized=True):
+    """Stand in for the owner's portal API; record initialize calls."""
+
+    class Portal:
+        def __init__(self, url, client_id, tenant_id):
+            self.url = url
+
+        def initialize(self, limit=None):
+            if record is not None:
+                record.append(("initialize", self.url, limit))
+            if not initialized:
+                return {"initialized": False, "policy_hash": "kept"}
+            return {
+                "initialized": True,
+                "policy_hash": "new",
+                "models_opened": ["claude-test"],
+                "models_closed": ["gpt-unpriced"],
+                "prices_added": ["claude-test"],
+                "organization_limit": "unlimited",
+                "active_members": 1,
+            }
+
+    monkeypatch.setattr("claude_foundry.portal_client.PortalClient", Portal)
+
+
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
     skip_restart_waits(monkeypatch)
+    fake_portal(monkeypatch)
     monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients: None)
 
     class FakeAzure:
@@ -500,6 +526,7 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
 
     FakeAzure.deployed = deployed
     skip_restart_waits(monkeypatch, cloud)
+    fake_portal(monkeypatch, cloud)
     monkeypatch.setattr(
         deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
     )
@@ -551,18 +578,55 @@ def test_each_function_app_restarts_onto_its_new_build_before_use(unified_job):
         stop = next(i for i, c in enumerate(seen) if "functionapp stop" in c and name in c)
         start = next(i for i, c in enumerate(seen) if "functionapp start" in c and name in c)
         assert upload < stop < start
-    events = [c[0:2] for c in cloud if c[0] in {"serving", "route", "setup"}]
+    events = [c[0:2] for c in cloud if c[0] in {"serving", "route", "setup", "initialize"}]
     assert events == [
         ("serving", "https://ccf-budget-contoso1.azurewebsites.net/health"),
         ("route", "claude-governed"),
         ("route", "codex-governed"),
         ("serving", "https://ccf-admin-contoso1.azurewebsites.net/api/health"),
         ("setup", "https://ccf-admin-contoso1.azurewebsites.net"),
+        ("initialize", "https://ccf-admin-contoso1.azurewebsites.net"),
     ]
     builds = {c[1]: c[2] for c in cloud if c[0] == "serving"}
     assert builds["https://ccf-budget-contoso1.azurewebsites.net/health"] == (
         "build-claude-codex-budget"
     )
+
+
+def test_deploy_turns_on_access_with_the_configured_cap(unified_job, capsys):
+    job, _, cloud = unified_job
+    job.s["portal"]["monthly_limit_usd"] = 500
+    job.deploy(verify=False)
+    assert [c for c in cloud if c[0] == "initialize"] == [
+        ("initialize", "https://ccf-admin-contoso1.azurewebsites.net", 500)
+    ]
+    out = capsys.readouterr().out
+    assert "Published a working policy: 1 models open" in out
+    assert "governed access on" in out
+    assert any("gpt-unpriced" in w for w in job.warnings)
+
+
+def test_upgrade_keeps_a_published_policy_and_reports_it(unified_job, monkeypatch, capsys):
+    job, _, cloud = unified_job
+    fake_portal(monkeypatch, cloud, initialized=False)
+    job.deploy(verify=False)
+    out = capsys.readouterr().out
+    assert "its limits and grants are unchanged" in out
+    assert "governed access published policy kept" in out
+
+
+def test_access_failure_is_reported_without_failing_the_deployment(unified_job, monkeypatch):
+    from claude_foundry.portal_client import PortalError
+
+    job, _, _ = unified_job
+
+    class Refusing:
+        def __init__(self, *args):
+            raise PortalError(403, "Only the owner can turn on budget access")
+
+    monkeypatch.setattr("claude_foundry.portal_client.PortalClient", Refusing)
+    job.deploy(verify=False)
+    assert any("not turned on automatically" in w and "owner" in w for w in job.warnings)
 
 
 @pytest.mark.parametrize("partial", [False, True])

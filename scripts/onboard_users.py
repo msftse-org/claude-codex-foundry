@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Grant or remove developer access to Claude & Codex on Azure.
 
-Adds people to the deployment's Microsoft Entra developer group, which holds the Foundry
-inference role. Accepts work emails, user principal names or object IDs, on the command
-line or in a CSV whose first column lists them. Also writes a CSV for the portal's member
-import, used when portal governance is published.
+Adds people to the deployment's Microsoft Entra developer group. In a shared (unified)
+deployment it also makes them active portal members, which publishes their access at once;
+removal suspends them. Accepts work emails, user principal names or object IDs, on the
+command line or in a CSV whose first column lists them.
 """
 
 import argparse
 import csv
+import io
 import json
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 from uuid import UUID
 
 from claude_foundry.config import read_json
+from claude_foundry.portal_client import PortalClient, PortalError
 
 HEADERS = {"email", "upn", "user", "object_id", "id"}
 
@@ -90,6 +92,60 @@ def manage(people, group, remove=False, run=az):
     return results
 
 
+def portal_access(portal, results, group=None, remove=False):
+    """Make resolved people active portal members, or suspend them.
+
+    Owner and administrator changes publish at once, so each result reports whether the
+    person's access is live. Existing members keep their group; new ones join `group`.
+    """
+    state = portal.state()
+    groups = {g["id"]: g for g in state["groups"]}
+    if not remove:
+        matches = [g for g in groups.values() if group in (None, g["id"], g["name"])]
+        if len(matches) != 1:
+            names = ", ".join(sorted(g["name"] for g in groups.values()))
+            raise ValueError(f"Choose a portal group with --portal-group ({names})")
+        group = matches[0]["id"]
+    members = {m["id"]: m for m in state["members"]}
+    revision, outcome = state["revision"], {}
+    people = [r for r in results if "object_id" in r]
+
+    def apply(kind, value):
+        nonlocal revision
+        response = portal.change(revision, kind, value)
+        revision = response["revision"]
+        return response
+
+    for r in people:
+        member = members.get(r["object_id"])
+        wanted = "suspended" if remove else "active"
+        if member is None:
+            outcome[r["object_id"]] = None if remove else "new"
+        elif member["status"] == wanted:
+            outcome[r["object_id"]] = ("already suspended" if remove else "member", None)
+        else:
+            response = apply("member", {**member, "status": wanted})
+            outcome[r["object_id"]] = ("suspended" if remove else "reactivated", response)
+    new = [r for r in people if outcome[r["object_id"]] == "new"]
+    if new:
+        rows = io.StringIO()
+        writer = csv.writer(rows)
+        writer.writerow(["object_id", "name", "email"])
+        writer.writerows([r["object_id"], r["name"][:120], r["email"]] for r in new)
+        response = apply("member_import", {"csv": rows.getvalue(), "group_id": group})
+        for r in new:
+            outcome[r["object_id"]] = ("added", response)
+    for r in people:
+        action, response = outcome[r["object_id"]] or ("not a member", None)
+        if response is None:
+            # Nothing changed: the person already has the wanted access.
+            r["portal"], r["published"] = action, True
+        else:
+            r["portal"], r["published"] = action, bool(response.get("published"))
+            r["note"] = response.get("publish_note")
+    return results
+
+
 def write_portal_csv(path, results):
     rows = [r for r in results if "object_id" in r]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,6 +166,9 @@ def main():
     parser.add_argument("--state", type=Path, default=Path(".local/deploy-state.json"))
     parser.add_argument("--remove", action="store_true", help="Remove access instead")
     parser.add_argument("--portal-csv", type=Path, default=Path(".local/portal-members.csv"))
+    parser.add_argument(
+        "--portal-group", help="Portal group for new members, by name or ID; needed if several"
+    )
     args = parser.parse_args()
     state = read_json(args.state, default={})
     group = args.group or state.get("developer_group_id")
@@ -125,13 +184,32 @@ def main():
         if az("account", "show")["tenantId"].lower() != str(UUID(tenant)).lower():
             raise RuntimeError(f"Wrong tenant. Run az login --tenant {tenant}, then retry")
         results = manage(people, group, args.remove)
-    except (RuntimeError, ValueError) as error:
+        unified = state.get("governance_mode") == "unified" and state.get("portal_url")
+        if unified:
+            entra = read_json(args.state.parent / "portal/entra.json")
+            portal = PortalClient(state["portal_url"], entra["client_id"], tenant)
+            portal_access(portal, results, args.portal_group, args.remove)
+    except (RuntimeError, ValueError, PortalError, OSError) as error:
         print(f"Stopped: {error}", file=sys.stderr)
         return 1
     for r in results:
         print(
             f"{r['action']:<19} {r.get('email', r['identity'])} {r.get('object_id', '')}".rstrip()
         )
+    if unified:
+        print()
+        for r in [r for r in results if "portal" in r]:
+            state_text = "access live" if r["published"] else r.get("note") or "not published"
+            print(f"portal: {r['portal']:<13} {r['email']}  ({state_text})")
+        if args.remove:
+            print("Suspended members can no longer use the governed routes.")
+        else:
+            print(
+                "\nThey download their setup from "
+                f"{state['portal_url']}/?page=onboarding and sign in once."
+            )
+        pending = any("portal" in r and not r["published"] for r in results)
+        return 1 if pending or any(r["action"] == "not found" for r in results) else 0
     if not args.remove:
         write_portal_csv(args.portal_csv, results)
         print(

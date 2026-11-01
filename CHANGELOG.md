@@ -6,16 +6,55 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
+Nothing yet.
+
+## release-2026-11-01
+
+Upgrades from `customer-baseline-2026-10-29`. Tested by upgrading a deployment that was created from that baseline.
+
+### How to upgrade
+
+In the checkout you deployed from, update to this release and rerun the portal upgrade. It keeps your models, users, published policy, spend and audit history:
+
+```sh
+git switch main && git pull
+uv sync --frozen --extra auth --extra portal
+uv run python scripts/deploy.py --settings .local/deploy.json --upgrade-portal
+```
+
+The governed routes and then the portal are each unavailable for about two minutes while their Function apps restart onto the new code.
+
+### "Publish this member's budget access before exporting a profile"
+
+Developers saw this on deployments from the baseline because no budget policy had been published, and publishing one took several manual steps. After you upgrade, the deployer turns access on by itself, and adding a developer is one step:
+
+1. Run the upgrade above. If no budget policy was ever published, it prices your pinned models from the catalog and publishes a working policy. A policy you already published is kept unchanged.
+2. Add developers:
+
+   ```sh
+   uv run python scripts/onboard_users.py alice@contoso.com bob@contoso.com
+   ```
+
+   Or add them under **Members** in the portal. Either way, their access is live as soon as it's saved.
+3. Developers download their setup from **Onboarding**.
+
+If the deploy output says access was not turned on (for example, because you aren't the portal owner), the owner chooses **Publish budget policy** in **Budgets & limits** once.
+
 ### Upgrade notes
 
-- **Short outage during upgrades.** `scripts/deploy.py` now restarts the budget runtime and then the portal after uploading new code. Expect about two minutes without governed Claude and Codex requests, then about two minutes without the portal. Plan upgrades outside working hours.
+- **Access starts unlimited and metered.** On a deployment that never published a budget policy, the deployer turns on hard enforcement with unlimited organization and group limits, so every request is charged to a user but nothing is capped. To start with a cap, set `portal.monthly_limit_usd` in `.local/deploy.json` before upgrading. Tighten limits later in **Budgets & limits**.
+- **Member changes publish immediately.** When an owner or administrator adds, moves or suspends a member, the change takes effect at once. Prices, limits, groups and grants still wait for **Publish budget policy**. Group administrators keep their **Publish team budget & access** step.
+- **Short outage during upgrades.** `scripts/deploy.py` now restarts the budget runtime and then the portal after uploading new code, and waits until each one reports the new build. Plan upgrades outside working hours.
+- **Unpriced runtimes are priced on upgrade.** A runtime deployed without reviewed models gets catalog prices for its pinned deployments when you upgrade. A runtime that already has reviewed models keeps them.
 - **Price review dates warn instead of blocking.** A model whose review date has passed keeps working, and the portal marks the price as "review due". To keep the previous behavior, where overdue prices close the model, set `settings.enforce_price_review` to `true` and publish the policy.
 - **Spend is charged at list rates.** Requests are now charged at the actual rate of each token type, including the lower cache-read and cache-write rates. Cache-heavy usage counts less against budgets than before. Limits are unchanged.
-- **Existing prices are kept.** Upgrading doesn't change reviewed prices. To add catalog prices for pinned models that have none, run `scripts/publish_prices.py` as a portal owner. Add `--replace` to refresh existing prices too, and `--dry-run` to preview the changes.
+- **Existing prices are kept.** Upgrading doesn't change reviewed prices. `scripts/publish_prices.py` adds catalog prices only for pinned models that have none. Add `--replace` to refresh existing prices too.
 
 ### Administrators
 
-- A fresh unified deployment opens governed inference for models deployed with a pinned version, priced from a built-in public price catalog, dated 2026-10-29. That's 13 Claude and 34 Azure OpenAI models, including long-context tiers and the 1.1× Data Zone rate. Models without a catalog price, or not pinned to a version, are listed in the deployment output and stay closed until you price them.
+- New deployments start with prices from a built-in public price catalog, dated 2026-10-29: 13 Claude and 34 Azure OpenAI models, including long-context tiers and the 1.1× Data Zone rate. Only models deployed with a pinned version are priced. Others are listed in the deployment output and stay closed until you price them.
+- `scripts/onboard_users.py` makes people active portal members in shared deployments, and `--remove` suspends them. Use `--portal-group` when there's more than one group.
+- Profile downloads explain what's missing: access not turned on yet, enforcement paused, or a member added after the last publish.
 - Price review dates can be set up to 366 days ahead (previously 31).
 - Portal owners can script audited changes with their Azure CLI sign-in. The portal's own app registration now pre-authorizes Azure CLI. No new application is created, and portal roles still decide every request.
 - Deployment confirms that each Function app serves the build that was just uploaded before it reports success. The runtime's `/health` and the portal's `/api/health` report a `build` ID that matches `build.json` in the package.
@@ -29,4 +68,4 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## customer-baseline-2026-10-29
 
-The version on `main` that customers deploy today (tag `customer-baseline-2026-10-29`, commit `110a578`).
+The version customers deployed before this release (tag `customer-baseline-2026-10-29`, commit `110a578`).

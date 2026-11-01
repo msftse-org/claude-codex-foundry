@@ -63,6 +63,11 @@ class PortalClient:
             "POST", "/api/changes", {"revision": revision, "kind": kind, "value": value}
         )
 
+    def initialize(self, monthly_limit_usd=None):
+        """Turn on budget access with metered defaults unless a policy is already published."""
+        body = {} if monthly_limit_usd is None else {"monthly_limit_usd": str(monthly_limit_usd)}
+        return self.request("POST", "/api/budgets/initialize", body)
+
     def publish_budgets(self):
         """Publish the current draft as the active budget policy, as the UI does."""
         state = self.state()

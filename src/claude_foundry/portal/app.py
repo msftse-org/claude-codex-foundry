@@ -22,8 +22,16 @@ from ..function_package import read_build
 from ..unified import catalog, provider_configs, reporting_config
 from .auth import Authenticator
 from .boundary import RequestBoundary
-from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger
-from .budget_policy import Snapshots, draft_impact, group_publication, portal_seed, snapshot
+from .budget_ledger import AzureRows, BudgetDenied, Contended, Ledger, policy_digest
+from .budget_policy import (
+    Snapshots,
+    draft_impact,
+    group_publication,
+    initial_policy,
+    membership_publication,
+    portal_seed,
+    snapshot,
+)
 from .budget_proxy import GatewayIdentity
 from .content_logs import LogQuery, LogRead, LogSource, list_logs, read_log
 from .costs import CostQuery, cost_analysis, planning_prices
@@ -108,6 +116,9 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         else None
     )
 
+    # The prices that bound the runtime's deployments (catalog or reviewed policy file).
+    initial_prices = json.loads(os.getenv("PORTAL_INITIAL_BUDGET_PRICES_JSON", "[]"))
+
     def storage():
         if app.state.store is None:
             initial = seed(
@@ -116,9 +127,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 os.getenv("PORTAL_OWNER_NAME", "Organization owner"),
                 os.getenv("PORTAL_OWNER_EMAIL", "owner@example.com"),
             )
-            initial["budget_prices"] = json.loads(
-                os.getenv("PORTAL_INITIAL_BUDGET_PRICES_JSON", "[]")
-            )
+            initial["budget_prices"] = copy.deepcopy(initial_prices)
             app.state.store = (
                 LocalStore(os.getenv("PORTAL_LOCAL_PATH", ".local/portal/state.json"), initial)
                 if local
@@ -318,6 +327,32 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             )
         return data
 
+    def member_policy(state, actor):
+        """Prepare the member list for publication and audit it into the unsaved state.
+
+        Returns ((policy, expected digest), None) to activate after saving, (None, None)
+        when the published policy already matches, or (None, reason) to keep a draft.
+        """
+        ledger, snapshots = budget
+        try:
+            active = ledger.active()
+        except BudgetDenied:
+            return None, "Saved. No budget policy is active yet; publish in Budgets & limits."
+        except Exception:
+            return None, "Saved as a draft; the budget service is unavailable. Publish later."
+        try:
+            policy = membership_publication(snapshots.get(active), state)
+            if policy_digest(policy) == active:
+                return None, None
+            digest = snapshots.put(policy)
+        except ValueError as error:
+            return None, f"Saved as a draft: {error}. Publish in Budgets & limits."
+        except Exception:
+            return None, "Saved as a draft; the budget service is unavailable. Publish later."
+        audit(state, actor, "budget.publish_requested", digest, None, {"members_only": True})
+        state["revision"] += 1
+        return (policy, active), None
+
     @app.post("/api/changes")
     def change(body: Change, access=actor_dependency):
         data, etag, member = access
@@ -333,12 +368,29 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             )
             # Validate the resulting policy size and model references before persistence.
             policy_impact(config, updated)
+            members = (
+                budget is not None
+                and body.kind in {"member", "member_import"}
+                and member["role"] in {"owner", "admin"}
+            )
+            pending, note = member_policy(updated, member) if members else (None, None)
             storage().save(updated, etag)
+            published = members and pending is None and note is None
+            if pending is not None:
+                try:
+                    budget[0].activate(*pending)
+                    published = True
+                except Contended:
+                    note = "The budget service was busy. Publish in Budgets & limits to apply it."
+                except BudgetDenied as error:
+                    note = str(error)
             return {
                 "revision": updated["revision"],
                 "saved": True,
                 "gateway_changed": policy_impact(config, updated)["policy_hash"]
                 != updated.get("published_hash"),
+                "published": published,
+                "publish_note": note,
             }
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -506,7 +558,20 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                     "Ask your administrator to finish connecting the portal, then retry.",
                 )
             try:
-                data = budget[1].get(budget[0].active())
+                digest = budget[0].active()
+            except BudgetDenied:
+                raise HTTPException(
+                    409,
+                    "Access isn't turned on yet, or budget enforcement is paused. Ask your "
+                    "administrator to rerun the deployment, or a portal owner to publish in "
+                    "Budgets & limits, then retry.",
+                ) from None
+            except Exception:
+                raise HTTPException(
+                    503, "The budget ledger is unavailable; retry in a few minutes."
+                ) from None
+            try:
+                data = budget[1].get(digest)
                 member = next(
                     m
                     for m in data["members"]
@@ -514,7 +579,9 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 )
             except Exception:
                 raise HTTPException(
-                    409, "Publish this member's budget access before exporting a profile"
+                    409,
+                    "Publish this member's budget access before exporting a profile. "
+                    "Ask a portal owner to publish in Budgets & limits, then retry.",
                 ) from None
             if member["group_id"] != profile_actor["group_id"]:
                 raise HTTPException(409, "Publish the membership change before exporting a profile")
@@ -766,6 +833,43 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         except Exception:
             raise HTTPException(
                 503, "Closure could not be confirmed; inspect the reservation before retrying"
+            ) from None
+
+    @app.post("/api/budgets/initialize")
+    def initialize_budgets(body: dict, access=actor_dependency):
+        """Turn on access with working defaults once; never touch a published policy."""
+        data, etag, member = access
+        if member["role"] != "owner":
+            raise HTTPException(403, "Only the owner can turn on budget access")
+        if budget is None:
+            raise HTTPException(409, "Deploy and validate the budget gateway before publishing")
+        if data["publish_status"] == "publishing":
+            raise HTTPException(409, "Wait for the current gateway publication to finish")
+        ledger, snapshots = budget
+        try:
+            meta, _ = ledger.rows.read("policy")
+            if meta.get("digest"):
+                return {
+                    "initialized": False,
+                    "policy_hash": meta["digest"],
+                    "note": "A budget policy is already published; nothing changed",
+                }
+            draft, policy, summary = initial_policy(
+                data, initial_prices, body.get("monthly_limit_usd")
+            )
+            digest = snapshots.put(policy)
+            audit(draft, member, "budget.initialized", digest, None, summary)
+            draft["revision"] += 1
+            storage().save(draft, etag)
+            ledger.activate(policy, expected="")
+            return {"initialized": True, "policy_hash": digest, **summary}
+        except (Conflict, Contended) as error:
+            raise HTTPException(409, str(error)) from error
+        except (ValueError, ArithmeticError, BudgetDenied) as error:
+            raise HTTPException(422, str(error)) from error
+        except Exception:
+            raise HTTPException(
+                503, "Activation could not be confirmed. Read the active policy before retrying"
             ) from None
 
     @app.post("/api/budgets/publish")
