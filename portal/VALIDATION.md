@@ -16,7 +16,9 @@ A throwaway deployment was created from tag `customer-baseline-2026-10-29` in an
 | Clients | `claude-foundry verify --budgeted` passed all Claude checks: token rejection, catalog, inference, streaming, token counting and allowlist. Codex verification passed inference, streaming, a tool loop and a replayed follow-up. The ledger settled $0.001185 with nothing reserved. |
 | Source checks | 420 Python tests and 55 frontend tests, Ruff, frontend build, installer syntax and package build pass. |
 
-Not exercised: an existing customer deployment that already has a published policy; or1025a covered that case, and its policy was unchanged. Also not exercised: Claude Desktop sign-in (`auth_mode=msal`), and limits other than unlimited.
+An existing test deployment with a published policy was also upgraded with the same branch. Deploy reported the policy as kept. The published policy hash, settings, groups and 42 prices were unchanged, and nothing was pinned. Its existing Claude profile passed `verify --budgeted`, and its Codex profile passed inference, streaming, a tool loop and a follow-up.
+
+Not exercised: Claude Desktop sign-in (`auth_mode=msal`), limits other than unlimited, and a full (non-`--upgrade-portal`) rerun over a baseline deployment.
 
 ## Dependency verification on 2026-10-25
 
