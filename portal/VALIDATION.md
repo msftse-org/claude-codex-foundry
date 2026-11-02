@@ -2,6 +2,19 @@
 
 Status: **preview**. The portal, Codex and content-log sources are maintained in `main`. This record is evidence for the isolated Azure preview and for one authorized shared-route acceptance, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
 
+## Fresh deploy, Mac install and budget caps on 2026-11-02
+
+A throwaway deployment was created fresh from tag `release-2026-11-01` in an authorized test subscription (one Claude and one Codex model on Data Zone Standard), then upgraded with `deploy.py --upgrade-portal` from `fix/release-rejected-reservations`. The environment was deleted afterwards.
+
+| Check | Evidence |
+| --- | --- |
+| Fresh deploy | `deploy.py` finished on its first attempt. It pinned and priced both models and turned on access with an unlimited, metered policy. |
+| Mac setup ZIP | `Install.command --no-login` in an empty home directory configured Claude Code and Codex for the governed routes. The interactive Azure CLI browser sign-in was not exercised; the cached CLI token for the tenant was used. |
+| Codex | `codex exec` (engine 0.166.0-alpha.5.1) replied through `/codex-governed/v1`. |
+| Claude Code | Claude Code 2.1.296 replied through `/claude-governed` in `default` permission mode. In **auto** mode every request failed with 422: auto mode adds a top-level `safeguards` field, which the runtime refuses as unverified. Not fixed here. |
+| Caps, released code | With the owner capped at one reservation plus half, a request Azure rejected (HTTP 400, temperature out of range) kept its full $1.100138 reservation held. The next valid request was then denied (403) although only $0.01 had been spent. |
+| Caps, this branch | The same rejected request added nothing to the held amount, and the next valid request was admitted. With the cap lowered to half a reservation, the next request was denied with 403 `budget_denied`. Removing the cap restored access. |
+
 ## Upgrade verification on 2026-11-01: baseline to release-2026-11-01
 
 A throwaway deployment was created from tag `customer-baseline-2026-10-29` in an authorized test subscription: one Claude and one Codex model on Data Zone Standard, capacity maximizing off. It was then upgraded with `deploy.py --upgrade-portal` from `fix/out-of-box-deploy`. The environment was deleted afterwards.
