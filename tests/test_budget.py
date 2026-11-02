@@ -529,6 +529,72 @@ def test_client_namespaces_cannot_hide_server_tools(policy):
 
 
 @pytest.mark.parametrize(
+    "status,body,released",
+    [
+        (429, {"error": {"code": "429", "message": "Rate limit exceeded"}}, True),
+        (
+            400,
+            {
+                "error": {
+                    "message": "Invalid schema for function 'automation_update': schema must "
+                    "have type 'object' and not have 'oneOf' at the top level.",
+                    "type": "invalid_request_error",
+                }
+            },
+            True,
+        ),
+        (401, {"error": {"message": "Unauthorized"}}, True),
+        (400, {"error": {"code": "content_filter", "message": "The response was filtered"}}, False),
+        (
+            400,
+            {"error": {"innererror": {"code": "ResponsibleAIPolicyViolation"}}},
+            False,
+        ),
+        (503, {"error": {"message": "Service unavailable"}}, False),
+    ],
+)
+def test_proxy_releases_only_unbilled_rejections(policy, ledger, status, body, released):
+    def handler(req):
+        return httpx.Response(status, json=body)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            proxy = BudgetProxy(
+                ledger,
+                SimpleNamespace(get=lambda digest: policy),
+                SimpleNamespace(get_token=lambda scope: SimpleNamespace(token="test")),
+                "https://test.services.ai.azure.com",
+                {
+                    "claude-sonnet-4-6": {
+                        "version": "1",
+                        "provider": "anthropic",
+                        "max_input_tokens": 1000,
+                        "max_output_tokens": 1000,
+                    }
+                },
+                client,
+            )
+            request_id = str(uuid4())
+            response = await proxy.infer(
+                "anthropic",
+                policy["members"][0]["id"],
+                request_id,
+                {"model": "claude-sonnet-4-6", "max_tokens": 100},
+            )
+            assert response.status_code == status
+            assert json.loads(response.body) == body
+            return request_id
+
+    request_id = asyncio.run(run())
+    reservation = ledger.rows.read("request-" + request_id)[0]
+    if released:
+        assert reservation["state"] == "settled" and reservation["charged"] == 0
+        assert ledger.rows.pending() == []
+    else:
+        assert reservation["state"] == "reserved"
+
+
+@pytest.mark.parametrize(
     "mode", ["disconnect", "missing_usage", "provider_error", "settlement_unavailable"]
 )
 def test_proxy_unknown_outcomes_never_release_reserved_allowance(policy, ledger, mode):
@@ -538,7 +604,8 @@ def test_proxy_unknown_outcomes_never_release_reserved_allowance(policy, ledger,
         if mode == "disconnect":
             raise httpx.ReadTimeout("Connection lost after dispatch")
         if mode == "provider_error":
-            return httpx.Response(400, json={"error": {"message": "Invalid input"}})
+            # A server error can follow billable work, so it is never released.
+            return httpx.Response(500, json={"error": {"message": "Internal error"}})
         return httpx.Response(
             200,
             json={}
