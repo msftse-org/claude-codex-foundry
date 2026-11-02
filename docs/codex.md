@@ -19,6 +19,12 @@ Image generation, embeddings, speech, realtime, video, and batch/provisioned dep
 
 This does not turn the ordinary ChatGPT cloud application into an Azure client. Cloud tasks, ChatGPT chat history, connectors, plugins, browser tools and their authentication are separate services. A model gateway only redirects model inference.
 
+## Older models
+
+On shared governed Codex routes, GPT-4o and GPT-4.1 use the existing server-owned `supports_reasoning: false` capability to adapt client function tools such as `automation_update`. Recognized top-level `oneOf`, `anyOf`, or `allOf` object variants become one object schema; object properties without an explicit top-level type are also supported. Namespace function children are handled. Only fields required in every variant remain required, and strict mode is disabled when the resulting object cannot satisfy it. Arguments must still match a documented variant.
+
+GPT-5 and later tool payloads, already-plain object schemas, custom tools, and unrecognized shapes are unchanged. This compatibility step runs before the request fingerprint and budget reservation; it does not change the reviewed model-capacity spending bound. Administrators need the updated shared runtime through the normal portal upgrade, but no model redeployment or new setting is required. Developers do not need to reinstall Codex or change their configuration. The manual baseline gateway does not perform this adaptation.
+
 ## Install on a Mac
 
 Ask your platform team for a **Codex** installation ZIP. Install your organization's approved Codex Desktop and/or Codex CLI first. See OpenAI's [gateway client setup](https://learn.chatgpt.com/docs/enterprise/connect-to-a-gateway) for supported client configuration.

@@ -6,7 +6,11 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
-Nothing yet.
+- Codex on shared governed routes adapts variant-based client function schemas for GPT-4o and GPT-4.1, avoiding their top-level schema rejection for tools such as `automation_update`. GPT-5-and-later tools are unchanged. Developers do not need to reinstall or change settings.
+
+### Upgrade notes
+
+- Administrators: apply the updated shared runtime through the normal portal upgrade to get the older-model tool compatibility fix. No model redeployment, policy change, or new setting is required.
 
 ## release-2026-11-01
 

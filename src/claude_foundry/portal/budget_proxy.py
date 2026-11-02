@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from .budget_ledger import BudgetDenied, limits_for, policy_digest
 from .budget_pricing import BudgetPrice, usage_tokens
 from .budget_stream import UsageStream
+from .tool_schemas import adapt_legacy_tools
 
 LOG = logging.getLogger(__name__)
 MAX_BODY = 8 * 1024 * 1024
@@ -168,6 +169,12 @@ class BudgetProxy:
             # Mirrors the qualified baseline profile for non-reasoning models.
             # This capability is server-owned, never supplied by the client.
             payload.pop("reasoning", None)
+        if (
+            provider == "openai"
+            and deployment.get("supports_reasoning") is False
+            and "tools" in payload
+        ):
+            payload["tools"] = adapt_legacy_tools(payload["tools"])
         fingerprint = hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
