@@ -6,7 +6,7 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
-Nothing yet.
+- Deploy summaries no longer ask owners to publish access that is already on: they list developer onboarding and the setup link, or the specific access failure and its next step. Codex qualification waits up to three minutes for API Management's own not-found response on a route updated by that deploy, without replaying successful billable probes or retrying model/backend errors. Configuration is unchanged; existing successful deployments need no action.
 
 ## release-2026-11-01
 
