@@ -6,7 +6,11 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
-Nothing yet.
+- The shared ARM client retries transient Azure outages and throttling for GET, PUT, PATCH, DELETE and HEAD, with short retry notices and errors instead of HTML dumps. Retries stop after six attempts or a five-minute request budget; server delays that exceed the 60-second wait cap or remaining budget fail without retrying early.
+
+### Upgrade notes
+
+- No administrator configuration changes are required. Developers must explicitly pass `idempotent=True` to retry a POST they have confirmed is safe to repeat; existing deployment app-settings POST reads still need separate caller opt-ins.
 
 ## release-2026-11-01
 
