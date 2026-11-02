@@ -65,6 +65,16 @@ Only synchronous, replayed conversation input and client-executed tools are supp
 
 Limits cover supported model inference through the budget routes at the configured ceilings. They do **not** cap APIM, Functions, storage, Private Link, logging, taxes, exchange-rate changes, provisioned capacity or the entire Azure bill. Incorrect owner-entered rates/capacities invalidate the monetary bound; this is why review and pinned deployments are release prerequisites.
 
+### Claude Code auto permission mode
+
+The governed Anthropic route accepts the top-level `safeguards` field and removes it before creating the forwarded payload, fingerprint, reservation or optional content capture. The token-counting path removes it too. Nothing inside that field, including `classifier_context` and its local working-directory or trusted-directory paths, is forwarded, logged, audited or stored by the budget runtime. Other fields still require verified budget bounds; OpenAI's supported fields are unchanged. Requests without `safeguards`, including default and `acceptEdits` mode requests, retain their existing normalization and forwarded payload.
+
+The runtime does not run a safety classifier or synthesize `safeguard_results`. [Anthropic's classifier-billing documentation](https://code.claude.com/docs/en/auto-mode-classifier-billing) describes Claude Code falling back to its own classifier requests when server-side checks do not reach the session, potentially displaying a notice that must be acknowledged. **Those classifier requests count against the developer's budget** when sent through the governed route: each must pass normal model-access and verified-bound checks, reserves the same maximum liability as any other request, and settles from authoritative provider usage. They are not free token-counting calls or exempt internal work.
+
+[LiteLLM's auto-mode notes](https://docs.litellm.ai/docs/claude_code_auto_mode) describe the `safeguards` wire field; they are third-party compatibility notes, not an Anthropic protocol guarantee. Local synthetic tests verify payload/fingerprint/reservation equivalence, tool-use response handling, settlement and the absence of classifier context from captures and logs. They do not verify a particular Claude Code version or a deployed gateway; perform the release acceptance checks below before rollout.
+
+Unsupported top-level fields return HTTP 422 with `{"error": {"message": "Unsupported request fields: foo"}}`. The message includes only names, sorted and limited to five, each truncated to 64 characters; it never includes field values. Other validation failures retain the generic HTTP 422 response.
+
 ## Failure and recovery
 
 No ledger, no valid price, no active membership, or no remaining allowance means no model dispatch. There is no fallback to a baseline API. Each gateway request ID is admitted once; uncertain dispatches are not automatically retried by the service.
@@ -105,6 +115,7 @@ Before customer release, record live evidence for:
 - Multiple runtime instances racing against a tiny balance, with Azure Table state proving no overdraw.
 - Disconnects, restart, ambiguous provider outcomes and ledger outage without unsafe refunds.
 - Current native Claude and Codex clients, including long-context/tool sessions and unsupported-feature messages.
+- Claude Code auto mode writing and reading a file through the governed route, with default and `acceptEdits` regression checks. Confirm client-side classifier requests settle against the developer's budget, held reservations do not accumulate, and local classifier paths are absent from runtime logs and captures.
 - Two real group-admin accounts across every portal route, especially direct content IDs and revocation during reads. Use the [hosted permission-test procedure](budget-permission-test.md).
 - Every offered model's actual price categories, capacity, pinned version and deployment configuration.
 - Removal of alternate inference paths in the customer's installation.

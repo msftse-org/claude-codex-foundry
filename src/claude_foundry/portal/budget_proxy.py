@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from starlette.responses import JSONResponse, StreamingResponse
 
 from .budget_ledger import BudgetDenied, limits_for, policy_digest
-from .budget_pricing import BudgetPrice, usage_tokens
+from .budget_pricing import BudgetPrice, UnsupportedRequest, usage_tokens
 from .budget_stream import UsageStream
 
 LOG = logging.getLogger(__name__)
@@ -123,8 +123,9 @@ class BudgetProxy:
         price = BudgetPrice.model_validate(values[0])
         price.prepare({**body, "max_tokens": 1}, enforce_review(policy))
         allowed = {"model", "messages", "tools", "system", "thinking", "tool_choice"}
-        if set(body) - allowed:
-            raise ValueError("Unsupported token-counting fields")
+        body = {key: value for key, value in body.items() if key != "safeguards"}
+        if unsupported := set(body) - allowed:
+            raise UnsupportedRequest(unsupported)
         token = await asyncio.to_thread(
             self.credential.get_token, "https://cognitiveservices.azure.com/.default"
         )

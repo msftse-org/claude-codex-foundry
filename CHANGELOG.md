@@ -6,7 +6,11 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
-Nothing yet.
+- Claude Code auto permission mode no longer fails budget admission because of its `safeguards` field. The governed Anthropic route discards this local classifier context instead of forwarding or capturing it; Claude Code's own fallback classifier requests use the developer's normal budget. Default and `acceptEdits` request handling is unchanged. Unsupported-field refusals now name up to five fields without exposing their values.
+
+### Upgrade notes
+
+- Administrators must upgrade the portal/budget runtime through the existing portal-upgrade workflow to apply the auto-mode fix. No budget-policy or client-settings changes are required.
 
 ## release-2026-11-01
 
