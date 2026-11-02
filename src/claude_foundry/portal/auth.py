@@ -5,10 +5,15 @@ from uuid import UUID
 import jwt
 from fastapi import HTTPException
 
+# Microsoft's Azure CLI public client. Pre-authorized on the portal's own
+# registration so administrators can script changes; portal roles still apply.
+AZURE_CLI_CLIENT_ID = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
+
 
 class Authenticator:
     def __init__(self, tenant, client_id):
         self.tenant, self.client_id = str(UUID(tenant)), str(UUID(client_id)) if client_id else ""
+        self.clients = {self.client_id, AZURE_CLI_CLIENT_ID} if self.client_id else set()
         self.issuer = f"https://login.microsoftonline.com/{self.tenant}/v2.0"
         self.keys = jwt.PyJWKClient(
             f"https://login.microsoftonline.com/{self.tenant}/discovery/v2.0/keys",
@@ -38,7 +43,7 @@ class Authenticator:
                 claims["tid"] != self.tenant
                 or not isinstance(claims.get("scp"), str)
                 or "access_as_user" not in claims.get("scp", "").split()
-                or claims.get("azp") != self.client_id
+                or claims.get("azp") not in self.clients
                 or not isinstance(claims["oid"], str)
             ):
                 raise ValueError("Wrong tenant, scope, or client")

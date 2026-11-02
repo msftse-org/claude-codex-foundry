@@ -281,26 +281,31 @@ function App() {
         if (!state) return false;
         setBusy(true);
         try {
-            const result = await api<{ gateway_changed: boolean }>(
-                "/api/changes",
-                {
-                    method: "POST",
-                    body: JSON.stringify({
-                        revision: state.revision,
-                        kind,
-                        value,
-                    }),
-                },
-            );
+            const result = await api<{
+                gateway_changed: boolean;
+                published?: boolean;
+                publish_note?: string | null;
+            }>("/api/changes", {
+                method: "POST",
+                body: JSON.stringify({
+                    revision: state.revision,
+                    kind,
+                    value,
+                }),
+            });
             await load();
             notify(
                 kind === "pricing"
                     ? "Planning rates saved. Cost estimates will refresh."
                     : kind === "request"
                       ? "Access request sent."
-                      : result.gateway_changed
-                        ? "Draft saved. Review and publish to apply gateway changes."
-                        : "Changes saved.",
+                      : result.published
+                        ? "Access updated. Members can download their setup now."
+                        : result.publish_note
+                          ? result.publish_note
+                          : result.gateway_changed
+                            ? "Draft saved. Review and publish to apply gateway changes."
+                            : "Changes saved.",
             );
             return true;
         } catch (e) {

@@ -1,10 +1,12 @@
 """Immutable reviewed snapshots; publication and admission share a ledger barrier."""
 
+import copy
 import hashlib
 import json
 import threading
 from collections import OrderedDict
 from concurrent.futures import Future
+from decimal import Decimal
 
 from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import ContainerClient
@@ -82,7 +84,7 @@ def snapshot(state):
     if not prices or len(prices) != len(result["budget_prices"]):
         raise ValueError("Unique verified prices are required")
     for p in prices.values():
-        BudgetPrice.model_validate(p).check_current()
+        BudgetPrice.model_validate(p).check_current(enforce=settings["enforce_price_review"])
     for group in groups.values():
         if group["spend_ceiling_usd"] is None and not group["spend_ceiling_unlimited"]:
             raise ValueError(
@@ -238,14 +240,79 @@ class Snapshots:
         return self._download(digest)
 
 
+def initial_policy(state, prices, monthly_limit=None):
+    """Complete a never-published draft with working defaults and snapshot it.
+
+    Only missing values are filled: reviewed prices, set limits and ceilings are kept.
+    Enforcement is turned on with an unlimited (metered) organization limit unless a
+    monthly cap is given. Grants of models without a price are dropped, because the
+    runtime cannot serve them. Returns the completed draft, its snapshot and a summary.
+    """
+    draft = copy.deepcopy(state)
+    listed = {p["model"] for p in draft["budget_prices"]}
+    added = [p for p in prices if p["model"] not in listed]
+    draft["budget_prices"] = draft["budget_prices"] + added
+    priced = {p["model"] for p in draft["budget_prices"]}
+    settings = draft["settings"]
+    settings["budget_enforcement"] = True
+    if settings.get("spend_limit_usd") is None and not settings.get("spend_limit_unlimited"):
+        if monthly_limit is None:
+            settings["spend_limit_unlimited"] = True
+        else:
+            settings["spend_limit_usd"] = str(Decimal(str(monthly_limit)))
+    closed = set()
+    extras = {}
+    for member in draft["members"]:
+        closed |= set(member["extra_models"]) - priced
+        member["extra_models"] = [m for m in member["extra_models"] if m in priced]
+        extras.setdefault(member["group_id"], set()).update(member["extra_models"])
+    for group in draft["groups"]:
+        if group.get("spend_ceiling_usd") is None and not group.get("spend_ceiling_unlimited"):
+            group["spend_ceiling_unlimited"] = True
+        closed |= set(group["model_ids"]) - priced
+        group["model_ids"] = [m for m in group["model_ids"] if m in priced]
+        if group["default_model"] not in group["model_ids"]:
+            group["default_model"] = group["model_ids"][0] if group["model_ids"] else ""
+        group["delegated_models"] = sorted(
+            set(group["delegated_models"])
+            | set(group["model_ids"])
+            | extras.get(group["id"], set())
+        )
+    policy = snapshot(draft)
+    granted = {m for g in draft["groups"] for m in g["model_ids"]}
+    return (
+        draft,
+        policy,
+        {
+            "models_opened": sorted(granted),
+            "models_closed": sorted(closed),
+            "prices_added": sorted(p["model"] for p in added),
+            "organization_limit": "unlimited"
+            if settings.get("spend_limit_unlimited")
+            else settings["spend_limit_usd"],
+            "active_members": sum(m["status"] == "active" for m in draft["members"]),
+        },
+    )
+
+
+def membership_publication(active, draft):
+    """Publish the draft's member list on top of the active policy's reviewed fields.
+
+    Prices, limits, groups and grants come from the active snapshot, so only who
+    belongs to which published group changes. Validation rejects members of an
+    unpublished group or personal grants outside the published allowance.
+    """
+    result = copy.deepcopy(active)
+    result["members"] = copy.deepcopy(draft["members"])
+    return snapshot(result)
+
+
 def group_publication(active, draft, actor):
     """Publish only delegated team edits, preserving every owner-controlled field.
 
     The active snapshot is the authority for ceilings, delegation and existing role
     assignments. Unrelated drafts and pending privilege changes never ride along.
     """
-    import copy
-
     if actor["role"] != "group_admin":
         raise PermissionError("A group administrator is required")
     result = copy.deepcopy(active)

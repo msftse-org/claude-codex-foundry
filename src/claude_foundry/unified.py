@@ -67,7 +67,8 @@ def reviewed_deployments(providers, prices, deployed):
     result = {}
     for value in prices:
         price = BudgetPrice.model_validate(value)
-        price.check_current()
+        # A passed review date is reported, not a reason to withhold the runtime manifest.
+        price.check_current(enforce=False)
         model = actual.get(price.model, {})
         provider = "openai" if available.get(price.model) == "codex" else "anthropic"
         if (

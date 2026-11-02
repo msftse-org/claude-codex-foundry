@@ -21,6 +21,7 @@ from uuid import UUID
 
 from claude_foundry.azure import Azure, AzureError, api_path
 from claude_foundry.config import read_json, write_json
+from claude_foundry.function_package import publish
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS = (
@@ -102,6 +103,9 @@ def load_settings(path):
     s["portal"] = {"enabled": True, "mode": "unified", **s.get("portal", {})}
     if s["portal"]["mode"] not in {"unified", "baseline"}:
         raise DeployError("portal.mode must be unified or baseline")
+    limit = s["portal"].get("monthly_limit_usd")
+    if limit is not None and (type(limit) not in {int, float} or limit < 0):
+        raise DeployError("portal.monthly_limit_usd must be a non-negative number of US dollars")
     if not s["claude"]["enabled"] and not s["codex"]["enabled"]:
         raise DeployError("Enable Claude, Codex or both")
     if s["portal"]["enabled"] and s["portal"]["mode"] == "baseline" and not s["claude"]["enabled"]:
@@ -659,34 +663,48 @@ class Deployment:
             )
         package = self.dist / "claude-foundry-admin-preview.zip"
         self.script("build_portal.py", "--output", package)
-        self.run(
-            [
-                "az",
-                "functionapp",
-                "deployment",
-                "source",
-                "config-zip",
-                "--resource-group",
-                group,
-                "--name",
-                self.n["portal"],
-                "--src",
-                package,
-                "--build-remote",
-                "true",
-                "--timeout",
-                900,
-                "--only-show-errors",
-                "--output",
-                "none",
-            ]
-        )
-        wait_for_health(url + "/api/health")
+        # Flex Consumption keeps serving the old package until restarted.
+        publish(self.run, group, self.n["portal"], package, url + "/api/health")
         verify_portal_setup(
             url,
             list(unified_settings["providerConfigs"]) if self.unified else ["claude"],
         )
         self.save(portal_url=url)
+        if self.unified:
+            self.turn_on_access(url, read_json(entra)["client_id"])
+
+    def turn_on_access(self, url, client_id):
+        """Publish a working, metered policy once; an existing published policy is kept."""
+        from claude_foundry.portal_client import PortalClient, PortalError
+
+        self.step("Turning on governed access")
+        try:
+            portal = PortalClient(url, client_id, self.s["tenant_id"])
+            result = portal.initialize(self.s["portal"].get("monthly_limit_usd"))
+        except (PortalError, RuntimeError, OSError) as error:
+            self.access = "not turned on"
+            self.warnings.append(
+                f"Governed access was not turned on automatically ({error}). As the portal owner, "
+                "open Budgets & limits, set limits and publish, or rerun this command."
+            )
+            return
+        if not result["initialized"]:
+            self.access = "published policy kept"
+            print("A budget policy is already published; its limits and grants are unchanged.")
+            return
+        self.access = "on"
+        limit = result["organization_limit"]
+        print(
+            f"Published a working policy: {len(result['models_opened'])} models open, "
+            f"{result['active_members']} active members, organization limit "
+            + ("unlimited (spend is metered per user)" if limit == "unlimited" else f"${limit}")
+            + ". Tighten limits in Budgets & limits."
+        )
+        if result["models_closed"]:
+            self.warnings.append(
+                "These granted models stay closed until they have a reviewed price: "
+                + ", ".join(result["models_closed"])
+            )
 
     def verify(self, profiles):
         self.step("Verifying the gateways with your Azure CLI sign-in (small billable requests)")
@@ -752,7 +770,8 @@ class Deployment:
         if self.state.get("portal_url"):
             print(f"  Portal:          {self.state['portal_url']} (owner: {self.user['email']})")
         if self.unified:
-            print("  Portal coverage: both enabled providers; policy publication required")
+            access = getattr(self, "access", "not turned on")
+            print(f"  Portal coverage: both enabled providers; governed access {access}")
             for client in ("claude", "codex"):
                 if self.s[client]["enabled"]:
                     print(
@@ -768,7 +787,10 @@ class Deployment:
             print("\nRequired administrator actions: none for developer sign-in (Azure CLI mode).")
         print("\nOnboard developers:")
         print("  uv run python scripts/onboard_users.py alice@example.com bob@example.com")
-        print("  Send them the installer ZIP. They open Install.command and sign in once.")
+        if self.unified:
+            print("  They download their setup from the portal's Onboarding page and sign in once.")
+        else:
+            print("  Send them the installer ZIP. They open Install.command and sign in once.")
 
     def upgrade_portal(self):
         """Reuse models, foundation, original portal storage and identities during cutover."""
@@ -821,19 +843,6 @@ def merge_organization(existing, deployed, settings):
     if settings["claude"]["enabled"]:
         org["model_provider_data"] = copy.deepcopy(settings["marketplace"])
     return org
-
-
-def wait_for_health(url, attempts=40, delay=15):
-    for _ in range(attempts):
-        try:
-            with urllib.request.urlopen(url, timeout=30) as response:
-                if response.status == 200:
-                    print(f"Healthy: {url}")
-                    return
-        except (urllib.error.URLError, TimeoutError):
-            pass
-        time.sleep(delay)
-    raise DeployError(f"{url} did not become healthy; check the Function app deployment logs")
 
 
 def verify_portal_setup(url, expected_clients):

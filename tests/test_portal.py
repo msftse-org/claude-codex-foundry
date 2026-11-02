@@ -219,6 +219,18 @@ def test_access_tokens_reject_wrong_claims(org, app, key, overrides):
         assert result.status_code == 401
 
 
+def test_azure_cli_tokens_are_accepted_with_the_same_role_checks(org, app, key):
+    from claude_foundry.portal.auth import AZURE_CLI_CLIENT_ID
+
+    with TestClient(app) as client:
+        cli = {"Authorization": "Bearer " + token(org, key, azp=AZURE_CLI_CLIENT_ID)}
+        assert client.get("/api/state", headers=cli).status_code == 200
+        stranger = {
+            "Authorization": "Bearer " + token(org, key, azp=AZURE_CLI_CLIENT_ID, oid=str(uuid4()))
+        }
+        assert client.get("/api/state", headers=stranger).status_code == 403
+
+
 def test_token_signature_is_verified(org, key, monkeypatch):
     other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     auth = Authenticator(org["tenant_id"], CLIENT)
@@ -548,7 +560,13 @@ def test_complete_role_read_and_write_journey(app, org, key, monkeypatch, role):
         values = {
             "member": {**actor, "id": str(uuid4()), "role": "developer"},
             "member_import": {"csv": csv, "group_id": actor["group_id"]},
-            "group": {**data["groups"][0], "id": str(uuid4()), "name": "Test group"},
+            # Delegation is owner-only, so a new group starts without the seed's allowance.
+            "group": {
+                **data["groups"][0],
+                "id": str(uuid4()),
+                "name": "Test group",
+                "delegated_models": [],
+            },
             "settings": {**data["settings"], "monthly_budget_usd": 123},
             "pricing": {
                 "model": "claude-sonnet-4-6",
@@ -1574,6 +1592,7 @@ def test_shared_portal_lists_both_providers_and_exports_correct_profiles(unified
             "setup_ready": True,
             "client_types": ["claude", "codex"],
             "bundle_ready": False,
+            "build": "development",
         }
         data = client.get("/api/state", headers=auth).json()
         assert data["client_types"] == ["claude", "codex"]
@@ -1709,3 +1728,195 @@ def test_shared_setup_zips_match_published_provider_profiles(
             ).status_code
             == 409
         )
+
+
+def synthetic_price(model, provider="anthropic"):
+    from datetime import UTC, datetime, timedelta
+
+    return dict(
+        model=model,
+        provider=provider,
+        deployment_version="test",
+        max_input_tokens=1000,
+        max_output_tokens=1000,
+        default_output_tokens=100,
+        input_ceiling_per_million="3",
+        output_ceiling_per_million="15",
+        source_url="https://example.com",
+        verified_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        valid_until=(datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        note="Synthetic test pricing only",
+    )
+
+
+class MemorySnapshots:
+    def __init__(self):
+        self.values = {}
+
+    def get(self, key):
+        return copy.deepcopy(self.values[key])
+
+    def put(self, value):
+        from claude_foundry.portal.budget_ledger import policy_digest
+
+        key = policy_digest(value)
+        self.values[key] = copy.deepcopy(value)
+        return key
+
+
+@pytest.fixture
+def unpublished_app(org, key, monkeypatch, tmp_path):
+    """A deployment that has never published a budget policy, like a fresh main install."""
+    from claude_foundry.portal.budget_ledger import Ledger, MemoryRows
+
+    opus = {"name": "claude-opus-4-6", "anthropicFamilyTier": "opus", "isFamilyDefault": True}
+    config = {**org, "models": org["models"] + [opus]}
+    state = seed(config, OWNER, "Test owner", "owner@example.com")
+    # Simulate the baseline seed, which granted models without delegating them.
+    state["groups"][0]["delegated_models"] = []
+    developer = add_member(state)
+    monkeypatch.setenv("PORTAL_OWNER_ID", OWNER)
+    monkeypatch.setenv("PORTAL_CLIENT_ID", CLIENT)
+    monkeypatch.setenv("BUDGET_CLAUDE_GATEWAY_URL", "https://test-apim.azure-api.net/claude-gov")
+    monkeypatch.setenv(
+        "PORTAL_INITIAL_BUDGET_PRICES_JSON", json.dumps([synthetic_price("claude-sonnet-4-6")])
+    )
+    monkeypatch.setattr(
+        jwt.PyJWKClient,
+        "get_signing_key_from_jwt",
+        lambda self, value: SimpleNamespace(key=key.public_key()),
+    )
+    ledger, snapshots = Ledger(MemoryRows()), MemorySnapshots()
+    store = LocalStore(tmp_path / "state.json", state)
+    application = create_app(
+        config, store=store, credential=object(), local=False, budget=(ledger, snapshots)
+    )
+    return application, ledger, snapshots, developer
+
+
+def test_initialize_turns_on_working_access_once(unpublished_app, org, key):
+    application, ledger, snapshots, developer = unpublished_app
+    with TestClient(application) as client:
+        before = client.get("/api/client-profile", headers=headers(org, key, developer["id"]))
+        assert before.status_code == 409
+        assert "isn't turned on yet" in before.json()["detail"]
+        refused = client.post(
+            "/api/budgets/initialize", headers=headers(org, key, developer["id"]), json={}
+        )
+        assert refused.status_code == 403
+        result = client.post("/api/budgets/initialize", headers=headers(org, key), json={})
+        assert result.status_code == 200, result.text
+        summary = result.json()
+        assert summary["initialized"] is True
+        assert summary["organization_limit"] == "unlimited"
+        assert summary["models_opened"] == ["claude-sonnet-4-6"]
+        assert summary["models_closed"] == ["claude-opus-4-6"]
+        assert summary["prices_added"] == ["claude-sonnet-4-6"]
+        assert ledger.active() == summary["policy_hash"]
+        policy = snapshots.get(summary["policy_hash"])
+        assert policy["settings"]["budget_enforcement"] is True
+        assert policy["groups"][0]["spend_ceiling_unlimited"] is True
+        assert policy["groups"][0]["delegated_models"] == ["claude-sonnet-4-6"]
+        profile = client.get("/api/client-profile", headers=headers(org, key, developer["id"]))
+        assert profile.status_code == 200, profile.text
+        assert [m["name"] for m in profile.json()["models"]] == ["claude-sonnet-4-6"]
+        state = application.state.store.read()[0]
+        assert state["audit"][-1]["action"] == "budget.initialized"
+        again = client.post("/api/budgets/initialize", headers=headers(org, key), json={})
+        assert again.json() == {
+            "initialized": False,
+            "policy_hash": summary["policy_hash"],
+            "note": "A budget policy is already published; nothing changed",
+        }
+        assert application.state.store.read()[0] == state
+
+
+def test_initial_policy_keeps_reviewed_values_and_applies_a_cap(state):
+    from claude_foundry.portal.budget_policy import initial_policy
+
+    state["budget_prices"] = [synthetic_price("claude-sonnet-4-6")]
+    state["groups"][0]["spend_ceiling_usd"] = "40"
+    reviewed = {**synthetic_price("claude-sonnet-4-6"), "note": "Owner reviewed"}
+    draft, policy, summary = initial_policy(state, [reviewed], monthly_limit=250)
+    assert policy["settings"]["spend_limit_usd"] == "250"
+    assert policy["settings"]["spend_limit_unlimited"] is False
+    assert policy["groups"][0]["spend_ceiling_usd"] == "40"
+    assert policy["budget_prices"][0]["note"] == "Synthetic test pricing only"
+    assert summary["prices_added"] == [] and summary["organization_limit"] == "250"
+    assert draft["settings"] == {**state["settings"], **policy["settings"]}
+
+
+def test_member_changes_take_effect_without_a_publish_step(budget_app, org, key, monkeypatch):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    monkeypatch.setenv("BUDGET_CLAUDE_GATEWAY_URL", "https://test-apim.azure-api.net/claude-gov")
+    original = snapshots.get(ledger.active())
+    newcomer_id = str(uuid4())
+    with TestClient(application) as client:
+        state = client.get("/api/state", headers=headers(org, key)).json()
+        newcomer = {**developer, "id": newcomer_id, "name": "New developer"}
+        saved = client.post(
+            "/api/changes",
+            headers=headers(org, key),
+            json={"revision": state["revision"], "kind": "member", "value": newcomer},
+        ).json()
+        assert saved["published"] is True and saved["publish_note"] is None
+        policy = snapshots.get(ledger.active())
+        assert {k: v for k, v in policy.items() if k != "members"} == {
+            k: v for k, v in original.items() if k != "members"
+        }
+        assert newcomer_id in {m["id"] for m in policy["members"]}
+        auth = headers(org, key, newcomer_id)
+        assert client.get("/api/client-profile", headers=auth).status_code == 200
+        state = client.get("/api/state", headers=headers(org, key)).json()
+        assert state["audit"][-1]["after"] == {"members_only": True}
+        suspended = client.post(
+            "/api/changes",
+            headers=headers(org, key),
+            json={
+                "revision": state["revision"],
+                "kind": "member",
+                "value": {**newcomer, "status": "suspended"},
+            },
+        ).json()
+        assert suspended["published"] is True
+        assert newcomer_id not in {
+            m["id"] for m in snapshots.get(ledger.active())["members"] if m["status"] == "active"
+        }
+
+
+def test_member_change_stays_a_draft_when_its_group_is_unpublished(budget_app, org, key):
+    application, ledger, snapshots, admin, developer, outsider = budget_app
+    active = ledger.active()
+    with TestClient(application) as client:
+        state = client.get("/api/state", headers=headers(org, key)).json()
+        group = {**state["groups"][0], "id": str(uuid4()), "name": "Unpublished team"}
+        state = {
+            **state,
+            "revision": client.post(
+                "/api/changes",
+                headers=headers(org, key),
+                json={"revision": state["revision"], "kind": "group", "value": group},
+            ).json()["revision"],
+        }
+        member = {**developer, "id": str(uuid4()), "group_id": group["id"]}
+        saved = client.post(
+            "/api/changes",
+            headers=headers(org, key),
+            json={"revision": state["revision"], "kind": "member", "value": member},
+        ).json()
+        assert saved["saved"] is True and saved["published"] is False
+        assert "Publish in Budgets & limits" in saved["publish_note"]
+        assert ledger.active() == active
+        # Delegated team edits keep their own review-and-publish step.
+        state = client.get("/api/state", headers=headers(org, key)).json()
+        team = client.post(
+            "/api/changes",
+            headers=headers(org, key, admin["id"]),
+            json={
+                "revision": state["revision"],
+                "kind": "member",
+                "value": {**developer, "id": str(uuid4()), "group_id": admin["group_id"]},
+            },
+        ).json()
+        assert team["published"] is False and team["publish_note"] is None
+        assert ledger.active() == active
