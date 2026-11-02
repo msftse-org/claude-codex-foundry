@@ -29,12 +29,22 @@ fi
 for task_profile in "${task_profiles[@]}"; do
   [[ -f "$task_profile" ]] || { echo "Missing organization profile: $task_profile" >&2; exit 1; }
 done
+task_bootstrap_failed() {
+  echo >&2
+  echo "SETUP DID NOT COMPLETE. Runtime/dependency setup failed before client configuration." >&2
+  echo "Claude Code, Codex and Claude Desktop settings are unchanged." >&2
+  echo "Allow HTTPS access to astral.sh (uv installer), releases.astral.sh (Python runtime), pypi.org (package index) and files.pythonhosted.org (package downloads)." >&2
+  echo "If the error above names another download or redirect host, include it in your IT review." >&2
+  echo "Rerunning the same command is safe after resolving the error above." >&2
+  echo "If network policy blocks downloads, ask your IT team for proxy settings or an organization-approved offline bundle. Keep TLS verification and dependency hash checks enabled." >&2
+  exit 1
+}
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v uv >/dev/null 2>&1; then
-  task_installer="$(mktemp)"
+  task_installer="$(mktemp)" || task_bootstrap_failed
   trap 'rm -f "$task_installer"' EXIT
-  curl --proto '=https' --tlsv1.2 -fsSL https://astral.sh/uv/0.11.13/install.sh -o "$task_installer"
-  UV_NO_MODIFY_PATH=1 sh "$task_installer"
+  curl --proto '=https' --tlsv1.2 -fsSL https://astral.sh/uv/0.11.13/install.sh -o "$task_installer" || task_bootstrap_failed
+  UV_NO_MODIFY_PATH=1 sh "$task_installer" || task_bootstrap_failed
 fi
 if [[ "$task_install_az" == true ]] && ! command -v az >/dev/null 2>&1; then
   if ! command -v brew >/dev/null 2>&1; then
@@ -44,13 +54,13 @@ if [[ "$task_install_az" == true ]] && ! command -v az >/dev/null 2>&1; then
   brew install --cask azure-cli
 fi
 task_runtime="$HOME/.local/share/claude-foundry/runtime"
-mkdir -p "$(dirname "$task_runtime")"
+mkdir -p "$(dirname "$task_runtime")" || task_bootstrap_failed
 if [[ ! -x "$task_runtime/bin/python" ]]; then
-  uv venv --python 3.12 --managed-python "$task_runtime"
+  uv venv --python 3.12 --managed-python "$task_runtime" || task_bootstrap_failed
 fi
 # Dependencies are pinned with hashes; install the reviewed local project separately.
-uv pip sync --python "$task_runtime/bin/python" --require-hashes "$task_root/requirements-auth.lock"
-uv pip install --python "$task_runtime/bin/python" --no-deps "$task_root"
+uv pip sync --python "$task_runtime/bin/python" --require-hashes "$task_root/requirements-auth.lock" || task_bootstrap_failed
+uv pip install --python "$task_runtime/bin/python" --no-deps "$task_root" || task_bootstrap_failed
 task_codex_app="${CLAUDE_FOUNDRY_CODEX_APP:-/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex}"
 task_codex_cli="${CLAUDE_FOUNDRY_CODEX_CLI:-codex}"
 task_signed_in="|"

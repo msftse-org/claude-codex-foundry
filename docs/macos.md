@@ -60,6 +60,22 @@ Use `--no-login` only if the selected authentication method already has a workin
 
 Fully quit and reopen Claude Desktop. Its third-party profile enables Chat and Code and lists the organization's published models. The CLI uses the same gateway and credential helper.
 
+### Runtime or dependency download failed
+
+If bootstrap fails, setup prints **SETUP DID NOT COMPLETE** before configuring any
+client: Claude Code, Codex and Claude Desktop settings are unchanged. A verified
+setup ZIP does not guarantee that later runtime and wheel downloads can connect.
+Downloads need HTTPS access to `astral.sh` (uv installer), `releases.astral.sh`
+(Python runtime), `pypi.org` (package index) and `files.pythonhosted.org` (packages).
+Include any additional download or redirect host named in the original error when
+asking IT for help.
+
+After resolving the error, rerunning the same command is safe; an existing uv and
+runtime can be reused. Updating uv is not a demonstrated fix for blocked package
+downloads. Ask your IT team for proxy settings or an organization-approved offline
+bundle if network policy blocks access. Keep TLS verification and dependency hash
+checks enabled. Restart clients only after setup prints **SETUP COMPLETE**.
+
 ## Bring your existing conversations
 
 An import-enabled bundle exposes Claude's native **Settings → Import & export → Import…** workflow. For a locally managed installation, pass `--enable-history-import` to `Install.command` to enable it explicitly. The importer preserves originals; installing alone does not copy history. Follow the [migration guide](conversation-migration.md) for source permissions, local Code sessions, attachment limits, and verification.
