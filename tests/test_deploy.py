@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
@@ -424,6 +425,83 @@ def test_codex_qualification_route_wait_is_bounded(codex_qualification, capsys):
     assert max(clock.sleeps) <= 15
     assert len(transport.requests) == len(clock.sleeps)
     assert capsys.readouterr().out.count("Waiting for the new Codex API Management route") == 1
+
+
+def test_codex_retry_request_timeout_respects_propagation_deadline(deploy):
+    clock = FakeClock()
+    transport = FakeCodexResponses([], fallback=(404, APIM_NOT_FOUND, {}))
+    attempts = []
+    route = "https://gateway.example/codex/v1/responses"
+
+    def slow_not_found(request, timeout):
+        attempts.append((clock(), timeout))
+        if clock() >= 164:
+            clock.now += timeout
+        return transport(request, timeout)
+
+    open_route = deploy.codex_route_opener(slow_not_found, route, clock=clock, sleep=clock.sleep)
+    with pytest.raises(RuntimeError, match="after 180 seconds"):
+        open_route(Request(route, data=b"{}"), 90)
+
+    assert clock() == 180
+    assert attempts[0] == (0, 90)
+    assert attempts[-1] == (164, 16)
+    assert len(attempts) == 14
+    assert all(start + timeout <= 180 for start, timeout in attempts[1:])
+    assert sum(clock.sleeps) == 164
+
+
+def test_codex_retry_io_does_not_start_after_deadline(deploy):
+    clock = FakeClock()
+    transport = FakeCodexResponses([], fallback=(404, APIM_NOT_FOUND, {}))
+    route = "https://gateway.example/codex/v1/responses"
+
+    def delayed_sleep(seconds):
+        clock.sleep(seconds)
+        clock.now += 180
+
+    open_route = deploy.codex_route_opener(transport, route, clock=clock, sleep=delayed_sleep)
+    with pytest.raises(RuntimeError, match="after 180 seconds"):
+        open_route(Request(route, data=b"{}"), 90)
+
+    assert len(transport.requests) == 1
+    assert clock.sleeps == [2]
+    assert clock() == 182
+
+
+@pytest.mark.parametrize("propagating", [False, True])
+def test_codex_propagation_deadline_does_not_limit_later_billable_probes(
+    deploy, monkeypatch, propagating
+):
+    clock = FakeClock()
+    transport = FakeCodexResponses([(404, APIM_NOT_FOUND, {})] if propagating else [])
+    timeouts = []
+    config = {"gateway_url": "https://gateway.example/codex/v1"}
+    model = {"name": "gpt-test", "model": "gpt-test"}
+
+    def slow_success(request, timeout):
+        timeouts.append(timeout)
+        response = transport(request, timeout)
+        clock.now += 90
+        return response
+
+    monkeypatch.setattr(
+        codex_verify,
+        "open_url",
+        deploy.codex_route_opener(
+            slow_success,
+            config["gateway_url"] + "/responses",
+            clock=clock,
+            sleep=clock.sleep,
+        ),
+    )
+    result = codex_verify.qualify(config, model, token="placeholder-token")
+
+    assert result["passed"] is True
+    assert timeouts == ([180, 178, 180, 180] if propagating else [180, 180, 180])
+    assert clock() == (272 if propagating else 270)
+    assert len(transport.requests) == (4 if propagating else 3)
+    assert clock.sleeps == ([2] if propagating else [])
 
 
 @pytest.mark.parametrize("status", [400, 401, 403])

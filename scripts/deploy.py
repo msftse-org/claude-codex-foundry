@@ -75,9 +75,16 @@ def codex_route_opener(open_url, updated_route, *, clock=time.monotonic, sleep=t
     def open_route(request, timeout):
         nonlocal deadline, announced
         delay = 2
+        retrying = False
         while True:
+            attempt_timeout = timeout
+            if retrying:
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise RuntimeError(expired)
+                attempt_timeout = min(timeout, remaining)
             try:
-                return open_url(request, timeout)
+                return open_url(request, attempt_timeout)
             except urllib.error.HTTPError as error:
                 headers = {header.lower() for header in error.headers or {}}
                 if (
@@ -113,8 +120,7 @@ def codex_route_opener(open_url, updated_route, *, clock=time.monotonic, sleep=t
                 announced = True
             sleep(min(delay, deadline - now))
             delay = min(delay * 2, 15)
-            if clock() >= deadline:
-                raise RuntimeError(expired)
+            retrying = True
 
     return open_route
 
