@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from claude_foundry import function_package
 from claude_foundry.azure import AzureError
-from claude_foundry.config import write_json
+from claude_foundry.config import read_json, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 TENANT = "00000000-0000-0000-0000-000000000001"
@@ -137,8 +138,45 @@ def organization(org):
     }
 
 
+def skip_restart_waits(monkeypatch, served=None):
+    # Fake builds write no real package; record which build each app must serve.
+    monkeypatch.setattr(function_package, "package_build", lambda path: "build-" + Path(path).stem)
+    monkeypatch.setattr(function_package, "RESTART_SECONDS", 0)
+    monkeypatch.setattr(
+        function_package,
+        "wait_for_build",
+        lambda url, build: served.append(("serving", url, build)) if served is not None else None,
+    )
+
+
+def fake_portal(monkeypatch, record=None, initialized=True):
+    """Stand in for the owner's portal API; record initialize calls."""
+
+    class Portal:
+        def __init__(self, url, client_id, tenant_id):
+            self.url = url
+
+        def initialize(self, limit=None):
+            if record is not None:
+                record.append(("initialize", self.url, limit))
+            if not initialized:
+                return {"initialized": False, "policy_hash": "kept"}
+            return {
+                "initialized": True,
+                "policy_hash": "new",
+                "models_opened": ["claude-test"],
+                "models_closed": ["gpt-unpriced"],
+                "prices_added": ["claude-test"],
+                "organization_limit": "unlimited",
+                "active_members": 1,
+            }
+
+    monkeypatch.setattr("claude_foundry.portal_client.PortalClient", Portal)
+
+
 def run_deployment(deploy, settings, tmp_path, runner, monkeypatch, managed=False):
-    monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    skip_restart_waits(monkeypatch)
+    fake_portal(monkeypatch)
     monkeypatch.setattr(deploy, "verify_portal_setup", lambda url, clients: None)
 
     class FakeAzure:
@@ -472,6 +510,7 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
     settings.write_text(json.dumps(value))
     runner = UnifiedRunner(organization(org))
     cloud = []
+    deployed = []
 
     class FakeAzure:
         def __init__(self, subscription):
@@ -481,9 +520,13 @@ def unified_job(deploy, settings, tmp_path, org, monkeypatch):
             cloud.append((method, path, body))
             if path.endswith("/config/appsettings/list") or path.endswith("/policies/policy"):
                 raise AzureError(404, "missing")
+            if method == "GET" and path.endswith("/deployments"):
+                return {"value": list(deployed)}
             return {"identity": {"principalId": GROUP}}
 
-    monkeypatch.setattr(deploy, "wait_for_health", lambda url: None)
+    FakeAzure.deployed = deployed
+    skip_restart_waits(monkeypatch, cloud)
+    fake_portal(monkeypatch, cloud)
     monkeypatch.setattr(
         deploy, "verify_portal_setup", lambda url, clients: cloud.append(("setup", url, clients))
     )
@@ -521,6 +564,118 @@ def test_default_deployment_connects_both_catalogs_and_installer(unified_job):
     assert not any(c[3:4] == ["verify"] for c in runner.calls)
     assert any("closed until" in w for w in job.warnings)
     assert job.state["governance_mode"] == "unified"
+    assert not any(
+        c[3:4] == ["admin"] and c[6:7] in (["gateway"], ["observability"]) for c in runner.calls
+    )
+
+
+def test_each_function_app_restarts_onto_its_new_build_before_use(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=True)
+    seen = commands(runner)
+    for name in ["ccf-budget-contoso1", "ccf-admin-contoso1"]:
+        upload = next(i for i, c in enumerate(seen) if "config-zip" in c and name in c)
+        stop = next(i for i, c in enumerate(seen) if "functionapp stop" in c and name in c)
+        start = next(i for i, c in enumerate(seen) if "functionapp start" in c and name in c)
+        assert upload < stop < start
+    events = [c[0:2] for c in cloud if c[0] in {"serving", "route", "setup", "initialize"}]
+    assert events == [
+        ("serving", "https://ccf-budget-contoso1.azurewebsites.net/health"),
+        ("route", "claude-governed"),
+        ("route", "codex-governed"),
+        ("serving", "https://ccf-admin-contoso1.azurewebsites.net/api/health"),
+        ("setup", "https://ccf-admin-contoso1.azurewebsites.net"),
+        ("initialize", "https://ccf-admin-contoso1.azurewebsites.net"),
+    ]
+    builds = {c[1]: c[2] for c in cloud if c[0] == "serving"}
+    assert builds["https://ccf-budget-contoso1.azurewebsites.net/health"] == (
+        "build-claude-codex-budget"
+    )
+
+
+def test_deploy_turns_on_access_with_the_configured_cap(unified_job, capsys):
+    job, _, cloud = unified_job
+    job.s["portal"]["monthly_limit_usd"] = 500
+    job.deploy(verify=False)
+    assert [c for c in cloud if c[0] == "initialize"] == [
+        ("initialize", "https://ccf-admin-contoso1.azurewebsites.net", 500)
+    ]
+    out = capsys.readouterr().out
+    assert "Published a working policy: 1 models open" in out
+    assert "governed access on" in out
+    assert any("gpt-unpriced" in w for w in job.warnings)
+
+
+def test_upgrade_keeps_a_published_policy_and_reports_it(unified_job, monkeypatch, capsys):
+    job, _, cloud = unified_job
+    fake_portal(monkeypatch, cloud, initialized=False)
+    job.deploy(verify=False)
+    out = capsys.readouterr().out
+    assert "its limits and grants are unchanged" in out
+    assert "governed access published policy kept" in out
+
+
+def test_access_failure_is_reported_without_failing_the_deployment(unified_job, monkeypatch):
+    from claude_foundry.portal_client import PortalError
+
+    job, _, _ = unified_job
+
+    class Refusing:
+        def __init__(self, *args):
+            raise PortalError(403, "Only the owner can turn on budget access")
+
+    monkeypatch.setattr("claude_foundry.portal_client.PortalClient", Refusing)
+    job.deploy(verify=False)
+    assert any("not turned on automatically" in w and "owner" in w for w in job.warnings)
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_unified_qualifies_with_operator_directly_without_creating_baseline_api(
+    unified_job, partial
+):
+    job, runner, cloud = unified_job
+    write_json(job.org_path, runner.org)
+    original_tool = runner.tool
+    probes = []
+
+    def tool(command, capture):
+        if command[:1] == ["admin"] and command[3] == "qualify":
+            probes.append(json.loads(Path(command[2]).read_text()))
+        result = original_tool(command, capture)
+        if command[:1] == ["admin"] and command[3] == "sync-models":
+            path = Path(command[2])
+            value = json.loads(path.read_text())
+            value["models"][0]["qualified"] = partial
+            if partial:
+                value["models"].append({"name": "new-model", "model": "gpt-test"})
+            write_json(path, value)
+        return result
+
+    runner.tool = tool
+    job.codex()
+    assert len(probes) == 1
+    assert probes[0]["gateway_url"].endswith(".openai.azure.com/openai/v1")
+    assert probes[0]["auth_mode"] == "azure-cli"
+    assert "client_id" not in probes[0]
+    assert [m["name"] for m in probes[0]["models"]] == (["new-model"] if partial else ["gpt-test"])
+    saved = json.loads(job.codex_path.read_text())
+    assert saved["gateway_url"].endswith("/codex/v1")
+    assert ".openai.azure.com" not in saved["gateway_url"]
+    assert all(m["qualified"] for m in saved["models"])
+    assert len(saved["models"]) == (2 if partial else 1)
+    assert not any("gateway" in c or "observability" in c for c in runner.calls)
+    assert not cloud
+
+
+def test_unified_rerun_does_not_recreate_retired_routes(unified_job):
+    job, runner, cloud = unified_job
+    job.deploy(verify=False)
+    runner.calls.clear()
+    cloud.clear()
+    job.deploy(verify=False)
+    assert not any("gateway" in c or "observability" in c for c in runner.calls)
+    assert not any("qualify" in c for c in runner.calls)
+    assert [c[1] for c in cloud if c[0] == "route"] == ["claude-governed", "codex-governed"]
 
 
 def test_deployment_enables_stream_capture_with_content_logs(unified_job):
@@ -636,9 +791,39 @@ def test_deployment_verifies_the_enabled_client_downloads(deploy, monkeypatch):
     monkeypatch.setattr(
         deploy.urllib.request,
         "urlopen",
-        lambda *args, **kwargs: io.BytesIO(json.dumps(status).encode()),
+        lambda url, **kwargs: io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"public asset"
+        ),
     )
     deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
+
+
+@pytest.mark.parametrize("failed_path", ["/", "/assets/app.js", "/assets/app.css"])
+def test_health_is_not_sufficient_when_public_portal_files_cannot_be_served(
+    deploy, monkeypatch, failed_path
+):
+    from urllib.error import HTTPError
+
+    status = {"setup_ready": True, "bundle_ready": True, "client_types": ["claude", "codex"]}
+
+    def open_url(url, **kwargs):
+        if url == "https://portal.example.com" + failed_path:
+            raise HTTPError(url, 500, "Unreadable file", {}, None)
+        return io.BytesIO(
+            json.dumps(status).encode()
+            if url.endswith("/api/health")
+            else b'<div id="root"></div><script src="/assets/app.js"></script><link href="/assets/app.css">'
+            if url.endswith("/")
+            else b"asset"
+        )
+
+    monkeypatch.setattr(deploy.urllib.request, "urlopen", open_url)
+    with pytest.raises(deploy.DeployError, match="user interface is unavailable"):
+        deploy.verify_portal_setup("https://portal.example.com", ["claude", "codex"])
 
 
 def test_unified_mode_cannot_be_downgraded(unified_job):
@@ -694,3 +879,111 @@ def test_missing_local_manifest_recovers_existing_runtime_bounds(unified_job):
     job.azure = ExistingRuntime
     (job.local / "unified/runtime-models.json").unlink()
     assert prepare(job)[2] == manifest
+
+
+def test_fresh_unified_deploy_prices_pinned_deployments_from_the_catalog(unified_job):
+    job, _, _ = unified_job
+    # The catalog matches the deployed model, whatever the deployment is named.
+    job.azure.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-sonnet-4-6", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "NoAutoUpgrade",
+            },
+        }
+    )
+    job.deploy(verify=False)
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [p["model"] for p in prices] == ["claude-test"]
+    assert prices[0]["rates"]["cache_read"] == "0.3"
+    assert read_json(job.local / "unified/portal-settings.json")["initialBudgetPrices"] == prices
+    manifest = read_json(job.local / "unified/runtime-models.json")
+    assert manifest["claude-test"]["version"] == "1"
+    assert not any("Governed inference is closed" in w for w in job.warnings)
+    assert any("gpt-test (not deployed)" in w for w in job.warnings)
+
+
+def test_upgrade_prices_a_runtime_that_main_deployed_without_prices(unified_job):
+    from claude_foundry.unified_deployment import prepare
+
+    job, _, _ = unified_job
+    job.deploy(verify=False)
+    settings = json.loads((job.local / "unified/portal-settings.json").read_text())
+    write_json(job.local / "unified/runtime-models.json", {})
+    original = job.azure
+    original.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-sonnet-4-6", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "NoAutoUpgrade",
+            },
+        }
+    )
+
+    class UnpricedRuntime(original):
+        def request(self, method, path, body=None, **kwargs):
+            if "/sites/ccf-budget-" in path and path.endswith("/config/appsettings/list"):
+                return {
+                    "properties": {
+                        "BUDGET_STORAGE_ACCOUNT": settings["budgetStorageAccount"],
+                        "BUDGET_ORGANIZATION_ID": SUBSCRIPTION,
+                        "BUDGET_TENANT_ID": TENANT,
+                        "BUDGET_DEPLOYMENTS_JSON": "{}",
+                    }
+                }
+            return super().request(method, path, body, **kwargs)
+
+    job.azure = UnpricedRuntime
+    assert list(prepare(job)[2]) == ["claude-test"]
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [p["model"] for p in prices] == ["claude-test"]
+
+
+def test_catalog_pricing_pins_auto_upgrading_deployments_first(unified_job):
+    job, _, cloud = unified_job
+    job.azure.deployed.append(
+        {
+            "name": "claude-test",
+            "sku": {"name": "DataZoneStandard"},
+            "properties": {
+                "model": {"name": "claude-haiku-5-5", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+            },
+        }
+    )
+    job.azure.deployed.append(
+        {
+            "name": "unoffered",
+            "sku": {"name": "GlobalStandard"},
+            "properties": {
+                "model": {"name": "claude-haiku-5-5", "version": "1", "format": "Anthropic"},
+                "provisioningState": "Succeeded",
+            },
+        }
+    )
+    job.deploy(verify=False)
+    pins = [c for c in cloud if c[0] == "PATCH" and "/deployments/" in c[1]]
+    assert [(c[1].rsplit("/", 1)[1], c[2]) for c in pins] == [
+        ("claude-test", {"properties": {"versionUpgradeOption": "NoAutoUpgrade"}})
+    ]
+    prices = read_json(job.local / "unified/model-policy.json")["budget_prices"]
+    assert [(p["model"], p["deployment_version"]) for p in prices] == [("claude-test", "1")]
+    assert "Data Zone" in prices[0]["note"]
+
+
+def test_established_runtime_keeps_its_reviewed_prices_on_rerun(unified_job):
+    from claude_foundry.unified_deployment import prepare
+
+    job, _, cloud = unified_job
+    job.deploy(verify=False)
+    write_json(job.local / "unified/runtime-models.json", {"reviewed": {}})
+    cloud.clear()
+    assert prepare(job)[2] == {"reviewed": {}}
+    assert not any(c[0] == "GET" and c[1].endswith("/deployments") for c in cloud)

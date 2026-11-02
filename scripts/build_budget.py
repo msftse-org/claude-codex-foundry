@@ -6,6 +6,8 @@ import subprocess
 import zipfile
 from pathlib import Path
 
+from claude_foundry.function_package import stamp
+
 
 def build(output, root):
     requirements = subprocess.check_output(
@@ -20,6 +22,13 @@ def build(output, root):
             if path.is_symlink():
                 raise ValueError("Symlinks are not accepted")
             bundle.write(path, str(path.relative_to(root / "src")))
+        # All entries are public, allowlisted server files, not customer state.
+        # Azure's worker must not inherit the build operator's private umask.
+        for entry in bundle.infolist():
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+    # Deployment waits until /health reports this content-derived build ID.
+    stamp(output)
     return output
 
 

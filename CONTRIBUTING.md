@@ -107,13 +107,24 @@ For UI changes, update the [portal walkthrough](docs/portal-guide.md) when behav
 
 ## Submit a pull request
 
-Create focused working branches from `main` for Codex and budget-gateway changes. Changes to Codex provider configuration, catalogs, history handling or APIM policy need protocol tests plus an actual local-file tool and follow-up test with the approved CLI/Desktop engine versions. Keep real session exports and Azure reports in ignored `.local/`. Never rewrite original histories to make a test pass. Update [Codex validation](docs/codex-validation.md) with exact versions, limits and failed checks; a bundled-engine test is not a visual desktop UI test.
+Customers deploy `main`, so it only receives verified releases. Changes flow through three kinds of branch:
 
-1. Rebase or merge the current `main` into your working branch and resolve conflicts deliberately.
+| Branch | Holds | Merges into |
+| --- | --- | --- |
+| `fix/...`, `feat/...` | One focused, finished change | `release/next`, after checks pass and a live test deployment confirms it works |
+| `release/next` | The next release: working, verified changes only | `main`, after an upgrade test from the current customer tag; then tag `main` |
+| `wip/...` | Unfinished work, such as model-list refresh | Nothing until it is finished and moves to a `feat/...` branch |
+
+Every pull request with a change users or administrators will notice adds an entry under **Unreleased** in [CHANGELOG.md](CHANGELOG.md). Write it for the reader, and put anything they must do or plan for under **Upgrade notes**. When `main` is released, rename **Unreleased** to the new tag.
+
+Create focused working branches from `release/next` for Codex and budget-gateway changes. Changes to Codex provider configuration, catalogs, history handling or APIM policy need protocol tests plus an actual local-file tool and follow-up test with the approved CLI/Desktop engine versions. Keep real session exports and Azure reports in ignored `.local/`. Never rewrite original histories to make a test pass. Update [Codex validation](docs/codex-validation.md) with exact versions, limits and failed checks; a bundled-engine test is not a visual desktop UI test.
+
+1. Rebase or merge the current `release/next` into your working branch and resolve conflicts deliberately.
 2. Run checks relevant to your changes; record both passing checks and anything not exercised.
 3. Inspect `git diff --check`, the complete diff, and all new files for private data.
 4. Use a concise commit title such as `fix(auth): preserve tenant selection` or `docs: clarify Mac recovery`.
-5. Open a PR against `main` using the template. Explain the problem, resulting behavior, validation, and any rollout or compatibility concerns.
+5. Update [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
+6. Open a PR against `release/next` using the template. Explain the problem, resulting behavior, validation, and any rollout or compatibility concerns.
 
 Keep follow-up changes on feature branches and merge through reviewed PRs. Source merges do not trigger cloud deployment or constitute a production release. Update the validation record as real evidence closes preview gaps; tagging and customer rollout are separate maintainer decisions.
 
@@ -125,7 +136,7 @@ Audit the pinned runtime dependencies when changing packages:
 
 ```bash
 uv export --frozen --extra portal --no-dev --no-hashes --no-emit-project \
-  --format requirements-txt --output /tmp/claude-foundry-runtime.txt
+  --format requirements-txt --output-file /tmp/claude-foundry-runtime.txt
 uvx pip-audit --no-deps --disable-pip --requirement /tmp/claude-foundry-runtime.txt
 npm --prefix portal/web audit --omit=dev
 ```

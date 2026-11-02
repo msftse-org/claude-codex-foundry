@@ -10,7 +10,9 @@ from urllib.request import urlopen
 
 from claude_foundry.azure import AzureError, account_path, api_path
 from claude_foundry.config import read_json, write_json
+from claude_foundry.function_package import publish
 from claude_foundry.models import CS_VERSION
+from claude_foundry.price_catalog import catalog_prices, pinnable
 from claude_foundry.unified import provider_configs, reviewed_deployments
 
 
@@ -29,6 +31,44 @@ def wait_for_route(url, attempts=30, delay=10):
     raise RuntimeError(
         "The governed APIM route is not ready; reconcile its operations and policy before distributing profiles"
     )
+
+
+def pin_offered(job, primary, providers, deployed):
+    """Pin the current version of each offered deployment the catalog can price.
+
+    Catalog prices name an exact model version; an auto-upgrading deployment could
+    change under its price. Capacity, SKU and all other properties are unchanged.
+    """
+    offered = {m["name"] for p in providers.values() for m in p["models"]}
+    result = []
+    for deployment in deployed:
+        properties = deployment.get("properties", {})
+        if (
+            deployment["name"] in offered
+            and properties.get("versionUpgradeOption") != "NoAutoUpgrade"
+            and pinnable(deployment["name"], deployment)
+        ):
+            path = account_path(primary) + "/deployments/" + deployment["name"]
+            for attempt in range(8):
+                try:
+                    job.azure(job.s["subscription_id"]).request(
+                        "PATCH",
+                        path,
+                        {"properties": {"versionUpgradeOption": "NoAutoUpgrade"}},
+                        version=CS_VERSION,
+                    )
+                    break
+                except AzureError as error:
+                    # Another deployment operation on the account is still running.
+                    if error.status not in {409, 412} or attempt == 7:
+                        raise
+                    time.sleep(3)
+            version = properties["model"]["version"]
+            print(f"Pinned {deployment['name']} at version {version} for its catalog price.")
+            properties = {**properties, "versionUpgradeOption": "NoAutoUpgrade"}
+            deployment = {**deployment, "properties": properties}
+        result.append(deployment)
+    return result
 
 
 def prepare(job):
@@ -77,17 +117,30 @@ def prepare(job):
             "The model policy file must contain a reviewed price list or budget_prices"
         )
     deployments = {}
-    if prices:
+    manifest = job.local / "unified/runtime-models.json"
+    live = existing_runtime.get("BUDGET_DEPLOYMENTS_JSON")
+    established = json.loads(live) if live else read_json(manifest) if manifest.exists() else {}
+    # A runtime with no reviewed models, fresh or deployed unpriced (recorded as {}),
+    # prices its pinned deployments from the public catalog. Established runtimes
+    # keep their reviewed manifest unless a policy file is given.
+    use_catalog = not prices and not established and job.s["portal"].get("price_catalog", True)
+    if prices or use_catalog:
         actual = job.azure(job.s["subscription_id"]).request(
             "GET", account_path(primary) + "/deployments", version=CS_VERSION
         )["value"]
+        if use_catalog:
+            actual = pin_offered(job, primary, providers, actual)
+            prices, skipped = catalog_prices(providers, actual)
+            write_json(job.local / "unified/model-policy.json", {"budget_prices": prices})
+            if skipped:
+                job.warnings.append(
+                    "These models stay closed until an owner reviews their price: "
+                    + "; ".join(f"{name} ({reason})" for name, reason in skipped.items())
+                )
         deployments = reviewed_deployments(providers, prices, actual)
     # Preserve an established runtime manifest if no new model policy was supplied.
-    manifest = job.local / "unified/runtime-models.json"
-    if not prices and manifest.exists():
-        deployments = read_json(manifest)
-    if not prices and existing_runtime.get("BUDGET_DEPLOYMENTS_JSON"):
-        deployments = json.loads(existing_runtime["BUDGET_DEPLOYMENTS_JSON"])
+    if not prices:
+        deployments = established
     write_json(manifest, deployments)
     settings = {
         "budgetStorageAccount": storage_name,
@@ -183,27 +236,13 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity, content
     )
     package = job.dist / "claude-codex-budget.zip"
     job.script("build_budget.py", "--output", package)
-    job.run(
-        [
-            "az",
-            "functionapp",
-            "deployment",
-            "source",
-            "config-zip",
-            "-g",
-            job.n["portal_resource_group"],
-            "-n",
-            name,
-            "--src",
-            package,
-            "--build-remote",
-            "true",
-            "--timeout",
-            "900",
-            "--only-show-errors",
-            "-o",
-            "none",
-        ]
+    # Restart onto the new package before APIM routes traffic to it.
+    publish(
+        job.run,
+        job.n["portal_resource_group"],
+        name,
+        package,
+        f"https://{name}.azurewebsites.net/health",
     )
     for client, config in settings["providerConfigs"].items():
         # The helper owns new APIs only; it cannot replace an existing baseline API.

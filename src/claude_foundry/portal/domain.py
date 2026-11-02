@@ -70,6 +70,9 @@ class Settings(StrictModel):
     monthly_tokens: int = Field(default=0, ge=0, le=1_000_000_000_000)
     member_tokens_per_minute: int = Field(default=0, ge=0, le=100_000_000)
     member_requests_per_minute: int = Field(default=0, ge=0, le=100_000)
+    # Opt-in: refuse a model once its rate review date passes. Off, a passed
+    # review date is reported to administrators but access continues.
+    enforce_price_review: bool = False
 
     @model_validator(mode="after")
     def consistent_limit(self):
@@ -119,6 +122,7 @@ def seed(config, owner_id, owner_name="Organization owner", owner_email="owner@e
                 name="Platform team",
                 description="Initial group for the organization owner.",
                 model_ids=models,
+                delegated_models=models,
                 default_model=next(
                     (
                         m["name"]

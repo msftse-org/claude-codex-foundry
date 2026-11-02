@@ -103,3 +103,101 @@ def test_wrong_tenant_stops_before_directory_mutations(onboard, tmp_path, monkey
     assert onboard.main() == 1
     assert calls == [("account", "show")]
     assert "Wrong tenant" in capsys.readouterr().err
+
+
+BOB = "00000000-0000-0000-0000-00000000000c"
+
+
+class Portal:
+    """The portal's audited change API as the signed-in owner sees it."""
+
+    def __init__(self, members=(), groups=("Platform team",), published=True):
+        self.groups = [{"id": f"group-{i}", "name": name} for i, name in enumerate(groups)]
+        self.members = {m["id"]: m for m in members}
+        self.revision, self.published, self.changes = 3, published, []
+
+    def state(self):
+        return {
+            "revision": self.revision,
+            "groups": self.groups,
+            "members": list(self.members.values()),
+        }
+
+    def change(self, revision, kind, value):
+        assert revision == self.revision
+        self.changes.append((kind, value))
+        self.revision += 1
+        note = None if self.published else "Saved as a draft: group not published."
+        return {"revision": self.revision, "published": self.published, "publish_note": note}
+
+
+def person(oid, name):
+    return {"identity": name, "action": "added", "object_id": oid, "name": name, "email": name}
+
+
+def test_unified_onboarding_makes_people_live_portal_members(onboard):
+    suspended = {"id": BOB, "name": "Bob", "status": "suspended", "group_id": "group-0"}
+    active = {"id": GUEST, "name": "Guest", "status": "active", "group_id": "group-0"}
+    portal = Portal(members=[suspended, active])
+    people = [person(ALICE, "alice@contoso.com"), person(BOB, "bob@contoso.com")]
+    people.append(person(GUEST, "guest@partner.com"))
+    people.append({"identity": "nobody@contoso.com", "action": "not found"})
+    results = onboard.portal_access(portal, people)
+    assert [(r.get("portal"), r.get("published")) for r in results] == [
+        ("added", True),
+        ("reactivated", True),
+        ("member", True),
+        (None, None),
+    ]
+    kinds = [kind for kind, _ in portal.changes]
+    assert kinds == ["member", "member_import"]
+    assert portal.changes[0][1]["status"] == "active"
+    imported = portal.changes[1][1]
+    assert imported["group_id"] == "group-0"
+    assert imported["csv"].splitlines()[1:] == [f"{ALICE},alice@contoso.com,alice@contoso.com"]
+
+
+def test_new_members_need_a_named_group_when_there_are_several(onboard):
+    portal = Portal(groups=("Platform team", "Data science"))
+    with pytest.raises(ValueError, match="Data science, Platform team"):
+        onboard.portal_access(portal, [person(ALICE, "alice@contoso.com")])
+    onboard.portal_access(portal, [person(ALICE, "alice@contoso.com")], "Data science")
+    assert portal.changes[0][1]["group_id"] == "group-1"
+
+
+def test_unified_removal_suspends_and_reports_drafts(onboard):
+    active = {"id": ALICE, "name": "Alice", "status": "active", "group_id": "group-0"}
+    portal = Portal(members=[active], published=False)
+    results = onboard.portal_access(
+        portal, [person(ALICE, "alice"), person(GUEST, "guest")], remove=True
+    )
+    assert [(r["portal"], r["published"]) for r in results] == [
+        ("suspended", False),
+        ("not a member", True),
+    ]
+    assert results[0]["note"] == "Saved as a draft: group not published."
+    assert portal.changes == [("member", {**active, "status": "suspended"})]
+
+
+def test_unified_main_reports_live_access(onboard, tmp_path, monkeypatch, capsys):
+    state = tmp_path / "deploy-state.json"
+    write_json(
+        state,
+        {
+            "tenant_id": ALICE,
+            "developer_group_id": GROUP,
+            "governance_mode": "unified",
+            "portal_url": "https://ccf-admin-test.azurewebsites.net",
+        },
+    )
+    write_json(tmp_path / "portal/entra.json", {"client_id": GUEST})
+    portal = Portal()
+    monkeypatch.setattr(onboard, "az", lambda *args: {"tenantId": ALICE})
+    monkeypatch.setattr(onboard, "manage", lambda *args: [person(ALICE, "alice@contoso.com")])
+    monkeypatch.setattr(onboard, "PortalClient", lambda url, client, tenant: portal)
+    monkeypatch.setattr(sys, "argv", ["onboard_users.py", "--state", str(state), ALICE])
+    assert onboard.main() == 0
+    out = capsys.readouterr().out
+    assert "portal: added" in out and "(access live)" in out
+    assert "https://ccf-admin-test.azurewebsites.net/?page=onboarding" in out
+    assert "reaches Foundry" not in out

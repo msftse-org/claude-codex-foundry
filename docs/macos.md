@@ -14,6 +14,26 @@ In the administration portal, open **Developer onboarding** and choose **Downloa
 
 ## Install and sign in
 
+### Apple security approval
+
+The current ZIP contains source/scripts, not an Apple-signed, notarized installer.
+If Apple cannot verify `Install.command`, first confirm the ZIP came from your trusted
+organization portal and that IT permits installing it. Click **Done**, then use the
+portal's **Open macOS Privacy & Security** button. Your browser may ask permission to
+open System Settings. If nothing happens, open Apple menu → System Settings →
+Privacy & Security manually. Find `Install.command`, choose **Open Anyway**, and confirm.
+This creates an exception for that installer; it does not install it or grant model access.
+
+Do not remove quarantine, disable Gatekeeper or bypass managed-device policy. If
+**Open Anyway** is unavailable, ask IT for an approved distribution. See
+[Apple's guidance](https://support.apple.com/102445).
+Only the user can approve an exception: a blocked launcher cannot open settings for
+itself, and a website cannot approve it. The portal shortcut is a best-effort OS handoff,
+not a notarization substitute. A warning-free publisher-verified download requires
+an approved Apple Developer ID signing/notarization release process or managed rollout.
+
+### Run setup
+
 Double-click `Install.command`, or run this from the extracted folder:
 
 ```bash

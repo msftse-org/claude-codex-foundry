@@ -2,6 +2,30 @@
 
 Status: **preview**. The portal, Codex and content-log sources are maintained in `main`. This record is evidence for the isolated Azure preview and for one authorized shared-route acceptance, not a production certification or a 2,000-user capacity guarantee. Customer configuration, raw logs, downloaded profiles, and identity details remain outside Git.
 
+## Upgrade verification on 2026-11-01: baseline to release-2026-11-01
+
+A throwaway deployment was created from tag `customer-baseline-2026-10-29` in an authorized test subscription: one Claude and one Codex model on Data Zone Standard, capacity maximizing off. It was then upgraded with `deploy.py --upgrade-portal` from `fix/out-of-box-deploy`. The environment was deleted afterwards.
+
+| Check | Evidence |
+| --- | --- |
+| Baseline state | The deploy reported governed inference closed. Both governed routes returned `budget_denied` ("unavailable or paused"), and the runtime's reviewed model list was `{}`. This matches the "Publish this member's budget access" report from a customer-style deployment. |
+| First upgrade attempt | Access was not turned on. The baseline had created both deployments with automatic version upgrades, so the catalog priced nothing ("Unique verified prices are required"). Fixed by pinning (`070a280`). |
+| Upgrade | Both deployments were pinned at their current versions. The runtime and the portal each restarted and served the uploaded build ID. Initialize published a policy with 2 models open, hard enforcement and an unlimited (metered) organization limit. No manual administrator steps were listed. |
+| Owner access | `/v1/budget` returned org, group and user scopes. Claude and Codex profile exports, which were refused before, returned the governed gateway and the priced model. |
+| Onboarding | `onboard_users.py <object ID>` added a second developer to the Entra group and the portal. The portal audit shows a members-only publication, and the member's published balance was active, with no Publish step. `--remove` suspended them, and their published balance became inactive. |
+| Clients | `claude-foundry verify --budgeted` passed all Claude checks: token rejection, catalog, inference, streaming, token counting and allowlist. Codex verification passed inference, streaming, a tool loop and a replayed follow-up. The ledger settled $0.001185 with nothing reserved. |
+| Source checks | 420 Python tests and 55 frontend tests, Ruff, frontend build, installer syntax and package build pass. |
+
+An existing test deployment with a published policy was also upgraded with the same branch. Deploy reported the policy as kept. The published policy hash, settings, groups and 42 prices were unchanged, and nothing was pinned. Its existing Claude profile passed `verify --budgeted`, and its Codex profile passed inference, streaming, a tool loop and a follow-up.
+
+Not exercised: Claude Desktop sign-in (`auth_mode=msal`), limits other than unlimited, and a full (non-`--upgrade-portal`) rerun over a baseline deployment.
+
+## Dependency verification on 2026-10-25
+
+Updated only `certifi` from 2026.7.22 to 2026.10.23 in the resolver-generated Python and hash-verified Mac authentication locks. This removes the version affected by the critical emSign CA-bundle advisory. The complete pinned authentication and portal runtime export reports **no known vulnerabilities** with `pip-audit --no-deps --disable-pip`, with no skipped packages. This is a dated advisory check, not a guarantee against undisclosed vulnerabilities.
+
+The offline suite passes **374 tests**, Ruff checks/format, installer shell syntax and package build. No application behavior, customer configuration or live deployment changed in this dependency check; running installations require a later package update to receive the fixed bundle. Frontend dependencies were not changed or re-audited in this check.
+
 ## Verification recorded on 2026-10-23: one shared Claude route
 
 [PR #7](https://github.com/msftse-org/claude-codex-foundry/pull/7) makes the existing Claude API the default target for clients, portal reporting, profile export and governance publication. An isolated API remains an explicit testing option. The rollout below was performed in one authorized environment; backups, configuration, telemetry and recovery snapshots remain private.

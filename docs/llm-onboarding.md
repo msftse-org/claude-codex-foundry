@@ -27,11 +27,12 @@ verify the actual result, and resolve failures within that scope. Use existing s
 to resume the same deployment. Keep credentials, identity data and raw reports out of
 Git and chat. Never change tenant policies or weaken networking to bypass a failure.
 
-Treat Entra group membership, portal membership and policy publication as distinct
-steps. Use unified portal administration by default for both enabled providers. Follow
-docs/unified-administration.md: review model prices/capacities, verify and pin actual
-versions, configure portal.model_policy_file, then obtain owner publication. Complete
-the budget acceptance checks before claiming access and spending controls are active.
+Use unified portal administration by default for both enabled providers. The deployer
+prices pinned deployments from the public catalog and publishes a metered policy once;
+onboard_users.py then makes each person an active portal member, which takes effect
+immediately. Follow docs/unified-administration.md, confirm the spending limits with the
+customer owner, and complete the budget acceptance checks before claiming access and
+spending controls are active.
 Use portal.mode=baseline only if the customer explicitly chooses the legacy setup.
 
 Finish with the source commit, deployed resources and URLs, actual available models,
@@ -133,9 +134,11 @@ uv run --frozen python scripts/onboard_users.py --csv .local/developers.csv
 
 The script checks the tenant recorded in deployment state, resolves each identity, adds missing group memberships, prints results, and writes `.local/portal-members.csv` with `object_id,name,email`. Existing members are not added again. A nonzero exit can mean some people were added while others could not be resolved; reconcile every input and rerun after correcting failures. Group access may take time to propagate. Each run replaces the generated portal CSV with that run's resolved users, so retain separately named batch files if importing in batches (`--portal-csv .local/portal-batch-01.csv`).
 
+For **unified administration** (the default), the script also makes each resolved person an active member of the portal group (`--portal-group` when there are several) and reports `access live` once their membership is published. Developers then download their setup from the portal's **Onboarding** page. Review limits with the owner as described in [unified administration](unified-administration.md).
+
 For **baseline access**, the group grant is sufficient after propagation. Installing the portal does not turn on governance, and the script does not import portal members automatically.
 
-For **unified administration**, complete [model verification and shared publication](unified-administration.md) for both providers. For **legacy Claude portal governance**, use the authenticated owner/admin portal session and [member-import workflow](portal-guide.md#members-and-bulk-onboarding):
+For **legacy Claude portal governance**, use the authenticated owner/admin portal session and [member-import workflow](portal-guide.md#members-and-bulk-onboarding):
 
 1. Create the intended portal groups and review their allowed/default models and quotas. Portal groups do not synchronize with Entra groups.
 2. Import the generated CSV under **Members → Import CSV**, selecting the appropriate default portal group. Split the file by team if needed. The portal accepts up to 2,500 new developers per file. Exclude the existing owner and other already registered members; duplicate object IDs are rejected rather than updated.
@@ -194,7 +197,7 @@ For baseline access, remove people from the developer group:
 uv run --frozen python scripts/onboard_users.py --remove alice@contoso.com
 ```
 
-For portal-governed access, also suspend the member and publish the policy, then verify denial of a new request. Foundry is called by a managed identity on those routes, so group removal alone is insufficient. Budget routes require their budget-policy publication. Review any other direct role assignments; in-flight requests may complete.
+In a unified deployment the same command also suspends the portal member, which takes effect immediately. For legacy portal governance, suspend the member and publish the policy. Then verify denial of a new request. Foundry is called by a managed identity on those routes, so group removal alone is insufficient. Budget routes require their budget-policy publication. Review any other direct role assignments; in-flight requests may complete.
 
 Client recovery uses `claude-foundry restore --client claude` or `--client codex` from the installed runtime as described in the [Mac guide](macos.md) and [Codex guide](codex.md). Preserve deployment state for resuming or recovery. Follow the [publication and Blob recovery procedure](operations.md#portal-publication-recovery) for portal incidents; do not restore old budget ledger balances over a live ledger.
 

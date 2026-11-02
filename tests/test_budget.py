@@ -825,6 +825,9 @@ def test_warm_policy_cache_cannot_bypass_live_admission(
         changed["groups"][0]["spend_limit_usd"] = "0"
     elif change == "org_limit":
         changed["settings"]["spend_limit_usd"] = "0"
+    elif change == "expired":
+        # A passed review date blocks admission only when the owner opts in.
+        changed["settings"]["enforce_price_review"] = True
     if change in {
         "suspend",
         "model",
@@ -832,6 +835,7 @@ def test_warm_policy_cache_cannot_bypass_live_admission(
         "group_limit",
         "org_limit",
         "race",
+        "expired",
         "new_blob_missing",
         "new_blob_corrupt",
     }:
@@ -862,7 +866,7 @@ def test_warm_policy_cache_cannot_bypass_live_admission(
             raise TimeoutError("Authoritative Table unavailable")
 
         ledger.rows.read = unavailable
-    else:
+    if change == "expired":
         future = datetime.now(UTC) + timedelta(days=10)
         monkeypatch.setattr(
             "claude_foundry.portal.budget_pricing.datetime", SimpleNamespace(now=lambda tz: future)
