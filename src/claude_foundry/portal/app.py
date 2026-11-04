@@ -722,15 +722,85 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
             ) from None
 
     @app.get("/api/budgets/reservations")
-    def budget_reservations(access=actor_dependency):
-        _, _, member = access
-        if budget is None:
-            return {"items": [], "has_more": False}
+    def budget_reservations(limit: int = 50, cursor: str | None = None, access=actor_dependency):
+        import base64
+        import binascii
+
+        from .budget_ledger import PENDING_READ_LIMIT, pending_key
+        from .gateway_outcome import gateway_outcomes
+
+        data, _, member = access
+        if not 1 <= limit <= 200:
+            raise HTTPException(422, "Choose a reservation page limit between 1 and 200")
+        scope = [member["id"], member["role"], member["group_id"]]
+        after = None
+        if cursor is not None:
+            try:
+                if not 1 <= len(cursor) <= 1024:
+                    raise ValueError()
+                value = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
+                if (
+                    not isinstance(value, list)
+                    or len(value) != 3
+                    or type(value[0]) is not int
+                    or value[0] != 1
+                    or value[1] != scope
+                    or not isinstance(value[2], list)
+                    or len(value[2]) != 2
+                    or not all(isinstance(part, str) for part in value[2])
+                ):
+                    raise ValueError()
+                after = tuple(value[2])
+                if (
+                    str(UUID(after[1])) != after[1]
+                    or pending_key({"at": after[0], "request_id": after[1]}) != after
+                ):
+                    raise ValueError()
+            except (ValueError, TypeError, binascii.Error):
+                raise HTTPException(
+                    422, "Invalid reservation cursor; reload the first page"
+                ) from None
         try:
-            rows = budget[0].rows.pending(
-                group_id=member["group_id"] if member["role"] == "group_admin" else None,
-                principal=member["id"] if member["role"] == "developer" else None,
+            rows = (
+                budget[0].rows.pending(
+                    group_id=member["group_id"] if member["role"] == "group_admin" else None,
+                    principal=member["id"] if member["role"] == "developer" else None,
+                )
+                if budget
+                else []
             )
+            totals = {}
+            for row in rows:
+                month = row.get("month") or "Not recorded"
+                total = totals.setdefault(month, {"month": month, "held_micro_usd": 0, "count": 0})
+                total["held_micro_usd"] += row["reserved"]
+                total["count"] += 1
+            remaining = [row for row in rows if after is None or pending_key(row) < after]
+            page = remaining[:limit]
+            has_more = len(remaining) > limit
+            next_cursor = (
+                base64.urlsafe_b64encode(
+                    json.dumps([1, scope, pending_key(page[-1])]).encode()
+                ).decode()
+                if has_more
+                else None
+            )
+            outcomes = gateway_outcomes(
+                os.getenv("PORTAL_INSIGHTS_APP_ID"),
+                credential,
+                config,
+                [row["request_id"] for row in page],
+            )
+            latest, _ = storage().read()
+            active = next(
+                (person for person in latest["members"] if person["id"] == member["id"]), None
+            )
+            if (
+                not active
+                or active["status"] != "active"
+                or [active["id"], active["role"], active["group_id"]] != scope
+            ):
+                raise HTTPException(403, "Your reservation scope changed; reload before retrying")
             fields = {
                 "request_id",
                 "principal_id",
@@ -741,12 +811,112 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
                 "reserved",
                 "state",
             }
-            return {
-                "items": [{k: v for k, v in row.items() if k in fields} for row in rows[:50]],
-                "has_more": len(rows) > 50,
+            names = {
+                person["id"]: person["name"]
+                for person in data["members"]
+                if (
+                    member["role"] not in {"group_admin", "developer"}
+                    or member["role"] == "group_admin"
+                    and person["group_id"] == member["group_id"]
+                    or member["role"] == "developer"
+                    and person["id"] == member["id"]
+                )
             }
+            return {
+                "items": [
+                    {
+                        **{k: v for k, v in row.items() if k in fields},
+                        "month": row.get("month") or "Not recorded",
+                        "hold_reason": row.get("hold_reason"),
+                        "held_at": row.get("held_at"),
+                        "member_name": names.get(row["principal_id"]),
+                        "gateway_outcome": outcomes["items"][row["request_id"]],
+                    }
+                    for row in page
+                ],
+                "totals": [totals[month] for month in sorted(totals, reverse=True)],
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+                "read_limit": PENDING_READ_LIMIT,
+                # Do not fetch a 10,001st row just to prove truncation.
+                "read_limit_reached": len(rows) == PENDING_READ_LIMIT,
+                "outcomes_status": outcomes["status"],
+            }
+        except HTTPException:
+            raise
         except Exception:
             raise HTTPException(503, "Outstanding reservations could not be loaded") from None
+
+    @app.post("/api/budgets/release-unbilled")
+    def release_unbilled(body: dict, access=actor_dependency):
+        from .gateway_outcome import UNBILLED_STATUSES, gateway_outcomes
+
+        data, etag, member = access
+        if member["role"] != "owner":
+            raise HTTPException(403, "Only the owner can release an unbilled reservation")
+        if budget is None:
+            raise HTTPException(409, "The budget ledger is not configured")
+        try:
+            if not isinstance(body.get("request_id"), str):
+                raise ValueError("Provide a valid reservation request ID")
+            request_id = str(UUID(body["request_id"]))
+            reason = body.get("reason")
+            if not isinstance(reason, str) or not 5 <= len(reason.strip()) <= 300:
+                raise ValueError("Provide a reason of 5–300 characters")
+            reservation, _ = budget[0].rows.read("request-" + request_id)
+            if not reservation:
+                raise ValueError("Reservation not found")
+            if reservation.get("state") != "reserved":
+                raise ValueError("The reservation has already been settled")
+            outcomes = gateway_outcomes(
+                os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, config, [request_id]
+            )
+            if outcomes["status"] != "connected":
+                raise HTTPException(
+                    503, "Gateway outcome is unavailable; the hold was not released"
+                )
+            outcome = outcomes["items"][request_id]
+            if not outcome["releasable"] or outcome["result_code"] not in UNBILLED_STATUSES:
+                raise ValueError(
+                    f"{outcome['cause']}. Release requires one gateway record proving "
+                    "401, 403, 404 or 429; the hold was not released"
+                )
+            reservation, _ = budget[0].rows.read("request-" + request_id)
+            if not reservation or reservation.get("state") != "reserved":
+                raise ValueError("The reservation has already been settled")
+            audit(
+                data,
+                member,
+                "budget.release_unbilled",
+                request_id,
+                None,
+                {
+                    "reason": reason.strip(),
+                    "gateway_status": outcome["result_code"],
+                    "gateway_timestamp": outcome["timestamp"],
+                    "released_micro_usd": reservation["reserved"],
+                    "charge_micro_usd": 0,
+                },
+                reservation["group_id"],
+            )
+            data["revision"] += 1
+            storage().save(data, etag)
+            result = budget[0].settle(request_id, 0)
+            return {
+                "released": True,
+                "released_micro_usd": reservation["reserved"],
+                "charged_micro_usd": result["charged"],
+            }
+        except HTTPException:
+            raise
+        except (ValueError, BudgetDenied) as error:
+            raise HTTPException(422, str(error)) from error
+        except (Conflict, Contended) as error:
+            raise HTTPException(409, str(error)) from error
+        except Exception:
+            raise HTTPException(
+                503, "Release could not be confirmed; inspect the reservation before retrying"
+            ) from None
 
     @app.get("/api/budgets/incident")
     def budget_incident(access=actor_dependency):
