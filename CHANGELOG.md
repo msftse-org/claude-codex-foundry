@@ -10,6 +10,14 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
 
+### Developers
+
+- Mac setup now explains uv, Python runtime, dependency and optional Homebrew Azure CLI setup failures before changing Claude Code, Codex or Claude Desktop settings. It names runtime/package download hosts, confirms safe reruns and points to IT-approved proxy or offline-bundle help without weakening TLS or hash checks.
+
+### Upgrade notes
+
+- No action is required for existing Mac installations.
+
 ## release-2026-11-01
 
 Upgrades from `customer-baseline-2026-10-29`. Tested by upgrading a deployment that was created from that baseline.
