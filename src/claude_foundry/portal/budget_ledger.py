@@ -25,6 +25,21 @@ class BudgetDenied(Exception):
     pass
 
 
+PENDING_READ_LIMIT = 10_000
+
+
+def pending_key(row):
+    """Keep unknown admission times last, with a stable request-ID tie breaker."""
+    try:
+        at = datetime.fromisoformat(row.get("at") or "")
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=UTC)
+        timestamp = at.astimezone(UTC).isoformat(timespec="microseconds")
+    except (TypeError, ValueError, OverflowError):
+        timestamp = ""
+    return timestamp, row["request_id"]
+
+
 class MemoryRows:
     """Atomic adapter for deterministic concurrency and failure tests only."""
 
@@ -36,15 +51,18 @@ class MemoryRows:
             return copy.deepcopy(self.rows.get(key, ({}, None)))
 
     def pending(self, group_id=None, principal=None):
+        from itertools import islice
+
         with self.lock:
-            values = [
-                copy.deepcopy(v)
-                for v, _ in self.rows.values()
-                if v.get("state") == "reserved"
-                and (not group_id or v.get("group_id") == group_id)
-                and (not principal or v.get("principal_id") == principal)
-            ]
-        return sorted(values, key=lambda v: v["at"])[:51]
+            values = (
+                self.rows[key][0]
+                for key in sorted(self.rows)
+                if self.rows[key][0].get("state") == "reserved"
+                and (group_id is None or self.rows[key][0].get("group_id") == group_id)
+                and (principal is None or self.rows[key][0].get("principal_id") == principal)
+            )
+            result = [copy.deepcopy(value) for value in islice(values, PENDING_READ_LIMIT)]
+        return sorted(result, key=pending_key, reverse=True)
 
     def commit(self, rows):
         with self.lock:
@@ -114,18 +132,22 @@ class AzureRows:
 
         query = "PartitionKey eq @organization and state eq 'reserved'"
         params = {"organization": self.partition}
-        if group_id:
+        if group_id is not None:
             query += " and group_id eq @group"
             params["group"] = str(UUID(group_id))
-        if principal:
+        if principal is not None:
             query += " and principal_id eq @principal"
             params["principal"] = str(UUID(principal))
-        return [
+        values = [
             json.loads(e["data"])
             for e in islice(
-                self.table.query_entities(query, parameters=params, results_per_page=51), 51
+                self.table.query_entities(
+                    query, parameters=params, select=["data"], results_per_page=1000
+                ),
+                PENDING_READ_LIMIT,
             )
         ]
+        return sorted(values, key=pending_key, reverse=True)
 
 
 def policy_digest(policy):

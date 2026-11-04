@@ -767,55 +767,237 @@ function Reservations({
 }) {
     type Hold = {
         request_id: string;
+        principal_id: string;
+        member_name?: string | null;
         model: string;
-        at: string;
+        at?: string | null;
+        month: string;
         reserved: number;
+        hold_reason: string | null;
+        held_at: string | null;
+        gateway_outcome?: {
+            result_code: string | null;
+            timestamp: string | null;
+            cause: string;
+            releasable: boolean;
+        };
     };
-    const [holds, setHolds] = useState<Hold[]>([]);
-    const [more, setMore] = useState(false);
-    const [selected, setSelected] = useState<Hold>();
+    type Page = {
+        items: Hold[];
+        totals: { month: string; held_micro_usd: number; count: number }[];
+        has_more: boolean;
+        next_cursor: string | null;
+        read_limit: number;
+        read_limit_reached: boolean;
+        outcomes_status: string;
+    };
+    const holdReasons: Record<string, string> = {
+        dispatch_unknown: "Dispatch outcome unknown",
+        client_disconnected: "Client disconnected",
+        stream_incomplete: "Incomplete stream",
+        rejected_possibly_billed: "Rejected, possibly billed",
+        usage_unreadable: "Usage unreadable",
+        settlement_failed: "Settlement failed",
+    };
+    const time = (value?: string | null) =>
+        value && Number.isFinite(new Date(value).getTime())
+            ? new Date(value).toLocaleString()
+            : "Not recorded";
+    const age = (value?: string | null) => {
+        if (!value || !Number.isFinite(new Date(value).getTime()))
+            return "Age not recorded";
+        const minutes = Math.max(
+            0,
+            Math.floor((Date.now() - new Date(value).getTime()) / 60_000),
+        );
+        if (minutes < 60) return `${minutes} min old`;
+        if (minutes < 1440) return `${Math.floor(minutes / 60)} hr old`;
+        const days = Math.floor(minutes / 1440);
+        return `${days} ${days === 1 ? "day" : "days"} old`;
+    };
+    const [navigation, setNavigation] = useState({
+        revision,
+        cursors: [""],
+        index: 0,
+    });
+    const cursors =
+        navigation.revision === revision ? navigation.cursors : [""];
+    const index = navigation.revision === revision ? navigation.index : 0;
+    const cursor = cursors[index];
+    const [refresh, setRefresh] = useState(0);
+    const key = JSON.stringify([revision, cursor, refresh]);
+    const [loaded, setLoaded] = useState<{ key: string; page: Page }>();
+    const page = loaded?.key === key ? loaded.page : undefined;
+    const [selected, setSelected] = useState<{
+        hold: Hold;
+        release: boolean;
+    }>();
     const [error, setError] = useState("");
+    const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     useEffect(() => {
-        api<{ items: Hold[]; has_more: boolean }>("/api/budgets/reservations")
-            .then((r) => {
-                setHolds(r.items);
-                setMore(r.has_more);
+        let current = true;
+        setLoading(true);
+        setError("");
+        api<Page>(
+            "/api/budgets/reservations" +
+                (cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""),
+        )
+            .then((value) => {
+                if (current) setLoaded({ key, page: value });
             })
-            .catch((e) => setError(e.message));
-    }, [revision]);
+            .catch((e) => {
+                if (current)
+                    setError(e instanceof Error ? e.message : String(e));
+            })
+            .finally(() => {
+                if (current) setLoading(false);
+            });
+        return () => {
+            current = false;
+        };
+    }, [key, cursor]);
     return (
         <div style={{ marginTop: 24 }}>
-            <h3>Outstanding reservations</h3>
+            <h3>Held reservations</h3>
+            <p className="footnote">
+                A hold is the request&apos;s worst-case cap, not a charge. It is
+                released when the request settles. Holds remain in the UTC
+                calendar month when the request started.
+            </p>
             {error && <Notice tone="error">{error}</Notice>}
-            {holds.length ? (
+            <button
+                className="button text"
+                disabled={loading || busy}
+                onClick={() => {
+                    setNavigation({ revision, cursors: [""], index: 0 });
+                    setRefresh((value) => value + 1);
+                }}
+            >
+                {error
+                    ? "Retry held reservations"
+                    : "Refresh held reservations"}
+            </button>
+            {loading && <p className="footnote">Loading held reservations…</p>}
+            {page?.read_limit_reached && (
+                <Notice>
+                    The read limit of {page.read_limit.toLocaleString("en-US")}{" "}
+                    holds was reached. This list and its monthly totals cover
+                    only the rows read and may be incomplete.
+                </Notice>
+            )}
+            {!!page?.totals?.length && (
+                <>
+                    <h4>Held, not charged</h4>
+                    <div className="sheet tablewrap">
+                        <table aria-label="Held reservations by month">
+                            <thead>
+                                <tr>
+                                    <th>Month (UTC)</th>
+                                    <th>Holds</th>
+                                    <th>Held, not charged</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {page.totals.map((total) => (
+                                    <tr key={total.month}>
+                                        <td>{total.month}</td>
+                                        <td>{total.count.toLocaleString()}</td>
+                                        <td>{dollars(total.held_micro_usd)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            )}
+            {!!page?.items.length && page.outcomes_status !== "connected" && (
+                <Notice>
+                    Gateway outcomes are unavailable. Holds and totals are still
+                    shown, but release requires fresh gateway evidence. Retry
+                    later or check monitoring access.
+                </Notice>
+            )}
+            {page?.items.length ? (
                 <div className="sheet tablewrap">
-                    <table>
+                    <table aria-label="Held reservations">
                         <thead>
                             <tr>
                                 <th>Request</th>
-                                <th>Model</th>
                                 <th>Started</th>
+                                <th>Month (UTC)</th>
+                                <th>Model</th>
+                                <th>Member</th>
                                 <th>Held</th>
-                                <th></th>
+                                <th>Cause</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {holds.map((h) => (
+                            {page.items.map((h) => (
                                 <tr key={h.request_id}>
-                                    <td>
+                                    <td
+                                        style={{
+                                            minWidth: 140,
+                                            maxWidth: 160,
+                                            whiteSpace: "normal",
+                                            overflowWrap: "anywhere",
+                                        }}
+                                    >
                                         <code>{h.request_id}</code>
                                     </td>
+                                    <td style={{ whiteSpace: "normal" }}>
+                                        {time(h.at)}
+                                        <div className="footnote">
+                                            {age(h.at)}
+                                        </div>
+                                    </td>
+                                    <td>{h.month}</td>
                                     <td>{h.model}</td>
-                                    <td>{new Date(h.at).toLocaleString()}</td>
+                                    <td style={{ whiteSpace: "normal" }}>
+                                        {h.member_name || (
+                                            <code>{h.principal_id}</code>
+                                        )}
+                                    </td>
                                     <td>{dollars(h.reserved)}</td>
+                                    <td
+                                        style={{
+                                            minWidth: 180,
+                                            maxWidth: 240,
+                                            whiteSpace: "normal",
+                                        }}
+                                    >
+                                        {h.gateway_outcome?.cause ||
+                                            "Gateway outcome unavailable"}
+                                        <div className="footnote">
+                                            Hold reason:{" "}
+                                            {(h.hold_reason &&
+                                                holdReasons[h.hold_reason]) ||
+                                                "Not recorded"}
+                                        </div>
+                                        <div className="footnote">
+                                            Held since: {time(h.held_at)}
+                                        </div>
+                                    </td>
                                     <td>
                                         {owner && (
                                             <button
                                                 className="button text"
-                                                onClick={() => setSelected(h)}
+                                                disabled={busy}
+                                                onClick={() => {
+                                                    setError("");
+                                                    setSelected({
+                                                        hold: h,
+                                                        release:
+                                                            h.gateway_outcome
+                                                                ?.releasable ===
+                                                            true,
+                                                    });
+                                                }}
                                             >
-                                                Close at maximum
+                                                {h.gateway_outcome?.releasable
+                                                    ? "Release (not billed)"
+                                                    : "Close at maximum"}
                                             </button>
                                         )}
                                     </td>
@@ -824,21 +1006,56 @@ function Reservations({
                         </tbody>
                     </table>
                 </div>
-            ) : !error ? (
-                <p className="footnote">
-                    No outstanding reservations in your scope.
-                </p>
+            ) : page && !error ? (
+                <p className="footnote">No held reservations in your scope.</p>
             ) : null}
-            {more && (
-                <Notice>
-                    Showing 50 reservations. Additional records require operator
-                    review.
-                </Notice>
+            {page && (index > 0 || page.has_more) && (
+                <nav className="actions" aria-label="Held reservation pages">
+                    <button
+                        className="button"
+                        disabled={index === 0 || loading || busy}
+                        onClick={() =>
+                            setNavigation({
+                                revision,
+                                cursors,
+                                index: index - 1,
+                            })
+                        }
+                    >
+                        Previous page
+                    </button>
+                    <span>Page {index + 1}</span>
+                    <button
+                        className="button"
+                        disabled={!page.next_cursor || loading || busy}
+                        onClick={() => {
+                            if (page.next_cursor)
+                                setNavigation({
+                                    revision,
+                                    cursors: [
+                                        ...cursors.slice(0, index + 1),
+                                        page.next_cursor,
+                                    ],
+                                    index: index + 1,
+                                });
+                        }}
+                    >
+                        Next page
+                    </button>
+                </nav>
             )}
             {selected && (
                 <Drawer
-                    title="Close at the reserved maximum"
-                    description="This records the full held amount as spent. It does not issue a refund or change Azure billing. Normally, a complete model response settles automatically."
+                    title={
+                        selected.release
+                            ? "Release an unbilled hold"
+                            : "Close at the reserved maximum"
+                    }
+                    description={
+                        selected.release
+                            ? "The server rechecks the gateway record before settling at $0. This releases the held allowance and leaves spent unchanged; it does not change Azure billing."
+                            : "This records the full held amount as spent. It does not issue a refund or change Azure billing. Normally, a complete model response settles automatically."
+                    }
                     onClose={() => setSelected(undefined)}
                     busy={busy}
                 >
@@ -852,14 +1069,21 @@ function Reservations({
                             setBusy(true);
                             setError("");
                             try {
-                                await api("/api/budgets/close-reservation", {
-                                    method: "POST",
-                                    body: JSON.stringify({
-                                        request_id: selected.request_id,
-                                        reason,
-                                    }),
-                                });
-                                window.location.reload();
+                                await api(
+                                    selected.release
+                                        ? "/api/budgets/release-unbilled"
+                                        : "/api/budgets/close-reservation",
+                                    {
+                                        method: "POST",
+                                        body: JSON.stringify({
+                                            request_id:
+                                                selected.hold.request_id,
+                                            reason,
+                                        }),
+                                    },
+                                );
+                                // The audit changes the parent portal-state revision too.
+                                location.reload();
                             } catch (e) {
                                 setError(
                                     e instanceof Error ? e.message : String(e),
@@ -871,13 +1095,39 @@ function Reservations({
                     >
                         <div className="drawer-scroll drawer-fields">
                             <p>
-                                <code>{selected.request_id}</code>
+                                <code>{selected.hold.request_id}</code>
                             </p>
                             <p>
-                                Charge to allowance:{" "}
-                                <strong>{dollars(selected.reserved)}</strong>
+                                {selected.release
+                                    ? "Held amount to release: "
+                                    : "Charge to allowance: "}
+                                <strong>
+                                    {dollars(selected.hold.reserved)}
+                                </strong>
                             </p>
-                            <Field label="Reason for conservative closure">
+                            <p>
+                                Gateway outcome:{" "}
+                                {selected.hold.gateway_outcome?.cause ||
+                                    "Gateway outcome unavailable"}
+                                {selected.hold.gateway_outcome?.timestamp && (
+                                    <>
+                                        {" "}
+                                        (
+                                        {time(
+                                            selected.hold.gateway_outcome
+                                                .timestamp,
+                                        )}
+                                        )
+                                    </>
+                                )}
+                            </p>
+                            <Field
+                                label={
+                                    selected.release
+                                        ? "Reason for release"
+                                        : "Reason for conservative closure"
+                                }
+                            >
                                 <textarea
                                     name="reason"
                                     required
@@ -890,7 +1140,9 @@ function Reservations({
                         <div className="dialogfooter">
                             <DrawerClose disabled={busy} />
                             <button className="button primary" disabled={busy}>
-                                Charge full reservation
+                                {selected.release
+                                    ? "Release (not billed)"
+                                    : "Charge full reservation"}
                             </button>
                         </div>
                     </form>

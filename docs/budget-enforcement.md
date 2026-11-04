@@ -69,11 +69,32 @@ Limits cover supported model inference through the budget routes at the configur
 
 No ledger, no valid price, no active membership, or no remaining allowance means no model dispatch. There is no fallback to a baseline API. Each gateway request ID is admitted once; uncertain dispatches are not automatically retried by the service.
 
-A request that Azure rejects before the model runs releases its whole reservation immediately: throttling (429), sign-in or routing errors (401, 403, 404) and invalid requests (400, 413, 415, 422), such as an unsupported tool schema or a prompt longer than the context window. A content-filter rejection may bill the prompt, so it stays held, like a disconnect, missing terminal usage, process failure, 5xx provider error or settlement outage. **There is no timer-based refund.** Held amounts count only toward the month in which they were reserved. Settlements are idempotent; a conflicting second charge is rejected. If reported usage exceeds the verified bound, admission pauses rather than silently treating the request as within budget. Publishing a new policy cannot clear that pause.
+A hold is the request's **worst-case cap, not a charge**. Normal settlement replaces it with the recorded usage charge and releases the unused allowance. A disconnect, uncertain dispatch, missing terminal usage, unreadable usage, possibly billable rejection or settlement outage can leave the cap held. **There is no timer-based refund.** Held amounts count only toward the UTC calendar month in which they were reserved, including earlier months.
 
-Owners can close an uncertain reservation at its **full reserved amount**, after an audited reason. This safely converts reserved allowance to spent allowance; it never refunds money. Releasing a held reservation for less than its maximum requires a future verified reconciliation workflow. Do not edit counters manually or restore an old ledger backup over a live ledger: both can erase liabilities. An overrun incident requires investigation before any operator-controlled recovery.
+The Budgets page shows **Held, not charged** totals and counts by month, followed by each request's start time, age, month, model, member, held amount and cause. Owners, administrators, billing administrators and auditors retain the organization-wide reservation scope; group administrators see their request-time group, and developers see only their own holds. The newest requests appear first, with stable request-ID ordering for equal or unrecorded start times. Paging does not change the monthly totals: they cover the whole scoped read, not only the current page. The API defaults to 50 rows per page and accepts `limit` up to 200 with a returned `next_cursor`.
 
-The current pending-reservation API returns at most 50 rows and signals additional rows. It is an operational preview, not a complete reconciliation product.
+Each read is limited to 10,000 pending rows, filtered by scope before reading and sorted in memory afterward. At that bound, `read_limit_reached` is true and the page warns that **both rows and totals may be incomplete**. It does not read a 10,001st row to determine whether more exist. A bounded result is not proof that all reservations, or the newest ones outside that read, have been shown.
+
+When recorded by the runtime, `hold_reason` and the UTC ISO 8601 `held_at` timestamp describe why the request stayed reserved. These fields are written only while the request is reserved. Older holds without them show **Not recorded**; gateway telemetry does not fill in missing hold metadata.
+
+| Hold reason | Meaning |
+| --- | --- |
+| `dispatch_unknown` | The request to Azure failed before any response. |
+| `client_disconnected` | The client went away before the stream's terminal event. |
+| `stream_incomplete` | The upstream stream ended without trustworthy terminal usage. |
+| `rejected_possibly_billed` | Azure returned a non-success status outside the unbilled allowlist. |
+| `usage_unreadable` | A success response's usage could not be read or priced. |
+| `settlement_failed` | Usage was read but the ledger write failed. |
+
+The page also makes one read-only Application Insights query for the listed request IDs, restricted to the deployment's API Management role. A 429 is **Throttled, not billed**; 401, 403 and 404 are **Rejected, not billed**. A 400 is **Rejected, may be billed**. A 200 marked “not sent in full” is **Client disconnected**, while an ordinary 200 is **Completed, not settled**. A missing request is **No gateway record**; retention or ingestion delay may explain it, but missing telemetry never proves that a request was unbilled. If monitoring is unconfigured or unavailable, holds and totals still load, with an unavailable-outcome notice.
+
+An **owner only** can choose **Release (not billed)** and give an audited reason of 5–300 characters. The server independently re-reads the reserved row and re-queries Insights; it requires one unambiguous record for the exact request ID and deployment role, with a timestamp and **exactly 401, 403, 404 or 429**. It never trusts a displayed status or client-supplied evidence. **Never release based on 400, 413, 415 or 422**: without the response body a billable content-filter rejection cannot be ruled out. A 200, disconnect, duplicate/ambiguous record, unavailable outcome or already-settled request cannot authorize release either. Investigating completed-but-held requests is a separate runtime/log follow-up, not permission to refund them.
+
+The server saves the `budget.release_unbilled` audit event, including the reason, gateway status, gateway timestamp and amount, using the existing portal-state ETag before calling zero settlement. Settlement uses the existing atomic ledger ETags: that hold's original-month organization, group and user `reserved` counters each drop by exactly the hold, and their `spent` counters remain unchanged. Other months are unaffected. This is allowance reconciliation, not an Azure billing refund. The portal reloads after a successful release or conservative closure so its state revision, hold list and allowance balances refresh together.
+
+An audit-save failure prevents settlement. A conflict or outage after the audit was saved can leave an audit entry for an attempted release without a completed settlement: reload the hold and verify its counters before retrying. The ledger does not apply the reduction twice, and a competing nonzero settlement is never overwritten by a refund.
+
+Owners retain **Close at maximum** for holds without unbilled proof. After an audited reason, this records the **full reserved amount as spent**; it never refunds money. Settlements are idempotent and a conflicting second charge is rejected. If reported usage exceeds the verified bound, admission pauses rather than silently treating the request as within budget, and publishing a new policy cannot clear that pause. An overrun incident requires investigation before operator-controlled recovery. Do not edit counters manually or restore an old ledger backup over a live ledger: both can erase liabilities.
 
 ## Identity, permissions and bypass prevention
 

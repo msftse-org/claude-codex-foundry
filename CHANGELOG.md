@@ -9,6 +9,15 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 ### Administrators
 
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
+- **Review held allowance by month and release proven unbilled holds.** Budgets now separates “Held, not charged” monthly totals from spending, pages reservations newest first, and shows recorded hold reasons and gateway outcomes. Owners can release a hold at $0 only after a fresh deployment-scoped gateway query proves exactly 401, 403, 404 or 429 and the audit is saved. Missing, ambiguous, completed or other rejected outcomes do not authorize a release. “Close at maximum” still charges the full hold. A 10,000-row read limit is visible and marks totals as potentially incomplete.
+
+### Developers
+
+- **Understand your held allowance.** Your scoped reservation list includes older months, request age and causes when recorded, instead of an arbitrary first 50 requests. A hold is the request's worst-case cap, not a charge; missing historical hold metadata is shown as “Not recorded.”
+
+### Upgrade notes
+
+- Deploy the portal backend and frontend together to use held-reservation paging and unbilled release. No ledger migration or automatic release is performed. Gateway evidence uses the existing `PORTAL_INSIGHTS_APP_ID` and portal monitoring credential; if evidence is unavailable, the list still works but release remains disabled. Complete the documented live check on your own test deployment before rollout.
 
 ## release-2026-11-01
 
