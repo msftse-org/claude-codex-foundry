@@ -12,7 +12,7 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ### Developers
 
-- Mac setup now explains uv, Python runtime and dependency bootstrap failures before changing Claude Code, Codex or Claude Desktop settings. It names the download hosts, confirms safe reruns and points to IT-approved proxy or offline-bundle help without weakening TLS or hash checks.
+- Mac setup now explains uv, Python runtime, dependency and optional Homebrew Azure CLI setup failures before changing Claude Code, Codex or Claude Desktop settings. It names runtime/package download hosts, confirms safe reruns and points to IT-approved proxy or offline-bundle help without weakening TLS or hash checks.
 
 ### Upgrade notes
 

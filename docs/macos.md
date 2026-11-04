@@ -66,9 +66,17 @@ If bootstrap fails, setup prints **SETUP DID NOT COMPLETE** before configuring a
 client: Claude Code, Codex and Claude Desktop settings are unchanged. A verified
 setup ZIP does not guarantee that later runtime and wheel downloads can connect.
 Downloads need HTTPS access to `astral.sh` (uv installer), `releases.astral.sh`
-(Python runtime), `pypi.org` (package index) and `files.pythonhosted.org` (packages).
+(uv installer redirects and Python runtime), `pypi.org` (package index) and
+`files.pythonhosted.org` (packages).
 Include any additional download or redirect host named in the original error when
 asking IT for help.
+
+With `--install-azure-cli`, missing Homebrew or a failed Azure CLI install shows
+the same incomplete-setup, unchanged-settings and safe-rerun guidance. Use your
+organization's approved Homebrew setup, or request an MSAL profile to avoid Azure
+CLI. Homebrew downloads use their own hosts: include any blocked download or
+redirect hosts named in the Homebrew error in your IT review rather than assuming
+the Python download hosts above cover them.
 
 After resolving the error, rerunning the same command is safe; an existing uv and
 runtime can be reused. Updating uv is not a demonstrated fix for blocked package

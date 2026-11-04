@@ -31,10 +31,15 @@ for task_profile in "${task_profiles[@]}"; do
 done
 task_bootstrap_failed() {
   echo >&2
-  echo "SETUP DID NOT COMPLETE. Runtime/dependency setup failed before client configuration." >&2
+  echo "SETUP DID NOT COMPLETE. ${1:-Runtime/dependency} setup failed before client configuration." >&2
   echo "Claude Code, Codex and Claude Desktop settings are unchanged." >&2
-  echo "Allow HTTPS access to astral.sh (uv installer), releases.astral.sh (Python runtime), pypi.org (package index) and files.pythonhosted.org (package downloads)." >&2
-  echo "If the error above names another download or redirect host, include it in your IT review." >&2
+  if [[ "${1:-}" == "Azure CLI" ]]; then
+    echo "Use your organization's approved Homebrew setup, or request an MSAL profile to avoid Azure CLI." >&2
+    echo "If Homebrew reports blocked download or redirect hosts, include those hosts in your IT review." >&2
+  else
+    echo "Allow HTTPS access to astral.sh (uv installer), releases.astral.sh (uv installer redirects and Python runtime), pypi.org (package index) and files.pythonhosted.org (package downloads)." >&2
+    echo "If the error above names another download or redirect host, include it in your IT review." >&2
+  fi
   echo "Rerunning the same command is safe after resolving the error above." >&2
   echo "If network policy blocks downloads, ask your IT team for proxy settings or an organization-approved offline bundle. Keep TLS verification and dependency hash checks enabled." >&2
   exit 1
@@ -49,9 +54,9 @@ fi
 if [[ "$task_install_az" == true ]] && ! command -v az >/dev/null 2>&1; then
   if ! command -v brew >/dev/null 2>&1; then
     echo 'Azure CLI installation requires Homebrew. Install Homebrew using your organization’s approved method, or request an MSAL profile.' >&2
-    exit 1
+    task_bootstrap_failed "Azure CLI"
   fi
-  brew install --cask azure-cli
+  brew install --cask azure-cli || task_bootstrap_failed "Azure CLI"
 fi
 task_runtime="$HOME/.local/share/claude-foundry/runtime"
 mkdir -p "$(dirname "$task_runtime")" || task_bootstrap_failed
