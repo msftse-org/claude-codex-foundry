@@ -1,0 +1,56 @@
+name: User story
+description: An outcome for administrators or developers, with acceptance criteria. Break it into tasks before coding.
+title: "Story: "
+labels: [user-story]
+body:
+  - type: markdown
+    attributes:
+      value: "This repository is public. Leave out customer names, tenant or subscription IDs, endpoints, emails and logs."
+  - type: input
+    id: role
+    attributes:
+      label: As a
+      placeholder: administrator, portal owner, group administrator or developer
+    validations:
+      required: true
+  - type: textarea
+    id: want
+    attributes:
+      label: I want
+      description: The capability, in the user's words.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: So that
+      description: The outcome that matters to them.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable checks that prove the story works, one per line. Say which ones need a live test deployment.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Where it stands and starting points
+      description: What works today, known failures, and the files or docs a contributor should read first.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Deploy and upgrade
+        - People and access
+        - Budgets
+        - Developer clients
+        - Models and prices
+        - Operations and observability
+    validations:
+      required: true

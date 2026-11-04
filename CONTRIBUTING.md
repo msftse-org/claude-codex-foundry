@@ -6,20 +6,47 @@ Start with the [README](README.md) for the product and the [security model](docs
 
 ## Before you start
 
-For a substantial feature, open an issue describing the user problem, proposed behavior, and scope. For a small fix, a focused pull request is sufficient. Search existing issues first. Never include customer configuration, access tokens, conversation content, or identifiable telemetry in a public issue.
+Treat everything in this repository as public: code, issues, pull requests, commit messages and screenshots. Never put customer names, tenant or subscription IDs, resource endpoints, emails, access tokens, conversation content or raw Azure output in any of them. Keep those under ignored `.local/`.
+
+For a substantial feature, open a **User story** issue describing who needs it, the outcome and acceptance criteria. For a small fix, a focused pull request is sufficient. Search existing issues first.
+
+## Pick up a task
+
+Work is planned as user stories, grouped by objective into [milestones](https://github.com/msftse-org/claude-codex-foundry/milestones). A story describes an outcome and how to prove it works. It's broken into **Task** issues, each one reviewable pull request, before anyone writes code.
+
+1. Choose an open story or task in a milestone, and assign yourself before you start, so two people don't take the same work. Ask in the issue if its acceptance criteria are unclear.
+2. For a story, add task issues as sub-issues: what changes and how it will be verified.
+3. Branch from `release/next` as `fix/<issue>-<slug>` or `feat/<issue>-<slug>`, for example `fix/61-codex-legacy-tools`.
+4. Open a draft pull request early, with `Closes #<task>` in its description. Mark it ready once the definition of done is met.
+
+### Definition of done
+
+A task is done when its pull request is merged into `release/next`. That requires:
+
+- The task's acceptance criteria are met, and the pull request says how each one was checked.
+- Behavior changes have tests, and all CI checks pass.
+- Anything that touches Azure, the gateway, the budget runtime, the portal or the installer was verified on your own test deployment (below). The pull request carries sanitized evidence; release-relevant checks also go in [portal/VALIDATION.md](portal/VALIDATION.md).
+- [CHANGELOG.md](CHANGELOG.md) and the affected docs are updated.
+- Another contributor reviewed and approved it.
+
+A story is done when every acceptance criterion is checked. Close it with links to the pull requests and evidence.
+
+### Your test deployment
+
+Use your own subscription or one you're explicitly authorized to test in, with your own `suffix` in `.local/deploy.json` (for example, your initials and the date). Never run deploy, upgrade, onboarding, price or other billable commands against a customer environment or another contributor's deployment. Delete throwaway environments when you're done: the resource groups, the soft-deleted Foundry account and API Management service, and the Entra applications and group the deployment created.
 
 There is currently no repository license. Ask the maintainer to clarify contribution and redistribution terms before submitting work that requires an explicit license grant. Do not add a license, sign-off requirement, or legal commitment on behalf of someone else.
 
 ## Set up a checkout
 
-You need access to the private `msftse-org/claude-codex-foundry` repository. Team contributions use branches and pull requests here. The public repository is maintained separately; do not copy private team or customer information into it.
+Team contributions use branches and pull requests in `msftse-org/claude-codex-foundry`; you need write access.
 
 Prerequisites: Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 or newer (uv can supply Python). Portal work also requires Node.js 24 and npm, matching CI. Azure CLI with Bicep is needed for infrastructure compilation and live Azure work; offline Python and frontend tests need no Azure sign-in.
 
 ```bash
 git clone https://github.com/msftse-org/claude-codex-foundry.git
 cd claude-codex-foundry
-git switch -c feat/describe-your-change
+git switch -c feat/<issue>-describe-your-change origin/release/next
 uv sync --frozen --extra auth --extra portal
 npm --prefix portal/web ci --ignore-scripts
 ```
@@ -124,7 +151,7 @@ Create focused working branches from `release/next` for Codex and budget-gateway
 3. Inspect `git diff --check`, the complete diff, and all new files for private data.
 4. Use a concise commit title such as `fix(auth): preserve tenant selection` or `docs: clarify Mac recovery`.
 5. Update [CHANGELOG.md](CHANGELOG.md) for user-visible changes.
-6. Open a PR against `release/next` using the template. Explain the problem, resulting behavior, validation, and any rollout or compatibility concerns.
+6. Open a PR against `release/next` using the template, with `Closes #<issue>`. Explain the problem, resulting behavior, validation, and any rollout or compatibility concerns. Never push directly to `main` or `release/next`, and don't merge your own pull request without a review.
 
 Keep follow-up changes on feature branches and merge through reviewed PRs. Source merges do not trigger cloud deployment or constitute a production release. Update the validation record as real evidence closes preview gaps; tagging and customer rollout are separate maintainer decisions.
 
