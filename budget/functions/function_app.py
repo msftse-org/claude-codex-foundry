@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse
 from claude_foundry.function_package import read_build
 from claude_foundry.portal.budget_ledger import AzureRows, BudgetDenied, Ledger
 from claude_foundry.portal.budget_policy import Snapshots, snapshot
+from claude_foundry.portal.budget_pricing import UnsupportedRequest
 from claude_foundry.portal.budget_proxy import MAX_BODY, BudgetProxy, GatewayIdentity
 from claude_foundry.portal.content_capture import ContentCapture
 from claude_foundry.portal.policy_cache import ApimPolicyCache
@@ -139,6 +140,8 @@ async def inference(req: Request) -> StreamingResponse:
         )
     except HTTPException as error:
         return JSONResponse({"error": {"message": error.detail}}, status_code=error.status_code)
+    except UnsupportedRequest as error:
+        return JSONResponse({"error": {"message": str(error)}}, status_code=422)
     except (ValueError, TypeError):
         return JSONResponse(
             {"error": {"message": "Invalid request or expired model verification"}}, status_code=422

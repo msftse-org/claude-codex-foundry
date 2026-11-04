@@ -17,6 +17,12 @@ Rate = Annotated[Decimal, Field(ge=0, le=10000, decimal_places=6)]
 RATE_FIELDS = ("input", "cache_read", "cache_write", "cache_write_1h", "output")
 
 
+class UnsupportedRequest(ValueError):
+    def __init__(self, fields):
+        names = ", ".join(name[:64] for name in sorted(fields)[:5])
+        super().__init__("Unsupported request fields: " + names)
+
+
 def micros(value):
     amount = Decimal(str(value)) * MICRO
     if not amount.is_finite() or amount < 0 or amount != amount.to_integral_value():
@@ -139,6 +145,9 @@ class BudgetPrice(StrictModel):
         self.check_current(enforce=enforce_review)
         if not isinstance(body, dict) or not isinstance(body.get("tools", []), list):
             raise ValueError("Provide a JSON object and a tools array")
+        if self.provider == "anthropic":
+            # Local classifier context must not enter fingerprints, ledgers or captures.
+            body = {key: value for key, value in body.items() if key != "safeguards"}
         if "stream" in body and type(body["stream"]) is not bool:
             raise ValueError("Stream must be a boolean")
         common = {
@@ -183,8 +192,8 @@ class BudgetPrice(StrictModel):
                 "client_metadata",
             }
         )
-        if set(body) - common - provider_fields:
-            raise ValueError("This request contains features without verified budget bounds")
+        if unsupported := set(body) - common - provider_fields:
+            raise UnsupportedRequest(unsupported)
         if body.get("model") != self.model:
             raise ValueError("Model does not match its verified enforcement price")
         if body.get("background") or body.get("previous_response_id") or body.get("conversation"):
