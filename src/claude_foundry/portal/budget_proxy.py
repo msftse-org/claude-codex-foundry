@@ -19,6 +19,20 @@ LOG = logging.getLogger(__name__)
 MAX_BODY = 8 * 1024 * 1024
 
 
+# Rejections that stop before the model runs are not billed: throttling, sign-in,
+# routing and invalid requests (bad tool schema, context too long). Their full
+# reservation is released at once. Content-filter rejections may bill the prompt,
+# and 5xx or interrupted outcomes may follow billable work, so those stay held.
+UNBILLED_REJECTIONS = {400, 401, 403, 404, 413, 415, 422, 429}
+BILLABLE_REJECTION_MARKERS = (b"content_filter", b"ResponsibleAIPolicyViolation")
+
+
+def unbilled_rejection(status, body):
+    return status in UNBILLED_REJECTIONS and not any(
+        marker in body for marker in BILLABLE_REJECTION_MARKERS
+    )
+
+
 def enforce_review(policy):
     """Owners opt into refusing models whose rate review date has passed."""
     return bool(policy["settings"].get("enforce_price_review", False))
@@ -317,13 +331,18 @@ class BudgetProxy:
                 raw.extend(chunk)
                 if len(raw) > 32 * 1024 * 1024:
                     raise ValueError("Response exceeds the bounded JSON response size")
+            if not response.is_success and unbilled_rejection(response.status_code, raw):
+                try:
+                    await asyncio.to_thread(self.ledger.settle, request_id, 0)
+                except Exception:
+                    LOG.warning("Rejected request not released; check reservation: %s", request_id)
             value = json.loads(raw)
             if response.is_success:
                 try:
                     await settle(value.get("usage"))
                 except Exception:
                     LOG.warning("Response usage not settled; check reservation: %s", request_id)
-            # Even a 4xx/5xx can follow billable work. No automatic refund.
+            # Other 4xx/5xx responses can follow billable work. No automatic refund.
             if self.content_capture:
                 await asyncio.to_thread(
                     self.content_capture.finish,

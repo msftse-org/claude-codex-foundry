@@ -52,7 +52,7 @@ The budget service commits all three counters and each reservation in one condit
 
 ## Why can a request be refused when some money remains?
 
-The remaining allowance must cover a conservative maximum request reservation, including other running requests. The reservation uses verified model input capacity and the enforced output limit. Complete usage releases the unused amount; missing usage or an uncertain outcome keeps it held. See the [reservation example](budget-architecture.md#6-provider-usage-settles-the-reservation) and [recovery rules](budget-enforcement.md#failure-and-recovery).
+The remaining allowance must cover a conservative maximum request reservation, including other running requests. The reservation uses verified model input capacity and the enforced output limit. Complete usage releases the unused amount, and a request Azure rejects before the model runs (for example, throttling or an invalid request) releases all of it. Missing usage or an uncertain outcome keeps it held until the month ends or an owner closes it. See the [reservation example](budget-architecture.md#6-provider-usage-settles-the-reservation) and [recovery rules](budget-enforcement.md#failure-and-recovery).
 
 ## Why does estimated cost differ from Azure billing?
 
