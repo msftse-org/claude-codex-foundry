@@ -87,6 +87,7 @@ def merge_cli(current, c, helper_path):
         ANTHROPIC_BASE_URL=c["gateway_url"],
         CLAUDE_CODE_API_KEY_HELPER_TTL_MS="300000",
         CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
+        CLAUDE_CODE_AUTO_MODE_SERVER="0",
     )
     for model in c["models"]:
         if model.get("isFamilyDefault"):

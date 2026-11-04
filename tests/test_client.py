@@ -39,6 +39,61 @@ def test_install_reinstall_restore_preserves_user_changes(org, tmp_path):
     assert result["permissions"]["allow"] == ["Read", "Glob"]
 
 
+@pytest.mark.parametrize("previous_value", [None, "0", "1"])
+def test_auto_mode_setting_is_tracked_and_restored(org, tmp_path, previous_value):
+    path = tmp_path / ".claude/settings.json"
+    original = {"env": {"MY_SETTING": "keep"}}
+    if previous_value is not None:
+        original["env"]["CLAUDE_CODE_AUTO_MODE_SERVER"] = previous_value
+    write_json(path, original)
+    c = export_client(org)
+
+    for _ in range(2):
+        install(c, home=tmp_path)
+        env = read_json(path)["env"]
+        assert env["CLAUDE_CODE_AUTO_MODE_SERVER"] == "0"
+        assert env["MY_SETTING"] == "keep"
+        manifest = read_json(tmp_path / ".config/claude-foundry/managed-installation.json")
+        assert manifest["installed"][str(path)]["env"] == env
+        assert manifest["baseline"][str(path)]["value"] == original
+
+    restore(tmp_path)
+    assert read_json(path) == original
+
+
+def test_upgrade_tracks_auto_mode_setting_without_owning_unrelated_env(org, tmp_path, monkeypatch):
+    from claude_foundry import client
+
+    c = export_client(org)
+    path = tmp_path / ".claude/settings.json"
+    write_json(path, {"env": {"MY_SETTING": "keep"}})
+    merge_cli = client.merge_cli
+
+    def legacy_merge_cli(*args):
+        settings = merge_cli(*args)
+        settings["env"].pop("CLAUDE_CODE_AUTO_MODE_SERVER", None)
+        return settings
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(client, "merge_cli", legacy_merge_cli)
+        install(c, home=tmp_path)
+
+    settings = read_json(path)
+    expected_env = {"MY_SETTING": "edited", "ADDED_SETTING": "keep-too"}
+    settings["env"].update(expected_env)
+    write_json(path, settings)
+    install(c, home=tmp_path)
+    env = read_json(path)["env"]
+    assert env["CLAUDE_CODE_AUTO_MODE_SERVER"] == "0"
+    assert all(env[key] == value for key, value in expected_env.items())
+    manifest = read_json(tmp_path / ".config/claude-foundry/managed-installation.json")
+    assert manifest["installed"][str(path)]["env"] == env
+    assert manifest["baseline"][str(path)]["value"] == {"env": expected_env}
+
+    restore(tmp_path)
+    assert read_json(path) == {"env": expected_env}
+
+
 def test_restore_preserves_new_profile_and_user_model(org, tmp_path):
     info = install(export_client(org), home=tmp_path)
     path = tmp_path / ".claude/settings.json"

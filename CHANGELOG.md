@@ -13,10 +13,12 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 ### Developers
 
 - Claude Code auto permission mode no longer fails budget admission because of its `safeguards` field. The governed Anthropic route discards this local classifier context instead of forwarding or capturing it; Claude Code's own fallback classifier requests use the developer's normal budget. Default and `acceptEdits` request handling is unchanged. Unsupported-field refusals now name up to five fields without exposing their values.
+- Claude Code setup now sets `CLAUDE_CODE_AUTO_MODE_SERVER=0` to use billable client-side classifier requests instead of server-side checks and avoid the recurring session-ineligible notice.
 
 ### Upgrade notes
 
-- Administrators must upgrade the portal/budget runtime through the existing portal-upgrade workflow to apply the auto-mode fix. No budget-policy or client-settings changes are required.
+- Administrators must upgrade the portal/budget runtime through the existing portal-upgrade workflow to apply the auto-mode fix. No budget-policy migration or ledger reset is required.
+- Developers get `CLAUDE_CODE_AUTO_MODE_SERVER=0` the next time they install from the portal. After the portal upgrade, download fresh setup, reinstall and restart Claude Code; existing installations are not updated automatically. `claude-foundry restore --client claude` reverts unchanged managed settings while preserving unrelated `env` keys.
 
 ## release-2026-11-01
 
