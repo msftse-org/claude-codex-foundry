@@ -156,6 +156,18 @@ For the default unified setup, follow [shared acceptance](unified-administration
 
 Check the command's final status, model/qualification reports and any consent warnings. Gateway verification uses the deployer's Azure CLI identity; it does not prove a developer's MSAL sign-in, Conditional Access or desktop installation works.
 
+Codex checks never automatically replay a successful probe or a whole three-probe
+sequence. The deployer waits up to 270 seconds for initial HTTP 401/403 access
+propagation, and enables a 180-second APIM-only 404 wait only for Codex routes it
+updated in that run. Manual `verify` and `admin qualify` commands leave both waits
+off unless you pass `--access-propagation-wait 270` and/or
+`--route-propagation-wait 180`. These waits apply only to the first request,
+include HTTP time, and do not hide backend/model 404s, HTTP 400s, or later-probe
+errors. Default unified qualification uses direct Foundry, not this baseline APIM
+path. See [Codex qualification](codex.md#3-publish-and-qualify-the-dedicated-api)
+for the exact retry boundary and recovery guidance. Real propagation, initial
+provisioning and developer access still require an authorized live check.
+
 For a baseline deployment, the explicit checks are:
 
 ```bash

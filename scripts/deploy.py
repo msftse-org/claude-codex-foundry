@@ -8,7 +8,6 @@ registrations are reused. Customer files are written to .local/ and dist/.
 
 import argparse
 import copy
-import io
 import json
 import re
 import shlex
@@ -61,92 +60,6 @@ def run(args, capture=False, allowed=(0,)):
         detail = (result.stderr or "").strip() if capture else ""
         raise DeployError(f"Command failed with exit code {result.returncode}. {detail}".strip())
     return result.stdout if capture else result.returncode
-
-
-def codex_route_opener(open_url, updated_route, *, clock=time.monotonic, sleep=time.sleep):
-    """Retry only APIM's pre-backend 404 on an operation updated by this run."""
-    deadline = None
-    announced = False
-    expired = (
-        "Codex API Management route still returns Resource not found after 180 seconds; "
-        "rerun the deploy."
-    )
-
-    def open_route(request, timeout):
-        nonlocal deadline, announced
-        delay = 2
-        retrying = False
-        while True:
-            attempt_timeout = timeout
-            if retrying:
-                remaining = deadline - clock()
-                if remaining <= 0:
-                    raise RuntimeError(expired)
-                attempt_timeout = min(timeout, remaining)
-            try:
-                return open_url(request, attempt_timeout)
-            except urllib.error.HTTPError as error:
-                headers = {header.lower() for header in error.headers or {}}
-                if (
-                    error.code != 404
-                    or request.full_url != updated_route
-                    or request.get_method() != "POST"
-                    or headers & {"x-codex-gateway", "x-claude-gateway", "x-budget-request-id"}
-                ):
-                    raise
-                with error:
-                    body = error.read()
-                try:
-                    detail = json.loads(body)
-                except ValueError:
-                    detail = None
-                if (
-                    detail != {"statusCode": 404, "message": "Resource not found"}
-                    or type(detail["statusCode"]) is not int
-                ):
-                    raise urllib.error.HTTPError(
-                        error.url, error.code, error.reason, error.headers, io.BytesIO(body)
-                    ) from None
-            now = clock()
-            if deadline is None:
-                deadline = now + 180
-            if now >= deadline:
-                raise RuntimeError(expired)
-            if not announced:
-                print(
-                    "Waiting for the new Codex API Management route to propagate (up to 180 seconds).",
-                    flush=True,
-                )
-                announced = True
-            sleep(min(delay, deadline - now))
-            delay = min(delay * 2, 15)
-            retrying = True
-
-    return open_route
-
-
-def qualify_codex(arguments, *, clock=time.monotonic, sleep=time.sleep):
-    """Keep request-level retries inside the qualification subprocess."""
-    from claude_foundry import cli, codex_verify
-
-    args = cli.parser().parse_args(arguments)
-    if not (args.action == "admin" and args.command == "qualify") and args.action != "verify":
-        raise DeployError("The route propagation worker only supports Codex qualification")
-    if not args.config:
-        raise DeployError("The route propagation worker requires an explicit Codex configuration")
-    config = read_json(args.config)
-    if config.get("client_type") != "codex":
-        raise DeployError("The route propagation worker requires a Codex configuration")
-    route = config["gateway_url"].rstrip("/") + "/responses"
-    original_open = codex_verify.open_url
-    original_argv = sys.argv
-    codex_verify.open_url = codex_route_opener(original_open, route, clock=clock, sleep=sleep)
-    sys.argv = ["claude-foundry", *arguments]
-    try:
-        return cli.main()
-    finally:
-        codex_verify.open_url = original_open
-        sys.argv = original_argv
 
 
 def _uuid(value, field):
@@ -252,11 +165,8 @@ class Deployment:
         out = self.run(["az", *args, "-o", "json", "--only-show-errors"], capture=True)
         return json.loads(out) if out and out.strip() else None
 
-    def cli(self, *args, allowed=(0,), wait_for_route=False):
+    def cli(self, *args, allowed=(0,)):
         command = [sys.executable, "-m", "claude_foundry.cli", *args]
-        if wait_for_route:
-            # Never rerun the three-probe qualification after a billable probe succeeds.
-            command = [sys.executable, ROOT / "scripts/deploy.py", "--wait-for-codex-route", *args]
         return self.run(command, allowed=allowed)
 
     def script(self, name, *args, capture=False):
@@ -501,6 +411,11 @@ class Deployment:
                 }
                 org.pop("client_id", None)
                 write_json(config, org)
+            propagation = (
+                ["--route-propagation-wait", 180, "--access-propagation-wait", 270]
+                if org["gateway_url"].rstrip("/") in self.updated_codex_routes
+                else []
+            )
             # Three small billable requests per model; failing models are left unpublished.
             if len(pending) == len(org["models"]):
                 code = self.cli(
@@ -511,8 +426,8 @@ class Deployment:
                     "--report",
                     self.local / "codex-qualification.json",
                     "--publish-passed",
+                    *propagation,
                     allowed=(0, 2),
-                    wait_for_route=not self.unified,
                 )
             else:
                 # Retry only models not yet qualified, e.g. after a transient network error.
@@ -530,8 +445,8 @@ class Deployment:
                     "--report",
                     self.local / "codex-qualification-retry.json",
                     "--publish-passed",
+                    *propagation,
                     allowed=(0, 1, 2),
-                    wait_for_route=not self.unified,
                 )
                 passed = set() if code == 1 else {m["name"] for m in read_json(retry)["models"]}
                 org["models"] = [
@@ -820,16 +735,11 @@ class Deployment:
                     args.append("--governed")
             else:
                 # Codex verification runs the same billable three-probe qualification.
-                # Retry only a fresh route's undelivered HTTP request, never the sequence.
-                if (
-                    self.cli(
-                        *args,
-                        allowed=(0, 1, 2),
-                        wait_for_route=config["gateway_url"].rstrip("/")
-                        in self.updated_codex_routes,
-                    )
-                    != 0
-                ):
+                # Restore the access wait at its first HTTP open, never replay the sequence.
+                args += ["--access-propagation-wait", 270]
+                if config["gateway_url"].rstrip("/") in self.updated_codex_routes:
+                    args += ["--route-propagation-wait", 180]
+                if self.cli(*args, allowed=(0, 1, 2)) != 0:
                     raise DeployError(
                         f"Verification failed for {profile.name}; see the output above"
                     )
@@ -1007,7 +917,6 @@ def main():
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("--settings", type=Path, default=Path(".local/deploy.json"))
-    parser.add_argument("--wait-for-codex-route", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     parser.add_argument(
         "--upgrade-portal",
         action="store_true",
@@ -1020,8 +929,6 @@ def main():
     )
     args = parser.parse_args()
     try:
-        if args.wait_for_codex_route is not None:
-            return qualify_codex(args.wait_for_codex_route)
         job = Deployment(load_settings(args.settings))
         if args.upgrade_portal:
             job.upgrade_portal()

@@ -22,6 +22,16 @@ from .config import export_client, load_client, load_org, write_json
 from .verify import verify
 
 
+def _wait_seconds(value):
+    try:
+        seconds = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a non-negative whole number of seconds") from None
+    if seconds < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative whole number of seconds")
+    return seconds
+
+
 def parser():
     p = argparse.ArgumentParser(prog="claude-foundry", description=__doc__)
     p.add_argument("--version", action="version", version=__version__)
@@ -79,6 +89,21 @@ def parser():
         action="store_true",
         help="Save only passing models to this organization profile",
     )
+    for command in (check, qualify):
+        command.add_argument(
+            "--route-propagation-wait",
+            type=_wait_seconds,
+            default=0,
+            metavar="SECONDS",
+            help="Wait for APIM's own 404 on the first Codex request only (default: 0, off)",
+        )
+        command.add_argument(
+            "--access-propagation-wait",
+            type=_wait_seconds,
+            default=0,
+            metavar="SECONDS",
+            help="Wait for HTTP 401/403 on the first Codex request only (default: 0, off)",
+        )
     plan = commands.add_parser(
         "models", help="Discover quota, then optionally deploy missing models"
     )
@@ -169,9 +194,19 @@ def main():
                     if args.all_models
                     else [next(m for m in c["models"] if m["name"] == c["default_model"])]
                 )
-                report = [codex_verify.qualify(c, m) for m in selected]
+                report = [
+                    codex_verify.qualify(
+                        c,
+                        m,
+                        route_propagation_wait=args.route_propagation_wait,
+                        access_propagation_wait=args.access_propagation_wait,
+                    )
+                    for m in selected
+                ]
                 print(json.dumps(report, indent=2))
                 return 0 if all(r["passed"] for r in report) else 2
+            if args.route_propagation_wait or args.access_propagation_wait:
+                raise ValueError("Propagation waits apply only to Codex profiles")
             verify(
                 c,
                 args.all_models,
@@ -205,7 +240,13 @@ def main():
                 report = []
                 token = auth.credential(c)
                 for m in c["models"]:
-                    result = codex_verify.qualify(c, m, token)
+                    result = codex_verify.qualify(
+                        c,
+                        m,
+                        token,
+                        route_propagation_wait=args.route_propagation_wait,
+                        access_propagation_wait=args.access_propagation_wait,
+                    )
                     report.append(result)
                     write_json(args.report, report)
                     print(

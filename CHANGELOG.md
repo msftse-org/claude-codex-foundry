@@ -9,7 +9,12 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 ### Administrators
 
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
-- Deploy summaries no longer ask owners to publish access that is already on: they list developer onboarding and the setup link, or the specific access failure and its next step. Codex qualification waits up to three minutes for API Management's own not-found response on a route updated by that deploy, without replaying successful billable probes or retrying model/backend errors.
+- Deploy summaries no longer ask owners to publish access that is already on: they list developer onboarding and the setup link, or the specific access failure and its next step.
+- Baseline Codex qualification waits up to three minutes for API Management's own not-found response on a route updated by that deploy, and up to 4.5 minutes for initial 401/403 access propagation. Final Codex verification restores that access wait without replaying any successful probe or whole billable sequence. Backend/model errors and failures after the first successful request are not retried. Default unified qualification still uses direct Foundry.
+
+### Developers
+
+- Codex `admin qualify` and `verify` expose `--route-propagation-wait SECONDS` and `--access-propagation-wait SECONDS` (both default to `0`, off). These first-request-only waits include HTTP time and use bounded backoff; later probes retain their normal timeouts. The deployer's hidden retry subprocess has been removed.
 
 ### Upgrade notes
 
