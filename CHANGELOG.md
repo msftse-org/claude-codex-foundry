@@ -10,6 +10,14 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
 
+### Developers
+
+- Codex on shared governed routes adapts variant-based client function schemas for GPT-4o and GPT-4.1, avoiding their top-level schema rejection for tools such as `automation_update`. GPT-5-and-later tools are unchanged. Developers do not need to reinstall or change settings.
+
+### Upgrade notes
+
+- Administrators: apply the updated shared runtime through the normal portal upgrade to get the older-model tool compatibility fix. No model redeployment, policy change, or new setting is required.
+
 ## release-2026-11-01
 
 Upgrades from `customer-baseline-2026-10-29`. Tested by upgrading a deployment that was created from that baseline.
