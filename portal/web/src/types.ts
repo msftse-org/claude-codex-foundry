@@ -34,6 +34,8 @@ export interface Model {
     labelOverride: string;
     anthropicFamilyTier: string;
     isFamilyDefault?: boolean;
+    provider?: "anthropic" | "openai" | "claude" | "codex";
+    format?: string;
 }
 export interface Settings {
     name: string;
@@ -65,6 +67,34 @@ export interface AccessRequest {
     status: string;
     note?: string;
 }
+export interface PlanningPrice {
+    model: string;
+    provider?: "anthropic" | "openai";
+    input_per_million: number;
+    output_per_million: number;
+    cache_read_per_million?: number | null;
+    source_url?: string;
+    verified_on?: string;
+    note?: string;
+}
+export interface CalendarCharges {
+    configured: boolean;
+    status:
+        | "connected"
+        | "not_configured"
+        | "not_published"
+        | "pending_publication";
+    currency: "USD";
+    note?: string;
+    months: {
+        month: string;
+        scopes: {
+            scope: string;
+            spent_micro_usd: number;
+            reserved_micro_usd: number;
+        }[];
+    }[];
+}
 export interface State {
     revision: number;
     budget_configured?: boolean;
@@ -76,14 +106,7 @@ export interface State {
     models: Model[];
     settings: Settings;
     audit: Audit[];
-    prices: {
-        model: string;
-        input_per_million: number;
-        output_per_million: number;
-        source_url?: string;
-        verified_on?: string;
-        note?: string;
-    }[];
+    prices: PlanningPrice[];
     requests: AccessRequest[];
     published_revision: number | null;
     policy_hash: string;
@@ -116,6 +139,10 @@ export interface Telemetry {
     truncated?: boolean;
     note?: string;
     month_tokens?: TokenUsage[];
+    planning_prices?: PlanningPrice[];
+    ledger_charges?: CalendarCharges;
+    reporting_start?: string;
+    reporting_end?: string;
 }
 export interface TokenUsage {
     model: string;

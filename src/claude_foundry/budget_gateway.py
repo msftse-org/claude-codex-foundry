@@ -79,6 +79,12 @@ def policy_xml(tenant_id, budget_url, audience, provider):
     element(
         metric,
         "dimension",
+        name="Principal ID",
+        value='@(((Jwt)context.Variables["callerJwt"]).Claims.GetValueOrDefault("oid", ""))',
+    )
+    element(
+        metric,
+        "dimension",
         name="Model",
         value='@{ try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? "Unknown"; } catch { return "Unknown"; } }',
     )

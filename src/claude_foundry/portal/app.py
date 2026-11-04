@@ -491,38 +491,109 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
 
     @app.get("/api/telemetry")
     def usage(days: int = 30, access=actor_dependency):
-        _, _, member = access
-        administrative(member)
+        from datetime import timedelta
+
+        from .costs import monthly_charges, reporting_context
+
+        data, _, member = access
+        if budget is None:
+            administrative(member)
         if days not in {7, 30, 90}:
             raise HTTPException(422, "Choose 7, 30, or 90 days.")
-        cached = app.state.telemetry_cache
-        if cached and cached[0] == days and (datetime.now(UTC) - cached[1]).total_seconds() < 60:
-            return cached[2]
+        end = datetime.now(UTC)
+        start = (end - timedelta(days=days)).date()
         try:
-            result = telemetry(os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, reporting, days)
-            app.state.telemetry_cache = (days, datetime.now(UTC), result)
-            return result
+            context = reporting_context(data, budget, member, model_catalog)
+            charges = monthly_charges(budget, context, start, end.date())
         except Exception:
             raise HTTPException(
-                502,
-                "Usage could not be loaded from Application Insights. Check the portal identity's monitoring access, then retry.",
+                503,
+                "Calendar-month charges could not be loaded from the budget ledger. Retry; no zero balance has been substituted.",
             ) from None
+        query_config = {
+            **reporting,
+            "model_providers": context["model_providers"],
+            "principal_groups": context["principal_groups"],
+            "token_member_ids": context["token_member_ids"],
+        }
+        key = json.dumps([days, query_config], sort_keys=True)
+        cached = app.state.telemetry_cache
+        if cached and cached[0] == key and (end - cached[1]).total_seconds() < 60:
+            result = cached[2]
+        else:
+            try:
+                result = telemetry(
+                    os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, query_config, days
+                )
+            except Exception:
+                raise HTTPException(
+                    502,
+                    "Usage could not be loaded from Application Insights. Check the portal identity's monitoring access, then retry.",
+                ) from None
+            # Request telemetry is organization-wide; restricted viewers receive token metrics only.
+            if member["role"] in {"developer", "group_admin"}:
+                result = {
+                    "status": result["status"],
+                    "month_tokens": result.get("month_tokens", []),
+                    "daily": [],
+                    "models": [],
+                    "people": [],
+                    "requests": [],
+                }
+            app.state.telemetry_cache = (key, end, result)
+        return {
+            **result,
+            "ledger_charges": charges,
+            "planning_prices": [
+                {
+                    k: v
+                    for k, v in p.items()
+                    if k
+                    in {
+                        "model",
+                        "provider",
+                        "input_per_million",
+                        "output_per_million",
+                        "cache_read_per_million",
+                    }
+                }
+                for p in context["prices"]
+            ],
+            "reporting_start": start.isoformat(),
+            "reporting_end": end.date().isoformat(),
+        }
 
     @app.post("/api/cost-analysis")
     def costs(body: CostQuery, access=actor_dependency):
+        from .costs import monthly_charges, reporting_context
+
         data, _, member = access
         if member["role"] == "group_admin":
             body = body.model_copy(update={"group_ids": [member["group_id"]]})
-        else:
+        elif member["role"] != "developer" or budget is None:
             administrative(member)
-        prices = planning_prices(data) if budget is not None else data["prices"]
-        key = body.model_dump_json() + json.dumps(prices, sort_keys=True)
+        try:
+            context = reporting_context(data, budget, member, model_catalog)
+            charges = monthly_charges(budget, context, body.start, body.end)
+        except Exception:
+            raise HTTPException(
+                503,
+                "Calendar-month charges could not be loaded from the budget ledger. Retry; no zero balance has been substituted.",
+            ) from None
+        prices = context["prices"]
+        query_config = {
+            **reporting,
+            "model_providers": context["model_providers"],
+            "principal_groups": context["principal_groups"],
+            "token_member_ids": context["token_member_ids"],
+        }
+        key = body.model_dump_json() + json.dumps([prices, query_config], sort_keys=True)
         cached = app.state.cost_cache.get(key)
         if cached and (datetime.now(UTC) - cached[0]).total_seconds() < 60:
-            return cached[1]
+            return {**cached[1], "ledger_charges": charges}
         try:
             result = cost_analysis(
-                os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, reporting, body, prices
+                os.getenv("PORTAL_INSIGHTS_APP_ID"), credential, query_config, body, prices
             )
         except Exception:
             raise HTTPException(
@@ -533,7 +604,7 @@ def create_app(config=None, store=None, credential=None, local=None, budget=None
         if len(app.state.cost_cache) >= 16:
             app.state.cost_cache.pop(next(iter(app.state.cost_cache)))
         app.state.cost_cache[key] = (datetime.now(UTC), result)
-        return result
+        return {**result, "ledger_charges": charges}
 
     def client_config(group_id, access, client="claude"):
         data, _, member = access

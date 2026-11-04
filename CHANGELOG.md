@@ -8,7 +8,12 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ### Administrators
 
+- **Cost analysis and Spend separate estimates, charges and holds.** Token estimates now use provider-aware cache-read rates from published prices: OpenAI cache reads are deducted from input, while Claude cache reads are added separately. Missing cache rates are disclosed and use the input rate. Both reports show read-only, full UTC calendar-month ledger counters separately from estimates, with reservations labeled **Held, not charged**. Scoped reporting uses published principal-to-group attribution and never substitutes zero for a ledger read failure.
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
+
+### Upgrade notes
+
+- Upgrade the portal and governed routes with the existing `scripts/deploy.py --upgrade-portal` workflow against your own approved deployment to emit the new **Principal ID** token dimension. Preserve dimension retention and allow for ingestion delay. Earlier metrics without a principal stay unattributed. This reporting change does not alter charges, reservation amounts or published prices; Claude cache writes and per-request long-context premiums remain outside the token estimate.
 
 ## release-2026-11-01
 

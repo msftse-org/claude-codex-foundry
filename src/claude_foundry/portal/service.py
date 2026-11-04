@@ -75,6 +75,8 @@ def telemetry(app_id, credential, config, days=30):
         metric_filter = (
             f"in (dynamic({json.dumps([p['api_id'] for p in config['reporting_apis']])}))"
         )
+    from .costs import token_dimensions
+
     # Aggregate in Kusto: counts must not silently stop at the first 10,000 requests.
     query = f"""let calls = requests | where timestamp > ago({days}d) | where {path_filter} | project timestamp, name, resultCode, duration, operation_Id, weight=tolong(coalesce(itemCount, 1));
 let actors = traces | where timestamp > ago({days}d) | where message in ("Claude inference request", "Codex inference request", "Budgeted inference request") | extend model=tostring(customDimensions.model), principal_id=tostring(customDimensions.principal_id) | summarize model=take_any(model), principal_id=take_any(principal_id) by operation_Id;
@@ -86,7 +88,8 @@ union
 (joined | top 250 by timestamp desc | project timestamp, name, resultCode, duration, model, principal_id | project bucket="requests", data=pack_all()),
 (customMetrics | where timestamp >= startofmonth(now()) | where tostring(customDimensions["API ID"]) {metric_filter} and tostring(customDimensions["Service ID"]) == {service_id}
 | where name in ("Prompt Tokens", "Completion Tokens", "Prompt Cached Tokens")
-| summarize input_tokens=sumif(coalesce(valueSum, value), name == "Prompt Tokens"), output_tokens=sumif(coalesce(valueSum, value), name == "Completion Tokens"), cached_tokens=sumif(coalesce(valueSum, value), name == "Prompt Cached Tokens") by model=tostring(customDimensions.Model), group_id=tostring(customDimensions["Group ID"]), principal_id=tostring(customDimensions["Principal ID"])
+{token_dimensions(config)}
+| summarize input_tokens=sumif(coalesce(valueSum, value), name == "Prompt Tokens"), output_tokens=sumif(coalesce(valueSum, value), name == "Completion Tokens"), cached_tokens=sumif(coalesce(valueSum, value), name == "Prompt Cached Tokens") by day=bin(timestamp, 1d), model, group_id, principal_id
 | project bucket="month_tokens", data=pack_all())"""
     token = credential.get_token("https://api.applicationinsights.io/.default").token
     req = Request(

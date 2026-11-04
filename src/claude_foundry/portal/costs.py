@@ -1,6 +1,6 @@
 """Bounded, read-only cost exploration over APIM token metrics.
 
-Rates are customer-entered planning rates, never presented as an Azure invoice.
+Rates are planning rates, never presented as an Azure invoice.
 All totals are aggregated in Kusto before breakdowns are limited.
 """
 
@@ -15,11 +15,32 @@ UNATTRIBUTED = "__unattributed__"
 BREAKDOWN_LIMIT = 2500
 
 
+def model_providers(state):
+    aliases = {
+        "anthropic": "anthropic",
+        "openai": "openai",
+        "claude": "anthropic",
+        "codex": "openai",
+    }
+    providers = {}
+    for model in state.get("models", []):
+        provider = aliases.get(str(model.get("provider") or model.get("format") or "").lower())
+        if provider:
+            providers[model["name"]] = provider
+    for price in state.get("budget_prices", []):
+        provider = aliases.get(str(price.get("provider", "")).lower())
+        if provider:
+            providers[price["model"]] = provider
+    return providers
+
+
 def planning_prices(state):
     """Use explicit planning rates first, then reviewed list rates or ceilings."""
-    prices = list(state.get("prices", []))
+    prices = [dict(p) for p in state.get("prices", [])]
     explicit = {p["model"] for p in prices}
-    for value in state.get("budget_prices", []):
+    published = {p["model"]: p for p in state.get("budget_prices", [])}
+    providers = model_providers(state)
+    for value in published.values():
         if value["model"] not in explicit:
             rates = value.get("rates")
             prices.append(
@@ -40,7 +61,138 @@ def planning_prices(state):
                     ),
                 }
             )
+    for price in prices:
+        published_price = published.get(price["model"], {})
+        provider = providers.get(price["model"])
+        if provider:
+            price["provider"] = provider
+        else:
+            price.pop("provider", None)
+        if price.get("cache_read_per_million") is None:
+            cache_rate = (published_price.get("rates") or {}).get("cache_read")
+            if cache_rate is not None:
+                price["cache_read_per_million"] = float(cache_rate)
     return prices
+
+
+def reporting_context(state, budget, viewer, models):
+    """Use one published snapshot, intersected with the authenticated portal scope."""
+    policy = None
+    if budget is not None:
+        meta, _ = budget[0].rows.read("policy")
+        if meta.get("digest"):
+            policy = budget[1].get(meta["digest"])
+    pricing_state = {
+        **state,
+        "models": models,
+        "budget_prices": (policy or {}).get("budget_prices", []),
+    }
+    context = {
+        "prices": planning_prices(pricing_state),
+        "model_providers": model_providers(pricing_state),
+        "principal_groups": (
+            {m["id"]: m["group_id"] for m in (policy or {}).get("members", [])}
+            if budget is not None
+            else None
+        ),
+        "token_member_ids": None,
+        "scope_ids": None,
+        "known_scopes": ["org"],
+        "status": "connected" if policy else "not_published",
+    }
+    if policy:
+        context["known_scopes"] += ["group-" + g["id"] for g in policy["groups"]]
+        context["known_scopes"] += ["user-" + m["id"] for m in policy["members"]]
+    if budget is not None and viewer["role"] in {"developer", "group_admin"}:
+        current = {m["id"]: m for m in state["members"]}
+        published = {m["id"]: m for m in (policy or {}).get("members", [])}
+        matching = {
+            oid
+            for oid, member in current.items()
+            if oid in published
+            and published[oid]["status"] == "active"
+            and member["group_id"] == published[oid]["group_id"]
+        }
+        if viewer["id"] not in matching:
+            identifiers, scopes = [], []
+            if policy:
+                context["status"] = "pending_publication"
+        elif viewer["role"] == "developer":
+            identifiers, scopes = [viewer["id"]], ["user-" + viewer["id"]]
+        else:
+            identifiers = sorted(
+                oid for oid in matching if current[oid]["group_id"] == viewer["group_id"]
+            )
+            scopes = ["group-" + viewer["group_id"]] + ["user-" + oid for oid in identifiers]
+        context.update(token_member_ids=identifiers, scope_ids=scopes)
+    return context
+
+
+def calendar_months(start, end):
+    """Inclusive UTC dates select whole calendar months, never prorated counters."""
+    month = start.replace(day=1)
+    while month <= end:
+        yield month.strftime("%Y-%m")
+        month = date(month.year + (month.month == 12), month.month % 12 + 1, 1)
+
+
+def monthly_charges(budget, context, start, end):
+    result = {
+        "configured": budget is not None,
+        "status": context["status"] if budget is not None else "not_configured",
+        "currency": "USD",
+        "months": [],
+    }
+    if budget is None:
+        return result
+    if context["status"] != "connected":
+        result["note"] = (
+            "Membership changes await budget publication."
+            if context["status"] == "pending_publication"
+            else "A published budget policy is required to read calendar-month charges."
+        )
+        return result
+    for month in calendar_months(start, end):
+        counters = budget[0].rows.month_counters(month)
+        values = {key[len(month) + 1 :]: value for key, value in counters.items()}
+        scopes = context["scope_ids"]
+        if scopes is None:
+            scopes = sorted(
+                set(context["known_scopes"])
+                | {
+                    scope
+                    for scope in values
+                    if scope == "org" or scope.startswith(("group-", "user-"))
+                }
+            )
+        result["months"].append(
+            {
+                "month": month,
+                "scopes": [
+                    {
+                        "scope": scope,
+                        "spent_micro_usd": values.get(scope, {}).get("spent", 0),
+                        "reserved_micro_usd": values.get(scope, {}).get("reserved", 0),
+                    }
+                    for scope in scopes
+                ],
+            }
+        )
+    return result
+
+
+def token_dimensions(config):
+    """Published membership attributes governed metrics; unknown principals stay unknown."""
+    query = """| extend model=tostring(customDimensions.Model), group_id=tostring(customDimensions["Group ID"]), principal_id=tostring(customDimensions["Principal ID"])"""
+    if config.get("principal_groups") is not None:
+        query += f"""
+| extend group_id=tostring(dynamic({json.dumps(config["principal_groups"])})[principal_id])"""
+    query += f"""
+| extend model=iff(isempty(model), "{UNATTRIBUTED}", model), group_id=iff(isempty(group_id), "{UNATTRIBUTED}", group_id), principal_id=iff(isempty(principal_id), "{UNATTRIBUTED}", principal_id)"""
+    if config.get("token_member_ids") is not None:
+        query += f"""
+| where principal_id in (dynamic({json.dumps(config["token_member_ids"])}))"""
+    return query
 
 
 class CostQuery(BaseModel):
@@ -76,7 +228,15 @@ class CostQuery(BaseModel):
 
 def build_query(config, filters, prices):
     # JSON-encoded literals prevent user-controlled filters/rates becoming KQL syntax.
-    rates = {p["model"]: [p["input_per_million"], p["output_per_million"]] for p in prices}
+    rates = {
+        p["model"]: [
+            p["input_per_million"],
+            p["output_per_million"],
+            p.get("cache_read_per_million"),
+            p.get("provider", ""),
+        ]
+        for p in prices
+    }
     cuts = []
     api_scope = f"== {json.dumps(config['api_id'])}"
     if config.get("reporting_apis"):
@@ -89,19 +249,25 @@ def build_query(config, filters, prices):
         if values:
             cuts.append(f"| where {field} in (dynamic({json.dumps(values)}))")
     group = {"model": "model", "group": "group_id", "member": "principal_id"}[filters.grouping]
-    aggregate = """input_tokens=sum(input_tokens), output_tokens=sum(output_tokens), cached_tokens=sum(cached_tokens), usd=sum(usd), unpriced_tokens=sum(unpriced_tokens), unattributed_tokens=sum(unattributed_tokens), missing_models=make_set_if(model, unpriced_tokens > 0, 100)"""
+    aggregate = """input_tokens=sum(input_tokens), output_tokens=sum(output_tokens), cached_tokens=sum(cached_tokens), total_tokens=sum(total_tokens), usd=sum(usd), unpriced_tokens=sum(unpriced_tokens), unattributed_tokens=sum(unattributed_tokens), missing_models=make_set_if(model, isnull(rate) and total_tokens > 0, 100), cache_rate_missing_models=make_set_if(model, isnotnull(rate) and isnull(rate[2]) and cached_tokens > 0, 100), provider_missing_models=make_set_if(model, isempty(provider) and cached_tokens > 0, 100)"""
+    providers = config.get("model_providers", model_providers(config))
     return f"""let rates = dynamic({json.dumps(rates)});
+let providers = dynamic({json.dumps(providers)});
 let usage = materialize(customMetrics
 | where timestamp >= datetime({filters.previous_start.isoformat()}) and timestamp < datetime({(filters.end + timedelta(days=1)).isoformat()})
 | where tostring(customDimensions["API ID"]) {api_scope} and tostring(customDimensions["Service ID"]) == {json.dumps(config["apim_name"])}
 | where name in ("Prompt Tokens", "Completion Tokens", "Prompt Cached Tokens")
-| extend model=tostring(customDimensions.Model), group_id=tostring(customDimensions["Group ID"]), principal_id=tostring(customDimensions["Principal ID"])
-| extend model=iff(isempty(model), "{UNATTRIBUTED}", model), group_id=iff(isempty(group_id), "{UNATTRIBUTED}", group_id), principal_id=iff(isempty(principal_id), "{UNATTRIBUTED}", principal_id)
+{token_dimensions(config)}
 {" ".join(cuts)}
 | summarize input_tokens=sumif(coalesce(valueSum, value), name == "Prompt Tokens"), output_tokens=sumif(coalesce(valueSum, value), name == "Completion Tokens"), cached_tokens=sumif(coalesce(valueSum, value), name == "Prompt Cached Tokens") by day=bin(timestamp, 1d), model, group_id, principal_id
+| extend input_tokens=iff(isfinite(input_tokens), max_of(0.0, input_tokens), 0.0), output_tokens=iff(isfinite(output_tokens), max_of(0.0, output_tokens), 0.0), cached_tokens=iff(isfinite(cached_tokens), max_of(0.0, cached_tokens), 0.0)
 | extend period=iff(day >= datetime({filters.start.isoformat()}), "current", "previous"), rate=rates[model]
-| extend usd=iff(isnull(rate), 0.0, (input_tokens * todouble(rate[0]) + output_tokens * todouble(rate[1])) / 1000000.0), unpriced_tokens=iff(isnull(rate), input_tokens + output_tokens, 0.0), unattributed_tokens=iff(group_id == "{UNATTRIBUTED}" or principal_id == "{UNATTRIBUTED}", input_tokens + output_tokens, 0.0));
-let breakdown = usage | summarize {aggregate} by period, key={group} | extend tokens=input_tokens + output_tokens;
+| extend provider=iff(isempty(tostring(rate[3])), tostring(providers[model]), tostring(rate[3]))
+| extend priced_cached_tokens=iff(provider == "openai", min_of(input_tokens, cached_tokens), cached_tokens), total_tokens=input_tokens + output_tokens + iff(provider == "openai", 0.0, cached_tokens)
+| extend unpriced=isnull(rate) or (cached_tokens > 0 and isempty(provider))
+| extend usd=iff(unpriced, 0.0, ((input_tokens - iff(provider == "openai", priced_cached_tokens, 0.0)) * todouble(rate[0]) + priced_cached_tokens * coalesce(todouble(rate[2]), todouble(rate[0])) + output_tokens * todouble(rate[1])) / 1000000.0)
+| extend unpriced_tokens=iff(unpriced, total_tokens, 0.0), unattributed_tokens=iff(group_id == "{UNATTRIBUTED}" or principal_id == "{UNATTRIBUTED}", total_tokens, 0.0));
+let breakdown = usage | summarize {aggregate} by period, key={group} | extend tokens=total_tokens;
 let selected = breakdown | summarize ranking=sum(tokens) by key | top {BREAKDOWN_LIMIT + 1} by ranking desc;
 union
 (usage | summarize {aggregate} by period | project bucket="totals", data=pack_all()),
