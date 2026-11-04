@@ -22,7 +22,7 @@ import {
     Pager,
     Status,
 } from "./components";
-import type { State } from "./types";
+import type { CalendarCharges, State } from "./types";
 import {
     breakdownRows,
     change,
@@ -30,6 +30,7 @@ import {
     defaultFilters,
     filterSearch,
     isoDate,
+    ledgerMoney,
     money,
     presetDates,
     readFilters,
@@ -56,6 +57,112 @@ const shortDate = (value: string) =>
         day: "numeric",
         timeZone: "UTC",
     });
+
+export function LedgerCharges({
+    charges,
+    state,
+}: {
+    charges?: CalendarCharges;
+    state: State;
+}) {
+    if (!charges?.configured) return null;
+    const label = (scope: string) => {
+        if (scope === "org") return "Organization";
+        if (scope.startsWith("group-")) {
+            const id = scope.slice(6);
+            return `Group: ${state.groups.find((g) => g.id === id)?.name || id}`;
+        }
+        const id = scope.slice(5);
+        return `Member: ${state.members.find((m) => m.id === id)?.name || id}`;
+    };
+    return (
+        <section className="section" aria-label="Calendar-month budget charges">
+            <div className="sectionhead">
+                <h2>Charged by the budget service (calendar month)</h2>
+            </div>
+            <p className="footnote">
+                Full UTC calendar-month counters for every month touched by the
+                reporting period, not prorated to selected days or narrowed by
+                token filters. Organization, group and member rows overlap; do
+                not add them together. Held amounts are not charges.
+            </p>
+            {charges.status !== "connected" ? (
+                <Notice>
+                    {charges.note || "Calendar-month charges are unavailable."}
+                </Notice>
+            ) : (
+                <div className="sheet tablewrap">
+                    <table aria-label="Calendar-month budget charges">
+                        <thead>
+                            <tr>
+                                <th>Calendar month (UTC)</th>
+                                <th>Budget scope</th>
+                                <th className="numeric">Charged (USD)</th>
+                                <th className="numeric">Held, not charged</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {charges.months.flatMap((month) =>
+                                month.scopes.map((row) => (
+                                    <tr key={`${month.month}:${row.scope}`}>
+                                        <td>{month.month}</td>
+                                        <td>{label(row.scope)}</td>
+                                        <td className="numeric">
+                                            {ledgerMoney(row.spent_micro_usd)}
+                                        </td>
+                                        <td className="numeric">
+                                            {ledgerMoney(
+                                                row.reserved_micro_usd,
+                                            )}
+                                        </td>
+                                    </tr>
+                                )),
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </section>
+    );
+}
+
+export function EstimateMethod() {
+    return (
+        <details className="cost-method">
+            <summary>
+                How these estimates are calculated <ArrowDown size={14} />
+            </summary>
+            <p>
+                OpenAI: (input − cached) × input rate + cached × cache-read rate
+                + output × output rate, per million. Claude: input × input rate
+                + cached × cache-read rate + output × output rate; its cache
+                reads are additional to reported input. Explicit planning rates
+                take precedence; otherwise the published budget price supplies
+                the cache-read rate. A missing cache rate uses the input rate
+                and is listed in rate coverage. Provider metadata is required to
+                price cache reads; model names and token counts are not used to
+                guess a provider.
+            </p>
+            <p>
+                The gateway does not report Claude cache-write tokens in these
+                metrics, so those charges cannot be estimated here. Aggregated
+                metrics cannot identify the per-request long-context tier;
+                estimates use base rates. Streaming tokens can be estimates or
+                incomplete. Negative or non-finite counts become zero, and
+                OpenAI cache reads are capped at reported input.
+            </p>
+            <p>
+                Current planning rates recalculate retained metrics across all
+                selected dates. Taxes, infrastructure and billing adjustments
+                are excluded. These estimates are not Azure invoices and do not
+                change the ledger. Calendar-month charges and held amounts come
+                directly from the budget service, separately from token metrics.
+                All periods use UTC. An empty day means no recorded metrics, not
+                proof of no usage. No prompts or responses are collected.
+            </p>
+        </details>
+    );
+}
 
 function MultiSelect({
     label,
@@ -285,10 +392,11 @@ export function RatesDrawer({
             >
                 <div className="drawer-scroll">
                     <Notice>
-                        Standard input and output rates produce a planning
-                        estimate. Cache discounts, cache writes, long-context
-                        premiums, taxes, infrastructure, and negotiated
-                        adjustments are not calculated.
+                        Input, output and published cache-read rates produce a
+                        planning estimate. Missing cache rates use the input
+                        rate. Claude cache writes, long-context premiums, taxes,
+                        infrastructure and billing adjustments are not
+                        calculated.
                     </Notice>
                     <Field label="Model">
                         <select
@@ -360,7 +468,7 @@ export function RatesDrawer({
                     <div className="rate-coverage">
                         <span>
                             {state.prices.length} of {state.models.length}{" "}
-                            models have rates
+                            models have input/output rates
                         </span>
                         {state.models.map((m) => (
                             <div key={m.name}>
@@ -657,7 +765,13 @@ export function CostAnalysis({
     const [sort, setSort] = useState("tokens");
     const [page, setPage] = useState(0);
     const finance = ["owner", "admin", "billing"].includes(state.viewer.role);
-    const pricesKey = JSON.stringify(state.prices);
+    const pricesKey = JSON.stringify([
+        state.prices,
+        state.viewer.id,
+        state.viewer.role,
+        state.viewer.group_id,
+        state.revision,
+    ]);
     useEffect(() => {
         const pop = () => setFilters(readFilters());
         window.addEventListener("popstate", pop);
@@ -666,6 +780,7 @@ export function CostAnalysis({
     useEffect(() => {
         const controller = new AbortController();
         setLoading(true);
+        setData(undefined);
         setError("");
         api<CostResult>("/api/cost-analysis", {
             method: "POST",
@@ -767,14 +882,18 @@ export function CostAnalysis({
                 previous_estimated_usd: r.previous.usd,
                 previous_estimate_complete: r.previous.unpriced_tokens === 0,
                 breakdown_truncated: data?.truncated,
-                basis: "Current standard input/output planning rates; not billed Azure charges",
+                cache_rate_missing_models:
+                    r.current.cache_rate_missing_models?.join(";"),
+                provider_missing_models:
+                    r.current.provider_missing_models?.join(";"),
+                basis: "Current input/output/cache-read planning rates; not ledger charges or an Azure invoice",
             })),
         );
     return (
         <div className="cost-page">
             <PageHead
                 title="Cost analysis"
-                description="Explore model spending and developer consumption across your organization."
+                description="Explore model spending and developer consumption within your reporting scope."
             >
                 <button
                     className="button"
@@ -910,7 +1029,7 @@ export function CostAnalysis({
                 <section className="cost-summary" aria-label="Period summary">
                     <div className="cost-primary">
                         <span className="eyebrow">
-                            Estimated model spend · USD
+                            Estimated from token metrics
                         </span>
                         <div className="cost-number num">
                             {!ready
@@ -952,7 +1071,7 @@ export function CostAnalysis({
                         <p>
                             {ready && compare
                                 ? `${change(total, priorTotal)} vs previous period`
-                                : "Input + output consumption"}
+                                : "Input, output and additional Claude cache reads"}
                         </p>
                     </div>
                     <div>
@@ -978,8 +1097,33 @@ export function CostAnalysis({
                                 ? "of recorded tokens have rates"
                                 : "No consumption in this period"}
                         </p>
+                        {ready &&
+                            !!current.cache_rate_missing_models?.length && (
+                                <p>
+                                    Cache rate missing:{" "}
+                                    {current.cache_rate_missing_models
+                                        .map((id) => label(id, "model"))
+                                        .join(", ")}
+                                    . Cached tokens use the input rate.
+                                </p>
+                            )}
+                        {ready && !!current.provider_missing_models?.length && (
+                            <p>
+                                Provider metadata missing:{" "}
+                                {current.provider_missing_models
+                                    .map((id) => label(id, "model"))
+                                    .join(", ")}
+                                . Estimate incomplete.
+                            </p>
+                        )}
                     </div>
                 </section>
+                {!error && (
+                    <LedgerCharges
+                        charges={data?.ledger_charges}
+                        state={state}
+                    />
+                )}
                 <section className="cost-trend sheet">
                     <div className="cost-section-head">
                         <div>
@@ -1277,8 +1421,9 @@ export function CostAnalysis({
                                 : "No metrics yet"}
                         </h3>
                         <p>
-                            Both group and developer recorded. Earlier metrics
-                            may be unattributed.
+                            Principal IDs map to the published policy’s groups.
+                            Usage recorded before this upgrade stays
+                            unattributed when those dimensions are missing.
                         </p>
                     </section>
                     <section>
@@ -1295,26 +1440,7 @@ export function CostAnalysis({
                     </section>
                 </div>
             </div>
-            <details className="cost-method">
-                <summary>
-                    How these estimates are calculated <ArrowDown size={14} />
-                </summary>
-                <p>
-                    Input tokens × input rate + output tokens × output rate, per
-                    million. Current planning rates apply across the selected
-                    dates. Streaming tokens may be estimated. Cached tokens are
-                    reported where available, but cache discounts, cache writes,
-                    long-context premiums, taxes, infrastructure, and billing
-                    adjustments are not calculated. These are consumption
-                    estimates, not Azure billed charges.
-                </p>
-                <p>
-                    All periods use UTC. Only retained metrics emitted by this
-                    gateway API are included. An empty day means no recorded
-                    metrics; it does not prove no usage occurred. No prompts or
-                    responses are collected.
-                </p>
-            </details>
+            <EstimateMethod />
             {drawer === "filters" && (
                 <FiltersDrawer
                     filters={filters}

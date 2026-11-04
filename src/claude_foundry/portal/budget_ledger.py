@@ -35,6 +35,16 @@ class MemoryRows:
         with self.lock:
             return copy.deepcopy(self.rows.get(key, ({}, None)))
 
+    def month_counters(self, month):
+        if datetime.strptime(month, "%Y-%m").strftime("%Y-%m") != month:
+            raise ValueError("Use a UTC calendar month in YYYY-MM format")
+        with self.lock:
+            return {
+                key: copy.deepcopy(value)
+                for key, (value, _) in self.rows.items()
+                if key.startswith(month + "-")
+            }
+
     def pending(self, group_id=None, principal=None):
         with self.lock:
             values = [
@@ -73,6 +83,21 @@ class AzureRows:
             return json.loads(entity["data"]), entity.metadata["etag"]
         except ResourceNotFoundError:
             return {}, None
+
+    def month_counters(self, month):
+        if datetime.strptime(month, "%Y-%m").strftime("%Y-%m") != month:
+            raise ValueError("Use a UTC calendar month in YYYY-MM format")
+        return {
+            entity["RowKey"]: json.loads(entity["data"])
+            for entity in self.table.query_entities(
+                "PartitionKey eq @organization and RowKey ge @start and RowKey lt @end",
+                parameters={
+                    "organization": self.partition,
+                    "start": month + "-",
+                    "end": month + ".",
+                },
+            )
+        }
 
     def commit(self, rows):
         operations = []

@@ -14,10 +14,13 @@ export type CostRow = {
     input_tokens: number;
     output_tokens: number;
     cached_tokens: number;
+    total_tokens?: number;
     usd: number;
     unpriced_tokens: number;
     unattributed_tokens: number;
     missing_models: string[];
+    cache_rate_missing_models?: string[];
+    provider_missing_models?: string[];
 };
 export type CostResult = {
     grouping: Grouping;
@@ -32,6 +35,7 @@ export type CostResult = {
     breakdown: CostRow[];
     truncated: boolean;
     breakdown_limit: number;
+    ledger_charges?: CalendarCharges;
 };
 export const isoDate = (d: Date) => d.toISOString().slice(0, 10);
 export const shiftDate = (d: string, days: number) =>
@@ -112,8 +116,11 @@ export const zero = (period: CostRow["period"] = "current"): CostRow => ({
     unpriced_tokens: 0,
     unattributed_tokens: 0,
     missing_models: [],
+    cache_rate_missing_models: [],
+    provider_missing_models: [],
 });
-export const tokens = (row: CostRow) => row.input_tokens + row.output_tokens;
+export const tokens = (row: CostRow) =>
+    row.total_tokens ?? row.input_tokens + row.output_tokens;
 export const money = (value: number) =>
     new Intl.NumberFormat("en-US", {
         style: "currency",
@@ -121,6 +128,13 @@ export const money = (value: number) =>
         minimumFractionDigits: 2,
         maximumFractionDigits: value > 0 && value < 0.01 ? 6 : 2,
     }).format(value);
+export const ledgerMoney = (microUsd: number) =>
+    new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 6,
+    }).format(microUsd / 1_000_000);
 export function change(current: number, previous: number): string {
     if (!previous) return current ? "New usage" : "No change";
     const delta = ((current - previous) / previous) * 100;
@@ -157,3 +171,4 @@ export function breakdownRows(data: CostResult) {
     }
     return [...pairs.values()];
 }
+import type { CalendarCharges } from "./types";
