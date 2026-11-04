@@ -8,7 +8,12 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ### Administrators
 
+- **Held reservations explain why they remain open.** The shared budget runtime uses the deployment's Application Insights with managed-identity authentication and unsampled warning/exception traces. Held paths record a best-effort reason and UTC timestamp on the reservation, with content-free failure diagnostics. Counters, settlement amounts and existing release paths are unchanged; completed HTTP 200 holds still need live evidence before a root-cause repair.
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
+
+### Upgrade notes
+
+- **Enable runtime hold diagnostics through a portal upgrade.** On an authorized test deployment, rerun `scripts/deploy.py --settings "<test-settings.json>" --upgrade-portal` from the reviewed checkout. This redeploys the runtime's telemetry connection and managed-identity monitoring access as well as its code. Plan for the runtime/portal restart outage and verify ingestion and a client disconnect using [the operations guide](docs/operations.md#diagnose-held-budget-reservations) before rollout. Existing holds are preserved; missing reasons mean **Not recorded**, not unbilled.
 
 ## release-2026-11-01
 

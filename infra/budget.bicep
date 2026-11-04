@@ -12,6 +12,8 @@ param apimPrincipalId string
 param portalPrincipalId string
 param foundryName string
 param foundryResourceGroup string
+param insightsName string
+param insightsResourceGroup string
 @description('Owner-verified pinned model versions and input/output capacities. No secrets.')
 param deployments object
 @description('Reuse the portal network so both managed identities can reach private budget storage.')
@@ -110,6 +112,15 @@ module inferenceAccess 'modules/budget-foundry-access.bicep' = {
   scope: resourceGroup(foundryResourceGroup)
   params: { foundryName: foundryName, principalId: identity.properties.principalId }
 }
+resource insights 'Microsoft.Insights/components@2020-02-02' existing = {
+  scope: resourceGroup(insightsResourceGroup)
+  name: insightsName
+}
+module monitoring 'modules/portal-monitoring.bicep' = {
+  name: '${name}-monitoring'
+  scope: resourceGroup(insightsResourceGroup)
+  params: { insightsName: insightsName, principalId: identity.properties.principalId }
+}
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: '${name}-plan'
   location: location
@@ -153,10 +164,12 @@ resource app 'Microsoft.Web/sites@2024-04-01' = {
         { name: 'BUDGET_POLICY_CACHE_URL', value: policyCacheUrl }
         { name: 'BUDGET_CONTENT_LOGS_ENABLED', value: string(contentLogsEnabled) }
         { name: 'BUDGET_CONTENT_LOG_MAX_BYTES', value: '262144' }
+        { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
+        { name: 'APPLICATIONINSIGHTS_AUTHENTICATION_STRING', value: 'ClientId=${identity.properties.clientId};Authorization=AAD' }
       ]
     }
   }
-  dependsOn: [containers, ledger, blobRoles, tableRoles, inferenceAccess]
+  dependsOn: [containers, ledger, blobRoles, tableRoles, inferenceAccess, monitoring]
 }
 resource scmAuth 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
   parent: app

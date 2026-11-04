@@ -40,6 +40,49 @@ The portal's usage page reads operational metadata. Cost analysis uses retained 
 
 The portal can scale down independently of inference. Published APIM policies continue to operate if the portal is unavailable; administrators cannot make new publications until it recovers.
 
+### Diagnose held budget reservations
+
+The shared budget runtime sends warnings to the deployment's existing Application Insights component using its managed identity, the same monitoring role module and authentication settings as the portal. The default runtime log level remains **Warning**; `Trace` and `Exception` telemetry are excluded from host sampling. This is diagnostic telemetry, not a second spend ledger, and ingestion outages or retention can still make a trace unavailable.
+
+On an authorized test deployment, upgrade with the existing settings before relying on these diagnostics:
+
+```sh
+uv run --frozen --extra auth --extra portal python scripts/deploy.py --settings "<test-settings.json>" --upgrade-portal
+```
+
+This command changes Azure resources and restarts the runtime and portal; it is not an offline check. The upgrade reuses the portal's Application Insights name and resource group, adds the runtime identity's monitoring access and both Application Insights settings, and preserves existing reservations and monthly counters. Allow for the upgrade outage described below. A source merge alone does not enable telemetry.
+
+In that Application Insights component, open **Logs** and run this query, replacing the runtime Function app placeholder:
+
+```kusto
+traces
+| where timestamp > ago(24h)
+| where cloud_RoleName == "<runtime-function-app>"
+| where severityLevel >= 2
+| where message startswith "Reservation held: "
+| parse message with "Reservation held: request=" request_id " reason=" hold_reason " error=" error_detail
+| extend exception_type = tostring(split(error_detail, " message=")[0])
+| project timestamp, request_id, hold_reason, exception_type, message
+| order by timestamp desc
+```
+
+The warning identifies one held outcome per request. It contains only the generated request identifier, the reason and exception type (`None` when no exception occurred). Settlement failures also include a sanitized message: fixed application-authored ledger messages are retained; other exception messages are redacted because SDK errors can include bodies, headers or resource identifiers. Storage errors may include a numeric HTTP status. Prompts, responses, usage bodies, headers and exception tracebacks are not added to these warnings.
+
+An authorized ledger reader can match `request_id` to the `request-<request-id>` reservation in the organization's `BudgetLedger` partition. The row's JSON `data` contains the following optional metadata:
+
+| `hold_reason` | Meaning |
+| --- | --- |
+| `dispatch_unknown` | Dispatch failed before a response was obtained; the outcome is unknown. |
+| `client_disconnected` | The caller left before terminal usage could be settled. |
+| `stream_incomplete` | The upstream stream ended or failed without trustworthy terminal usage. |
+| `rejected_possibly_billed` | The upstream rejection was not confirmed to be unbilled. |
+| `usage_unreadable` | A successful response's usage could not be read or priced. |
+| `settlement_failed` | The settlement operation failed after usage was read, or an existing safe rejection-release write failed. |
+
+`held_at` is the UTC time of the metadata attempt that succeeded. Missing metadata means **Not recorded**: older reservations are not backfilled, and a metadata-store failure cannot interrupt a response. These writes use etag checks, retry contention only a bounded number of times, never change counters or reservation state, and stop if settlement has already won the race. A later successful settlement may retain the diagnostic fields, so always check the current row's `state`; a historical warning is not evidence that the reservation is still open.
+
+The monthly `<YYYY-MM>-org`, `<YYYY-MM>-group-<id>` and `<YYYY-MM>-user-<id>` counters remain authoritative. Do not clear, refund or reduce holds to repair missing telemetry. A completed HTTP 200 response does not itself prove settlement; collect its sanitized failure classification in an authorized live session before proposing a root-cause repair. This change adds evidence, not that repair. If a rollback is needed, redeploy the previous reviewed package without deleting the ledger, diagnostics or published policy.
+
 ## Change models or quota
 
 1. Retain the current organization config, model report, client profile, and gateway policies in restricted storage.

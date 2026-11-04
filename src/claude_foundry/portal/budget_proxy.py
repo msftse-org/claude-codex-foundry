@@ -8,10 +8,12 @@ from uuid import UUID
 
 import httpx
 import jwt
+from anyio import CancelScope
+from azure.core.exceptions import HttpResponseError
 from fastapi import HTTPException
 from starlette.responses import JSONResponse, StreamingResponse
 
-from .budget_ledger import BudgetDenied, limits_for, policy_digest
+from .budget_ledger import BudgetDenied, Contended, limits_for, policy_digest
 from .budget_pricing import BudgetPrice, usage_tokens
 from .budget_stream import UsageStream
 
@@ -36,6 +38,35 @@ def unbilled_rejection(status, body):
 def enforce_review(policy):
     """Owners opt into refusing models whose rate review date has passed."""
     return bool(policy["settings"].get("enforce_price_review", False))
+
+
+def settlement_message(error):
+    """Only application-authored ledger messages are safe to copy into telemetry."""
+    messages = {
+        ValueError: {
+            "Invalid settlement amount",
+            "Unknown reservation",
+            "Conflicting settlement; manual reconciliation required",
+            "Ledger inconsistency; manual reconciliation required",
+        },
+        BudgetDenied: {"Usage exceeded its verified reservation; enforcement is paused"},
+        Contended: {"Settlement remains reserved; retry reconciliation"},
+    }
+    if (
+        len(error.args) == 1
+        and type(error.args[0]) is str
+        and error.args[0] in messages.get(type(error), set())
+    ):
+        return error.args[0]
+    if (
+        isinstance(error, HttpResponseError)
+        and type(error.status_code) is int
+        and 100 <= error.status_code <= 599
+    ):
+        return f"Ledger storage request failed (HTTP {error.status_code}); details redacted"
+    if isinstance(error, TimeoutError):
+        return "Ledger operation timed out; details redacted"
+    return "Ledger write failed; details redacted"
 
 
 class GatewayIdentity:
@@ -192,17 +223,45 @@ class BudgetProxy:
         await asyncio.to_thread(
             self.ledger.reserve, request_id, principal, price.model, maximum, policy, fingerprint
         )
+        hold_recorded = False
+
+        async def held(reason, error=None):
+            nonlocal hold_recorded
+            if hold_recorded:
+                return
+            hold_recorded = True
+            message = "Reservation held: request=%s reason=%s error=%s"
+            args = [request_id, reason, type(error).__name__ if error is not None else "None"]
+            if reason == "settlement_failed" and error is not None:
+                message += " message=%s"
+                args.append(settlement_message(error))
+            LOG.warning(message, *args)
+            # Starlette cancels its task group on disconnect. Finish the bounded
+            # metadata attempt even inside that cancelled scope.
+            with CancelScope(shield=True):
+                try:
+                    await asyncio.to_thread(self.ledger.note_hold, request_id, reason)
+                except Exception:
+                    pass
+
         capture_name = capture_record = None
         if self.content_capture:
-            capture_name, capture_record = await asyncio.to_thread(
-                self.content_capture.begin,
-                request_id,
-                provider,
-                principal,
-                group["id"],
-                price.model,
-                payload,
-            )
+            try:
+                capture_name, capture_record = await asyncio.to_thread(
+                    self.content_capture.begin,
+                    request_id,
+                    provider,
+                    principal,
+                    group["id"],
+                    price.model,
+                    payload,
+                )
+            except asyncio.CancelledError as error:
+                await held("client_disconnected", error)
+                raise
+            except Exception as error:
+                await held("dispatch_unknown", error)
+                raise
         path = "/anthropic/v1/messages" if provider == "anthropic" else "/openai/v1/responses"
         headers = {"Authorization": "Bearer " + token.token, "Content-Type": "application/json"}
         if provider == "anthropic":
@@ -216,8 +275,11 @@ class BudgetProxy:
                 ),
                 stream=True,
             )
-        except Exception:
-            LOG.warning("Inference outcome unknown; reservation held: %s", request_id)
+        except asyncio.CancelledError as error:
+            await held("client_disconnected", error)
+            raise
+        except Exception as error:
+            await held("dispatch_unknown", error)
             raise HTTPException(
                 502, "Inference outcome unknown; its budget reservation remains held"
             ) from None
@@ -229,14 +291,22 @@ class BudgetProxy:
         }
 
         async def settle(usage_value):
-            inputs, outputs = usage_tokens(provider, usage_value)
-            # Violations never release money, even if another rate happens to mask it.
-            if inputs > price.max_input_tokens or outputs > output_bound:
-                await asyncio.to_thread(self.ledger.settle, request_id, maximum + 1)
-                return
-            await asyncio.to_thread(
-                self.ledger.settle, request_id, price.usage_cost(provider, usage_value)
-            )
+            try:
+                inputs, outputs = usage_tokens(provider, usage_value)
+                # Violations never release money, even if another rate happens to mask it.
+                amount = (
+                    maximum + 1
+                    if inputs > price.max_input_tokens or outputs > output_bound
+                    else price.usage_cost(provider, usage_value)
+                )
+            except Exception as error:
+                await held("usage_unreadable", error)
+                raise
+            try:
+                await asyncio.to_thread(self.ledger.settle, request_id, amount)
+            except Exception as error:
+                await held("settlement_failed", error)
+                raise
 
         if payload.get("stream") and response.is_success:
             usage = UsageStream(provider)
@@ -281,30 +351,23 @@ class BudgetProxy:
                         try:
                             await settle(usage.final())
                             settled = True
-                        except Exception:
+                        except Exception as error:
                             # Normalize every unsettled terminal path. Some compatible
                             # providers emit a failure-shaped event that a native client
                             # does not recognize; the canonical error prevents that event
                             # from degrading into a misleading transport disconnect.
+                            await held("stream_incomplete", error)
                             yield incomplete_stream_event()
-                            LOG.warning(
-                                "Stream did not confirm settlement; check reservation: %s",
-                                request_id,
-                            )
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, GeneratorExit) as error:
                     if not settled:
-                        LOG.warning(
-                            "Stream did not confirm settlement; check reservation: %s", request_id
-                        )
+                        await held("client_disconnected", error)
                     raise
-                except Exception:
+                except Exception as error:
                     # Upstream read errors and settlement failures keep the reservation,
                     # but clients still receive a terminal protocol error when possible.
-                    yield incomplete_stream_event()
                     if not settled:
-                        LOG.warning(
-                            "Stream did not confirm settlement; check reservation: %s", request_id
-                        )
+                        await held("stream_incomplete", error)
+                    yield incomplete_stream_event()
                 finally:
                     if self.content_capture:
                         await asyncio.to_thread(
@@ -323,6 +386,7 @@ class BudgetProxy:
                 media_type="text/event-stream",
                 headers=public_headers,
             )
+        settled = False
         try:
             # Non-streaming responses are bounded; caller cancellation conservatively
             # retains the reservation just like streaming cancellation.
@@ -334,14 +398,18 @@ class BudgetProxy:
             if not response.is_success and unbilled_rejection(response.status_code, raw):
                 try:
                     await asyncio.to_thread(self.ledger.settle, request_id, 0)
-                except Exception:
-                    LOG.warning("Rejected request not released; check reservation: %s", request_id)
+                    settled = True
+                except Exception as error:
+                    await held("settlement_failed", error)
             value = json.loads(raw)
             if response.is_success:
                 try:
                     await settle(value.get("usage"))
-                except Exception:
-                    LOG.warning("Response usage not settled; check reservation: %s", request_id)
+                    settled = True
+                except Exception as error:
+                    await held("usage_unreadable", error)
+            elif not settled:
+                await held("rejected_possibly_billed")
             # Other 4xx/5xx responses can follow billable work. No automatic refund.
             if self.content_capture:
                 await asyncio.to_thread(
@@ -353,5 +421,16 @@ class BudgetProxy:
                     response.is_success,
                 )
             return JSONResponse(value, status_code=response.status_code, headers=public_headers)
+        except asyncio.CancelledError as error:
+            if not settled:
+                await held("client_disconnected", error)
+            raise
+        except Exception as error:
+            if not settled:
+                await held(
+                    "usage_unreadable" if response.is_success else "rejected_possibly_billed",
+                    error,
+                )
+            raise
         finally:
             await response.aclose()

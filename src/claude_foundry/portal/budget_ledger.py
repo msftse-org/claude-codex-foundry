@@ -287,6 +287,43 @@ class Ledger:
                 continue
         raise BudgetDenied("The budget ledger is busy; no inference was admitted")
 
+    def note_hold(self, request_id, reason):
+        """Best-effort metadata only; never race a settled row back into a hold."""
+        try:
+            if reason not in {
+                "dispatch_unknown",
+                "client_disconnected",
+                "stream_incomplete",
+                "rejected_possibly_billed",
+                "usage_unreadable",
+                "settlement_failed",
+            }:
+                return
+            key = "request-" + str(UUID(request_id))
+            for _ in range(3):
+                reservation, etag = self.rows.read(key)
+                if reservation.get("state") != "reserved" or etag is None:
+                    return
+                try:
+                    self.rows.commit(
+                        [
+                            (
+                                key,
+                                {
+                                    **reservation,
+                                    "hold_reason": reason,
+                                    "held_at": datetime.now(UTC).isoformat(),
+                                },
+                                etag,
+                            )
+                        ]
+                    )
+                    return
+                except Contended:
+                    continue
+        except Exception:
+            return
+
     def settle(self, request_id, amount):
         if type(amount) is not int or amount < 0:
             raise ValueError("Invalid settlement amount")

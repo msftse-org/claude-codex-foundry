@@ -13,7 +13,8 @@
     "applicationInsights": {
       "samplingSettings": {
         "isEnabled": true,
-        "maxTelemetryItemsPerSecond": 5
+        "maxTelemetryItemsPerSecond": 5,
+        "excludedTypes": "Trace;Exception"
       },
       "enableDependencyTracking": false
     }
