@@ -222,7 +222,8 @@ The isolated budget portal identity has storage and monitoring access, with opti
 | Competing requests | Conditional Table transactions prevent both from committing against the same stale balance. Excessive contention returns a refusal. |
 | Portal unavailable | Inference can continue using the published policy, provided the budget service and storage are available. Administration is unavailable. |
 | Budget service unavailable | New governed inference fails; this service is an availability dependency. |
-| Disconnect, restart, provider error, missing final usage or settlement outage | An admitted reservation remains held. Even a provider error is not automatically treated as free. |
+| Provider rejects the request before the model runs (429, 401, 403, 404, or 400/413/415/422 other than a content filter) | The reservation is released in full; these rejections are not billed. |
+| Disconnect, restart, 5xx provider error, content-filter rejection, missing final usage or settlement outage | An admitted reservation remains held. These outcomes can follow billable work. |
 | Usage exceeds the verified reservation/capacity | The reservation stays held and new admissions pause for investigation. Detection cannot undo provider charges already incurred. |
 
 Owners may close an uncertain reservation at its **full reserved amount**, with an audited reason. There is no automatic timeout refund or arbitrary partial refund workflow. See [failure and recovery](budget-enforcement.md#failure-and-recovery).

@@ -6,6 +6,9 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
+### Administrators
+
+- **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
 - The shared ARM client retries transient Azure outages and throttling for GET, PUT, PATCH, DELETE and HEAD, with short retry notices and errors instead of HTML dumps. Retries stop after six attempts or a five-minute request budget; server delays that exceed the 60-second wait cap or remaining budget fail without retrying early.
 
 ### Upgrade notes
