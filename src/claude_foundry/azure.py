@@ -76,6 +76,12 @@ class Azure:
         return self._token
 
     def request(self, method, path, body=None, version="2024-05-01", *, idempotent=False):
+        """Send an ARM request, retrying transient failures only when safe.
+
+        GET, PUT, PATCH, DELETE and HEAD retry automatically. Other methods,
+        including POST, require the caller to confirm the operation is safe to
+        repeat and explicitly pass ``idempotent=True`` to enable retries.
+        """
         deadline = self._clock() + 300
         method = method.upper()
         retryable_method = method in {"GET", "PUT", "PATCH", "DELETE", "HEAD"} or idempotent
@@ -159,6 +165,7 @@ def _retry_after(headers, now):
 
 
 def _error_detail(detail):
+    limit = 500
     detail = str(detail)
     try:
         data = json.loads(detail)
@@ -166,15 +173,26 @@ def _error_detail(detail):
         data = None
     error = data.get("error", data) if isinstance(data, dict) else None
     if isinstance(error, dict):
-        summary = ": ".join(str(error[key]) for key in ("code", "message") if error.get(key))
-        if summary:
-            return " ".join(summary.split())[:200]
+        details = error.get("details")
+        first_detail = details[0] if isinstance(details, list) and details else None
+        summaries = []
+        for item in (error, first_detail):
+            if isinstance(item, dict):
+                parts = (" ".join(str(item.get(key) or "").split()) for key in ("code", "message"))
+                summary = ": ".join(part for part in parts if part)
+                if summary:
+                    summaries.append(summary)
+        if summaries:
+            # Reserve room for the actionable detail when the parent summary is long.
+            if len(summaries) == 2 and len(summaries[0]) > limit // 2:
+                summaries[0] = summaries[0][: limit // 2 - 3].rstrip() + "..."
+            return "; ".join(summaries)[:limit]
     title = re.search(r"<title\b[^>]*>(.*?)</title\s*>", detail, re.IGNORECASE | re.DOTALL)
     if title:
         summary = html.unescape(re.sub(r"<[^>]*>", " ", title.group(1)))
     else:
         summary = next((line for line in detail.splitlines() if line.strip()), "Empty response")
-    return " ".join(summary.split())[:200] or "Empty response"
+    return " ".join(summary.split())[:limit] or "Empty response"
 
 
 class AzureError(RuntimeError):

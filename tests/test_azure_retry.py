@@ -190,7 +190,7 @@ def test_exhaustion_preserves_short_arm_error_and_query_free_logs(local_arm, cap
 
     assert caught.value.status == 503
     assert str(caught.value).startswith("Azure HTTP 503: ServiceUnavailable: Try later ")
-    assert len(str(caught.value)) <= len("Azure HTTP 503: ") + 200
+    assert len(str(caught.value)) == len("Azure HTTP 503: ") + 500
     assert len(local_arm.calls) == 6
     assert local_arm.clock.waits == [2, 4, 8, 16, 32]
     assert all(error.fp.closed for error in errors)
@@ -218,8 +218,8 @@ def test_html_error_uses_only_title(local_arm):
     ("body", "detail"),
     [
         (b"\n\nFirst readable line\nDo not include this", "First readable line"),
-        (b"<html>" + b"x" * 1000, "<html>" + "x" * 194),
-        (b"<title>" + b"x" * 1000 + b"</title>", "x" * 200),
+        (b"<html>" + b"x" * 1000, "<html>" + "x" * 494),
+        (b"<title>" + b"x" * 1000 + b"</title>", "x" * 500),
         (b"\xff non-UTF8 error", "\ufffd non-UTF8 error"),
         (b"", "Empty response"),
         (
@@ -237,6 +237,126 @@ def test_error_details_stay_short(local_arm, body, detail):
 
     assert str(caught.value) == f"Azure HTTP 400: {detail}"
     assert caught.value.status == 400
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    ("detail", "expected"),
+    [
+        (
+            {"code": "InvalidResource", "message": "Choose\n  a supported\tlocation."},
+            "InvalidResource: Choose a supported location.",
+        ),
+        ({"code": "InvalidResource"}, "InvalidResource"),
+        ({"message": "Choose a supported location."}, "Choose a supported location."),
+    ],
+)
+def test_arm_error_includes_first_detail(local_arm, wrapped, detail, expected):
+    error = {
+        "code": "InvalidTemplateDeployment",
+        "message": "Validation\n  failed.",
+        "details": [
+            detail,
+            {"code": "IgnoredDetail", "message": "Do not include the second detail."},
+        ],
+    }
+    local_arm.outcomes.append(http_error(400, body={"error": error} if wrapped else error))
+
+    with pytest.raises(AzureError) as caught:
+        local_arm.client.request("GET", PATH)
+
+    assert str(caught.value) == (
+        f"Azure HTTP 400: InvalidTemplateDeployment: Validation failed.; {expected}"
+    )
+    assert caught.value.status == 400
+    assert len(local_arm.calls) == 1
+    assert local_arm.clock.waits == []
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+@pytest.mark.parametrize(
+    "details",
+    [
+        None,
+        [],
+        "not an array",
+        {"code": "WrongShape", "message": "Not an array."},
+        42,
+        [None],
+        ["not an object"],
+        [42],
+        [[]],
+        [{}],
+        [{"code": "", "message": ""}],
+        [{"code": " \t", "message": "\n"}],
+        [{"other": "Ignored"}],
+        [None, {"code": "IgnoredDetail", "message": "Do not use the second detail."}],
+    ],
+)
+def test_arm_error_ignores_malformed_or_empty_details(local_arm, wrapped, details):
+    error = {
+        "code": "ResourceNotFound",
+        "message": "Check the resource path.",
+        "details": details,
+    }
+    local_arm.outcomes.append(http_error(404, body={"error": error} if wrapped else error))
+
+    with pytest.raises(AzureError) as caught:
+        local_arm.client.request("GET", PATH)
+
+    assert str(caught.value) == "Azure HTTP 404: ResourceNotFound: Check the resource path."
+    assert caught.value.status == 404
+    assert len(local_arm.calls) == 1
+    assert local_arm.clock.waits == []
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_arm_error_uses_first_detail_without_parent_summary(local_arm, wrapped):
+    error = {"details": [{"code": "Conflict", "message": "Choose another resource name."}]}
+    local_arm.outcomes.append(http_error(409, body={"error": error} if wrapped else error))
+
+    with pytest.raises(AzureError) as caught:
+        local_arm.client.request("GET", PATH)
+
+    assert str(caught.value) == "Azure HTTP 409: Conflict: Choose another resource name."
+    assert caught.value.status == 409
+    assert len(local_arm.calls) == 1
+    assert local_arm.clock.waits == []
+
+
+@pytest.mark.parametrize("parent_padding", ["", "x" * 600])
+@pytest.mark.parametrize("detail_padding", ["", "y" * 600])
+def test_arm_error_truncation_keeps_first_detail_readable(
+    local_arm, parent_padding, detail_padding
+):
+    error = {
+        "code": "PreconditionFailed",
+        "message": "Validation\n  failed. " + parent_padding,
+        "details": [
+            {
+                "code": "InvalidResource",
+                "message": "Choose\n  a supported\tlocation. " + detail_padding,
+            }
+        ],
+    }
+    local_arm.outcomes.append(http_error(412, body={"error": error}))
+
+    with pytest.raises(AzureError) as caught:
+        local_arm.client.request("GET", PATH)
+
+    message = str(caught.value)
+    prefix = "Azure HTTP 412: "
+    assert message.startswith(prefix + "PreconditionFailed: Validation failed.")
+    assert "; InvalidResource: Choose a supported location." in message
+    assert len(message) <= len(prefix) + 500
+    assert "\n" not in message and "\t" not in message and "  " not in message
+    if detail_padding:
+        assert len(message) == len(prefix) + 500
+    if parent_padding:
+        assert "...; InvalidResource:" in message
+    assert caught.value.status == 412
+    assert len(local_arm.calls) == 1
+    assert local_arm.clock.waits == []
 
 
 @pytest.mark.parametrize(
