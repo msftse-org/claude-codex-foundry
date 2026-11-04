@@ -6,6 +6,12 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 
 ## Unreleased
 
+### Administrators
+
+- **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
+
+### Developers
+
 - Claude Code auto permission mode no longer fails budget admission because of its `safeguards` field. The governed Anthropic route discards this local classifier context instead of forwarding or capturing it; Claude Code's own fallback classifier requests use the developer's normal budget. Default and `acceptEdits` request handling is unchanged. Unsupported-field refusals now name up to five fields without exposing their values.
 
 ### Upgrade notes
