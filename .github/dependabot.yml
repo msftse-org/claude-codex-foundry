@@ -1,0 +1,19 @@
+# Version updates open pull requests against release/next, like any other change.
+# Python dependencies are updated by hand because requirements-auth.lock must be
+# regenerated with uv.lock (see CONTRIBUTING.md).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /portal/web
+    target-branch: release/next
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      portal-web:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: release/next
+    schedule:
+      interval: weekly
