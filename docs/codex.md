@@ -104,7 +104,31 @@ uv run claude-foundry admin --config .local/codex-organization.json qualify \
 uv run claude-foundry admin --config .local/codex-organization.json gateway
 ```
 
-Qualification makes three small billable requests per model: streaming text, a function call, and replay of the function result in a subsequent streaming response. Reports contain status and usage, not prompts or bearer tokens. Transient failures can be retried before publishing. The command returns a nonzero status when any model fails, even if `--publish-passed` saves passing models. An empty successful set leaves the configuration intact.
+Qualification makes three small billable requests per model: streaming text, a function call, and replay of the function result in a subsequent streaming response. Reports contain status and usage, not prompts or bearer tokens. The command returns a nonzero status when any model fails, even if `--publish-passed` saves passing models. An empty successful set leaves the configuration intact.
+
+For a newly created or updated baseline route, add `--route-propagation-wait 180`
+to `admin qualify`. For newly granted group/RBAC access, add
+`--access-propagation-wait 270`. Both options also work with
+`claude-foundry verify --config <codex-client.json>`. They accept non-negative
+whole seconds and default to `0` (off); neither option changes authorization.
+
+The route wait recognizes only APIM's own `{"statusCode": 404, "message": "Resource not found"}`
+without a backend/gateway marker. The access wait recognizes HTTP 401 and 403.
+Only the **first HTTP request of each model's three-probe sequence** can retry,
+with bounded backoff and one progress line. The window includes elapsed HTTP time,
+and retry timeouts are capped to the remaining window. After any request succeeds,
+later stream, tool and follow-up failures stop immediately; no successful probe
+or whole sequence is replayed. HTTP 400, backend/model 404s and ambiguous transport
+failures are not propagation retries. Later probes keep their normal timeouts.
+If the wait expires, inspect the reported routing or permission problem before
+rerunning: manually rerunning qualification can bill successful probes again.
+
+The one-command deployer supplies the 180-second route wait and 270-second access
+wait when qualifying baseline Codex routes it updated in that run. Final Codex
+verification retains a 270-second first-request access wait, but only updated
+routes get the route wait. Default unified deployment qualifies directly against
+Foundry with the operator's token, without either qualification wait; it does not
+exercise the baseline APIM propagation path.
 
 These are protocol checks. Before distributing a profile, also perform real Codex file/tool tests with your approved client versions and representative workloads. The model metadata comes from the installed client's bundled catalog. Models absent from that catalog use a conservative 32,768-token text compatibility profile with optional capabilities disabled. This is not a claim about those models' maximum context or coding quality. Requalify after changing client versions, deployment versions, policies or model metadata.
 

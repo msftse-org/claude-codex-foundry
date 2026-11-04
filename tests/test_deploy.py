@@ -3,10 +3,12 @@ import io
 import json
 import sys
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
-from claude_foundry import function_package
+from claude_foundry import codex_verify, function_package
 from claude_foundry.azure import AzureError
 from claude_foundry.config import read_json, write_json
 
@@ -17,6 +19,7 @@ USER = "00000000-0000-0000-0000-000000000003"
 GROUP = "00000000-0000-0000-0000-000000000009"
 DESKTOP = "00000000-0000-0000-0000-000000000010"
 PORTAL_APP = "00000000-0000-0000-0000-000000000011"
+APIM_NOT_FOUND = {"statusCode": 404, "message": "Resource not found"}
 
 
 @pytest.fixture
@@ -123,6 +126,82 @@ class FakeRunner:
             if action == "export-client":
                 write_json(Path(command[command.index("--output") + 1]), {"tenant_id": TENANT})
         return "" if capture else 0
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class FakeCodexResponses:
+    def __init__(self, outcomes, fallback=None, *, clock=None, elapsed=0):
+        self.outcomes = iter(outcomes)
+        self.fallback = fallback
+        self.requests = []
+        self.clock = clock
+        self.elapsed = elapsed
+        self.http_seconds = 0
+        self.timeouts = []
+        self.starts = []
+
+    def __call__(self, request, timeout):
+        payload = json.loads(request.data)
+        self.requests.append(payload)
+        self.timeouts.append(timeout)
+        if self.clock is not None:
+            self.starts.append(self.clock())
+            elapsed = min(self.elapsed, timeout)
+            self.clock.now += elapsed
+            self.http_seconds += elapsed
+        outcome = next(self.outcomes, self.fallback)
+        if outcome is not None:
+            status, body, headers = outcome
+            raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+            raise HTTPError(request.full_url, status, "placeholder error", headers, io.BytesIO(raw))
+        if isinstance(payload.get("tool_choice"), dict):
+            output = [{"type": "function_call", "name": "read_marker", "call_id": "placeholder"}]
+        else:
+            marker = "RESUMED_AZURE_OK" if payload.get("tools") else "CODEX_AZURE_OK"
+            output = [{"content": [{"type": "output_text", "text": marker}]}]
+        body = {"output": output}
+        if payload.get("stream"):
+            event = {"type": "response.completed", "response": body}
+            raw = f"data: {json.dumps(event)}\n\ndata: [DONE]\n".encode()
+        else:
+            raw = json.dumps(body).encode()
+        response = io.BytesIO(raw)
+        response.headers = {"x-codex-gateway": "placeholder"}
+        return response
+
+
+@pytest.fixture
+def codex_qualification():
+    def qualify(outcomes, *, updated=True, fallback=None, access_wait=270):
+        config = {"gateway_url": "https://gateway.example/codex/v1"}
+        model = {"name": "gpt-test", "model": "gpt-test"}
+        clock = FakeClock()
+        transport = FakeCodexResponses(outcomes, fallback, clock=clock, elapsed=1)
+        result = codex_verify.qualify(
+            config,
+            model,
+            token="placeholder-token",
+            route_propagation_wait=180 if updated else 0,
+            access_propagation_wait=access_wait,
+            opener=transport,
+            clock=clock,
+            sleep=clock.sleep,
+        )
+        return result, transport, clock
+
+    return qualify
 
 
 def organization(org):
@@ -327,6 +406,579 @@ def test_failed_retry_preserves_a_published_default(deploy, settings, tmp_path, 
     assert [m["name"] for m in codex["models"]] == ["m1"]
 
 
+@pytest.mark.parametrize(
+    "body", [APIM_NOT_FOUND, b'{ "message": "Resource not found", "statusCode": 404 }\n']
+)
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"apim-request-id": "placeholder"}, {"Server": "Microsoft-Azure-API-Management"}],
+)
+def test_codex_qualification_waits_only_for_apim_route_propagation(
+    codex_qualification, capsys, body, headers
+):
+    result, transport, clock = codex_qualification([(404, body, headers)])
+    assert result["passed"] is True
+    assert len(transport.requests) == 4
+    assert transport.requests[0] == transport.requests[1]
+    assert clock.sleeps == [2]
+    assert clock() == result["seconds"] == transport.http_seconds + sum(clock.sleeps) == 6
+    assert capsys.readouterr().out.count("Waiting for Codex API Management route") == 1
+
+
+def test_codex_qualification_route_wait_is_bounded(codex_qualification, capsys):
+    result, transport, clock = codex_qualification([], fallback=(404, APIM_NOT_FOUND, {}))
+    assert result["passed"] is False
+    assert "API Management route" in result["error"]
+    assert "after 180 seconds" in result["error"]
+    assert "rerun the command" in result["error"]
+    assert clock() == result["seconds"] == 180
+    assert sum(clock.sleeps) + transport.http_seconds == 180
+    assert transport.http_seconds > 0
+    assert max(clock.sleeps) <= 15
+    assert len(transport.requests) == len(clock.sleeps)
+    assert capsys.readouterr().out.count("Waiting for Codex API Management route") == 1
+
+
+def test_codex_retry_request_timeout_respects_propagation_deadline():
+    clock = FakeClock()
+    transport = FakeCodexResponses([], fallback=(404, APIM_NOT_FOUND, {}))
+    attempts = []
+    route = "https://gateway.example/codex/v1/responses"
+
+    def slow_not_found(request, timeout):
+        attempts.append((clock(), timeout))
+        if clock() >= 164:
+            clock.now += timeout
+        return transport(request, timeout)
+
+    open_route = codex_verify._propagation_opener(
+        slow_not_found, route, route_wait=180, access_wait=0, clock=clock, sleep=clock.sleep
+    )
+    with pytest.raises(RuntimeError, match="after 180 seconds"):
+        open_route(Request(route, data=b"{}"), 90)
+
+    assert clock() == 180
+    assert attempts[0] == (0, 90)
+    assert attempts[-1] == (164, 16)
+    assert len(attempts) == 14
+    assert all(start + timeout <= 180 for start, timeout in attempts[1:])
+    assert sum(clock.sleeps) == 164
+
+
+@pytest.mark.parametrize("status,budget", [(404, 180), (401, 270), (403, 270)])
+def test_codex_wait_includes_initial_and_subsequent_http_time(status, budget):
+    clock = FakeClock()
+    transport = FakeCodexResponses(
+        [], fallback=(status, APIM_NOT_FOUND, {}), clock=clock, elapsed=30
+    )
+    route = "https://gateway.example/codex/v1/responses"
+    opener = codex_verify._propagation_opener(
+        transport, route, route_wait=180, access_wait=270, clock=clock, sleep=clock.sleep
+    )
+    with pytest.raises(RuntimeError, match=f"after {budget} seconds"):
+        opener(Request(route, data=b"{}"), 90)
+    assert clock() == budget
+    assert transport.http_seconds + sum(clock.sleeps) == budget
+    assert transport.http_seconds >= 150
+    assert transport.timeouts[0] == 90
+    assert all(
+        start + timeout <= budget
+        for start, timeout in zip(transport.starts, transport.timeouts, strict=True)
+    )
+
+
+@pytest.mark.parametrize("status,route_wait,access_wait", [(404, 1, 0), (401, 0, 1), (403, 0, 1)])
+def test_codex_short_wait_also_bounds_the_initial_http_timeout(status, route_wait, access_wait):
+    clock = FakeClock()
+    transport = FakeCodexResponses(
+        [], fallback=(status, APIM_NOT_FOUND, {}), clock=clock, elapsed=90
+    )
+    route = "https://gateway.example/codex/v1/responses"
+    opener = codex_verify._propagation_opener(
+        transport,
+        route,
+        route_wait=route_wait,
+        access_wait=access_wait,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    with pytest.raises(RuntimeError, match="after 1 seconds"):
+        opener(Request(route, data=b"{}"), 90)
+    assert clock() == transport.http_seconds == 1
+    assert transport.timeouts == [1]
+    assert clock.sleeps == []
+
+
+def test_codex_retry_io_does_not_start_after_deadline():
+    clock = FakeClock()
+    transport = FakeCodexResponses([], fallback=(404, APIM_NOT_FOUND, {}))
+    route = "https://gateway.example/codex/v1/responses"
+
+    def delayed_sleep(seconds):
+        clock.sleep(seconds)
+        clock.now += 180
+
+    open_route = codex_verify._propagation_opener(
+        transport, route, route_wait=180, access_wait=0, clock=clock, sleep=delayed_sleep
+    )
+    with pytest.raises(RuntimeError, match="after 180 seconds"):
+        open_route(Request(route, data=b"{}"), 90)
+
+    assert len(transport.requests) == 1
+    assert clock.sleeps == [2]
+    assert clock() == 182
+
+
+@pytest.mark.parametrize("propagating", [False, True])
+def test_codex_propagation_deadline_does_not_limit_later_billable_probes(propagating):
+    clock = FakeClock()
+    transport = FakeCodexResponses([(404, APIM_NOT_FOUND, {})] if propagating else [])
+    timeouts = []
+    config = {"gateway_url": "https://gateway.example/codex/v1"}
+    model = {"name": "gpt-test", "model": "gpt-test"}
+
+    def slow_success(request, timeout):
+        timeouts.append(timeout)
+        response = transport(request, timeout)
+        clock.now += 90
+        return response
+
+    result = codex_verify.qualify(
+        config,
+        model,
+        token="placeholder-token",
+        route_propagation_wait=180,
+        opener=slow_success,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+
+    assert result["passed"] is True
+    assert timeouts == ([180, 178, 180, 180] if propagating else [180, 180, 180])
+    assert clock() == (272 if propagating else 270)
+    assert len(transport.requests) == (4 if propagating else 3)
+    assert clock.sleeps == ([2] if propagating else [])
+
+
+@pytest.mark.parametrize("status", [400, 429, 500, 502])
+def test_codex_qualification_does_not_retry_rejected_requests(codex_qualification, status, capsys):
+    result, transport, clock = codex_qualification([(status, APIM_NOT_FOUND, {})])
+    assert result["passed"] is False
+    assert f"Responses HTTP {status}" in result["error"]
+    assert len(transport.requests) == 1
+    assert clock.sleeps == []
+    assert "Waiting" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "body,headers",
+    [
+        ({"error": {"code": "DeploymentNotFound", "message": "placeholder model missing"}}, {}),
+        (APIM_NOT_FOUND, {"x-codex-gateway": "placeholder"}),
+        (APIM_NOT_FOUND, {"X-Codex-Gateway": "placeholder"}),
+        (APIM_NOT_FOUND, {"x-claude-gateway": "placeholder"}),
+        (APIM_NOT_FOUND, {"x-budget-request-id": "placeholder"}),
+        (APIM_NOT_FOUND, {"X-Budget-Request-ID": ""}),
+        (APIM_NOT_FOUND, {"Server": "uvicorn"}),
+        (APIM_NOT_FOUND, {"server": "Microsoft-HTTPAPI/2.0"}),
+        (APIM_NOT_FOUND, {"X-Ms-Request-Id": "placeholder"}),
+        (APIM_NOT_FOUND, {"X-Request-Id": "placeholder"}),
+        (APIM_NOT_FOUND, {"X-Backend-Request-Id": "placeholder"}),
+        (APIM_NOT_FOUND, {"OpenAI-Processing-Ms": "1"}),
+        ({**APIM_NOT_FOUND, "error": "placeholder backend error"}, {}),
+        ({"message": "Resource not found"}, {}),
+        ({"statusCode": 404}, {}),
+        ({"statusCode": "404", "message": "Resource not found"}, {}),
+        ({"statusCode": 404.0, "message": "Resource not found"}, {}),
+        ({"statusCode": 404, "message": "placeholder model not found"}, {}),
+        (b'{"statusCode":400,"statusCode":404,"message":"Resource not found"}', {}),
+        (b"\xff", {}),
+        (b"Resource not found", {}),
+        (b"[]", {}),
+        (b"null", {}),
+    ],
+)
+def test_codex_qualification_does_not_retry_backend_or_unknown_404(
+    codex_qualification, body, headers, capsys
+):
+    result, transport, clock = codex_qualification([(404, body, headers)])
+    assert result["passed"] is False
+    assert "Responses HTTP 404" in result["error"]
+    assert len(transport.requests) == 1
+    assert clock.sleeps == []
+    assert "Waiting" not in capsys.readouterr().out
+    if isinstance(body, bytes):
+        assert body.decode(errors="replace") in result["error"]
+    else:
+        assert json.dumps(body) in result["error"]
+
+
+def test_codex_qualification_does_not_wait_for_an_untouched_route(codex_qualification, capsys):
+    result, transport, clock = codex_qualification([(404, APIM_NOT_FOUND, {})], updated=False)
+    assert result["passed"] is False
+    assert "Responses HTTP 404" in result["error"]
+    assert len(transport.requests) == 1
+    assert clock.sleeps == []
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.parametrize("explicit", [False, True])
+def test_codex_waits_are_off_by_default_and_accept_explicit_zero(status, explicit, capsys):
+    clock = FakeClock()
+    transport = FakeCodexResponses([(status, APIM_NOT_FOUND, {})], clock=clock, elapsed=1)
+    options = {"route_propagation_wait": 0, "access_propagation_wait": 0} if explicit else {}
+    result = codex_verify.qualify(
+        {"gateway_url": "https://gateway.example/codex/v1"},
+        {"name": "gpt-test", "model": "gpt-test"},
+        token="placeholder-token",
+        opener=transport,
+        clock=clock,
+        sleep=clock.sleep,
+        **options,
+    )
+    assert result["passed"] is False
+    assert f"Responses HTTP {status}" in result["error"]
+    assert transport.timeouts == [180]
+    assert clock() == 1
+    assert clock.sleeps == []
+    assert capsys.readouterr().out == ""
+
+
+def test_codex_waits_preserve_missing_route_error_reporting():
+    clock = FakeClock()
+    transport = FakeCodexResponses([])
+    result = codex_verify.qualify(
+        {},
+        {"name": "gpt-test", "model": "gpt-test"},
+        token="placeholder-token",
+        opener=transport,
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    assert result["passed"] is False
+    assert result["error"] == "'gateway_url'"
+    assert transport.requests == clock.sleeps == []
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_codex_route_wait_does_not_enable_access_wait(codex_qualification, status, capsys):
+    result, transport, clock = codex_qualification(
+        [(status, {"error": "access pending"}, {})], access_wait=0
+    )
+    assert result["passed"] is False
+    assert f"Responses HTTP {status}" in result["error"]
+    assert len(transport.requests) == 1
+    assert clock.sleeps == []
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("updated", [False, True])
+def test_codex_access_wait_expires_without_replaying_a_sequence(
+    codex_qualification, status, updated, capsys
+):
+    result, transport, clock = codex_qualification(
+        [], fallback=(status, {"error": "access pending"}, {}), updated=updated
+    )
+    assert result["passed"] is False
+    assert f"Codex access still returns HTTP {status} after 270 seconds" in result["error"]
+    assert "check group membership and Foundry permissions" in result["error"]
+    assert clock() == result["seconds"] == 270
+    assert transport.http_seconds + sum(clock.sleeps) == 270
+    assert transport.http_seconds > 0
+    assert max(clock.sleeps) <= 15
+    assert len(transport.requests) < 30
+    assert all(request == transport.requests[0] for request in transport.requests)
+    assert capsys.readouterr().out.count("Waiting for Codex access propagation") == 1
+
+
+@pytest.mark.parametrize("initial,later", [(401, 404), (403, 404), (404, 401), (404, 403)])
+def test_codex_changed_rejection_never_restarts_or_extends_wait(
+    codex_qualification, initial, later, capsys
+):
+    result, transport, clock = codex_qualification(
+        [(initial, APIM_NOT_FOUND, {})], fallback=(later, APIM_NOT_FOUND, {})
+    )
+    assert result["passed"] is False
+    assert f"HTTP {later} after 180 seconds" in result["error"]
+    assert clock() == 180
+    assert transport.http_seconds + sum(clock.sleeps) == 180
+    assert capsys.readouterr().out.count("Waiting for Codex") == 1
+
+
+@pytest.mark.parametrize("name", ["route_propagation_wait", "access_propagation_wait"])
+@pytest.mark.parametrize("value", [-1, 0.5, float("nan"), float("inf"), True, "180", None])
+def test_codex_rejects_invalid_wait_before_opening_a_request(name, value):
+    def unexpected_open(*args):
+        pytest.fail("Invalid wait must not open a request")
+
+    with pytest.raises(ValueError, match=f"{name} must be a non-negative whole number"):
+        codex_verify.qualify(
+            {"gateway_url": "https://gateway.example/codex/v1"},
+            {"name": "gpt-test", "model": "gpt-test"},
+            token="placeholder-token",
+            opener=unexpected_open,
+            **{name: value},
+        )
+
+
+@pytest.mark.parametrize("method,other_route", [("GET", False), ("POST", True)])
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_codex_wait_does_not_apply_to_other_requests(method, other_route, status):
+    clock = FakeClock()
+    transport = FakeCodexResponses([(status, APIM_NOT_FOUND, {})], clock=clock, elapsed=1)
+    route = "https://gateway.example/codex/v1/responses"
+    opener = codex_verify._propagation_opener(
+        transport, route, route_wait=180, access_wait=270, clock=clock, sleep=clock.sleep
+    )
+    request = Request(route + ("/other" if other_route else ""), data=b"{}", method=method)
+    with pytest.raises(HTTPError) as error:
+        opener(request, 180)
+    assert error.value.code == status
+    assert len(transport.requests) == 1
+    assert transport.timeouts == [180]
+    assert clock.sleeps == []
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_codex_first_request_waits_for_access_propagation(codex_qualification, status, capsys):
+    result, transport, clock = codex_qualification([(status, {"error": "access pending"}, {})])
+    assert result["passed"] is True
+    assert len(transport.requests) == 4
+    assert transport.requests[0] == transport.requests[1]
+    assert clock.sleeps == [2]
+    assert clock() == result["seconds"] == 6
+    assert capsys.readouterr().out.count("Waiting for Codex access propagation") == 1
+
+
+def test_codex_route_retry_stops_after_a_successful_billable_probe(codex_qualification):
+    result, transport, clock = codex_qualification([None, (404, APIM_NOT_FOUND, {})])
+    assert result["passed"] is False
+    assert "Responses HTTP 404" in result["error"]
+    assert len(transport.requests) == 2
+    assert transport.requests.count(transport.requests[0]) == 1
+    assert clock.sleeps == []
+
+
+def test_later_apim_timeout_does_not_replay_a_successful_billable_probe(codex_qualification):
+    result, transport, clock = codex_qualification([None], fallback=(404, APIM_NOT_FOUND, {}))
+    assert result["passed"] is False
+    assert "Responses HTTP 404" in result["error"]
+    assert transport.requests.count(transport.requests[0]) == 1
+    assert len(transport.requests) == 2
+    assert clock.sleeps == []
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404])
+@pytest.mark.parametrize("succeeded", [1, 2])
+@pytest.mark.parametrize("initial_status", [None, 401, 403, 404])
+def test_later_qualification_failure_does_not_replay_billable_probes(
+    codex_qualification, status, succeeded, initial_status
+):
+    initial = [(initial_status, APIM_NOT_FOUND, {})] if initial_status else []
+    result, transport, clock = codex_qualification(
+        [*initial, *[None] * succeeded, (status, APIM_NOT_FOUND, {})]
+    )
+    assert result["passed"] is False
+    assert f"Responses HTTP {status}" in result["error"]
+    assert len(transport.requests) == len(initial) + succeeded + 1
+    assert transport.requests.count(transport.requests[0]) == 1 + len(initial)
+    assert clock.sleeps == ([2] if initial else [])
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_codex_wait_options_preserve_cli_reports_and_publishing(
+    tmp_path, org, monkeypatch, partial
+):
+    from claude_foundry import cli
+    from claude_foundry.codex_models import initialize
+
+    config = tmp_path / "codex.json"
+    report = tmp_path / "qualification.json"
+    value = initialize(organization(org))
+    value["models"] = [{"name": "gpt-test", "model": "gpt-test"}]
+    value["default_model"] = "gpt-test"
+    outcomes = [(404, APIM_NOT_FOUND, {})]
+    if partial:
+        value["models"].append({"name": "gpt-other", "model": "gpt-test"})
+        outcomes.extend(
+            [None, None, None, (400, {"error": {"message": "placeholder backend failure"}}, {})]
+        )
+    write_json(config, value)
+    clock = FakeClock()
+    transport = FakeCodexResponses(outcomes, clock=clock, elapsed=1)
+    monkeypatch.setattr(cli.auth, "credential", lambda config: "placeholder-token")
+    monkeypatch.setattr(cli, "Azure", lambda subscription: None)
+    monkeypatch.setattr(codex_verify, "open_url", transport)
+    monkeypatch.setattr(codex_verify.time, "monotonic", clock)
+    monkeypatch.setattr(codex_verify.time, "sleep", clock.sleep)
+    arguments = [
+        "admin",
+        "--config",
+        str(config),
+        "qualify",
+        "--report",
+        str(report),
+        "--publish-passed",
+        "--route-propagation-wait",
+        "180",
+        "--access-propagation-wait",
+        "270",
+    ]
+    monkeypatch.setattr(sys, "argv", ["claude-foundry", *arguments])
+
+    code = cli.main()
+
+    assert code == (2 if partial else 0)
+    assert codex_verify.open_url is transport
+    assert sys.argv == ["claude-foundry", *arguments]
+    assert read_json(config)["models"] == [
+        {"name": "gpt-test", "model": "gpt-test", "qualified": True}
+    ]
+    results = read_json(report)
+    assert results[0]["passed"] is True
+    assert len(results) == (2 if partial else 1)
+    if partial:
+        assert results[1]["passed"] is False
+        assert "Responses HTTP 400" in results[1]["error"]
+    assert len(transport.requests) == (5 if partial else 4)
+    assert clock.sleeps == [2]
+
+
+@pytest.mark.parametrize("action", ["verify", "qualify"])
+@pytest.mark.parametrize("option", ["--route-propagation-wait", "--access-propagation-wait"])
+@pytest.mark.parametrize("value", ["-1", "1.5", "nan", "inf", "-inf", "invalid"])
+def test_cli_rejects_invalid_propagation_wait(action, option, value, capsys):
+    from claude_foundry import cli
+
+    args = (
+        ["verify"] if action == "verify" else ["admin", "--config", "placeholder.json", "qualify"]
+    )
+    with pytest.raises(SystemExit) as error:
+        cli.parser().parse_args([*args, f"{option}={value}"])
+    assert error.value.code == 2
+    assert "must be a non-negative whole number of seconds" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("action", ["verify", "qualify"])
+def test_cli_propagation_options_default_to_off(action):
+    from claude_foundry import cli
+
+    args = (
+        ["verify"] if action == "verify" else ["admin", "--config", "placeholder.json", "qualify"]
+    )
+    parsed = cli.parser().parse_args(args)
+    assert parsed.route_propagation_wait == parsed.access_propagation_wait == 0
+    parsed = cli.parser().parse_args(
+        [*args, "--route-propagation-wait", "180", "--access-propagation-wait", "270"]
+    )
+    assert parsed.route_propagation_wait == 180
+    assert parsed.access_propagation_wait == 270
+
+
+@pytest.mark.parametrize("option", ["--route-propagation-wait", "--access-propagation-wait"])
+def test_cli_does_not_apply_codex_waits_to_claude_profiles(org, monkeypatch, capsys, option):
+    from claude_foundry import cli
+
+    monkeypatch.setattr(cli.auth, "installed_config", lambda: org)
+    monkeypatch.setattr(cli, "verify", lambda *args, **kwargs: pytest.fail("Unexpected verify"))
+    monkeypatch.setattr(sys, "argv", ["claude-foundry", "verify", option, "180"])
+    assert cli.main() == 1
+    assert "Propagation waits apply only to Codex profiles" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+@pytest.mark.parametrize("succeeded", [0, 1, 2])
+def test_final_codex_checks_retry_only_the_first_request(tmp_path, monkeypatch, status, succeeded):
+    from claude_foundry import cli
+
+    profile = tmp_path / "codex-client.json"
+    write_json(
+        profile,
+        {
+            "tenant_id": TENANT,
+            "client_type": "codex",
+            "gateway_url": "https://gateway.example/codex/v1",
+            "models": [{"name": "gpt-test", "model": "gpt-test"}],
+            "default_model": "gpt-test",
+        },
+    )
+    clock = FakeClock()
+    transport = FakeCodexResponses(
+        [*[None] * succeeded, (status, APIM_NOT_FOUND, {})], clock=clock, elapsed=1
+    )
+    monkeypatch.setattr(codex_verify, "credential", lambda config: "placeholder-token")
+    monkeypatch.setattr(codex_verify, "open_url", transport)
+    monkeypatch.setattr(codex_verify.time, "monotonic", clock)
+    monkeypatch.setattr(codex_verify.time, "sleep", clock.sleep)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "claude-foundry",
+            "verify",
+            "--config",
+            str(profile),
+            "--route-propagation-wait",
+            "180",
+            "--access-propagation-wait",
+            "270",
+        ],
+    )
+
+    assert cli.main() == (2 if succeeded else 0)
+    assert len(transport.requests) == (succeeded + 1 if succeeded else 4)
+    assert clock.sleeps == ([] if succeeded else [2])
+
+
+@pytest.mark.parametrize("route_state", ["updated", "untouched", "different"])
+def test_final_codex_verification_never_retries_the_billable_sequence(
+    deploy, settings, tmp_path, org, monkeypatch, route_state
+):
+    runner = FakeRunner(organization(org))
+    job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    profile = tmp_path / "codex-client.json"
+    write_json(
+        profile,
+        {"tenant_id": TENANT, "client_type": "codex", "gateway_url": "https://apim/codex/v1"},
+    )
+    if route_state != "updated":
+        job.updated_codex_routes.clear()
+    if route_state == "different":
+        job.updated_codex_routes.add("https://gateway.example/other/v1")
+    original_tool = runner.tool
+
+    def fail_verification(command, capture):
+        return 2 if command[:1] == ["verify"] else original_tool(command, capture)
+
+    monkeypatch.setattr(runner, "tool", fail_verification)
+    monkeypatch.setattr(deploy.time, "sleep", lambda seconds: pytest.fail("Unexpected sleep"))
+    runner.calls.clear()
+    with pytest.raises(deploy.DeployError, match="Verification failed for codex-client.json"):
+        job.verify([profile])
+    assert len(runner.calls) == 1
+    call = runner.calls[0]
+    assert call[1:3] == ["-m", "claude_foundry.cli"]
+    assert call[call.index("--access-propagation-wait") + 1] == "270"
+    assert ("--route-propagation-wait" in call) is (route_state == "updated")
+    if route_state == "updated":
+        assert call[call.index("--route-propagation-wait") + 1] == "180"
+
+
+def test_only_updated_baseline_codex_routes_enable_route_waits(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    runner = FakeRunner(organization(org))
+    run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    qualification = next(call for call in runner.calls if "qualify" in call)
+    assert qualification[1:3] == ["-m", "claude_foundry.cli"]
+    assert qualification[qualification.index("--route-propagation-wait") + 1] == "180"
+    assert qualification[qualification.index("--access-propagation-wait") + 1] == "270"
+    gateway = next(call for call in runner.calls if call[-1] == "gateway" and "codex" in call[5])
+    assert runner.calls.index(gateway) < runner.calls.index(qualification)
+
+
 @pytest.mark.parametrize("field,value", [("subscription_id", USER), ("suffix", "another")])
 def test_target_change_stops_before_any_azure_command(
     deploy, settings, tmp_path, org, monkeypatch, field, value
@@ -359,6 +1011,31 @@ def test_verification_detects_published_claude_governance(
     job.verify([tmp_path / ".local/client.json"])
     check = next(c for c in runner.calls if c[3:4] == ["verify"])
     assert "--governed" in check
+
+
+def test_claude_verification_keeps_its_existing_access_wait(
+    deploy, settings, tmp_path, org, monkeypatch
+):
+    runner = FakeRunner(organization(org))
+    job = run_deployment(deploy, settings, tmp_path, runner, monkeypatch)
+    results = iter([2, 2, 2, 0])
+    original_tool = runner.tool
+    clock = FakeClock()
+
+    def access_pending(command, capture):
+        return next(results) if command[:1] == ["verify"] else original_tool(command, capture)
+
+    monkeypatch.setattr(runner, "tool", access_pending)
+    monkeypatch.setattr(deploy.time, "sleep", clock.sleep)
+    runner.calls.clear()
+    job.verify([tmp_path / ".local/client.json"])
+    assert len(runner.calls) == 4
+    assert clock.sleeps == [90, 90, 90]
+    assert all("--all-models" in call for call in runner.calls)
+    assert not any(
+        "--route-propagation-wait" in call or "--access-propagation-wait" in call
+        for call in runner.calls
+    )
 
 
 def test_missing_admin_consent_is_reported_without_stopping(
@@ -606,6 +1283,26 @@ def test_deploy_turns_on_access_with_the_configured_cap(unified_job, capsys):
     assert any("gpt-unpriced" in w for w in job.warnings)
 
 
+def test_access_on_summary_lists_onboarding_without_stale_publication_warning(unified_job, capsys):
+    job, _, _ = unified_job
+    job.deploy(verify=False)
+    out = capsys.readouterr().out
+    summary = out.split("Deployment complete.", 1)[1]
+    assert "require owner publication" not in out
+    assert "governed access on" in summary
+    assert "scripts/onboard_users.py" in summary
+    assert "Members page" in summary
+    assert "Send them the portal setup link." in summary
+    assert f"  Developer group: {job.s['developer_group_name']} ({GROUP})" in summary
+    assert f"  Installer ZIP:   {job.state['bundle']}" in summary
+    assert "  Portal:          " in summary
+    assert "  Claude governed gateway: " in summary
+    assert "  Codex governed gateway: " in summary
+    assert (
+        "They download their setup from the portal's Onboarding page and sign in once." in summary
+    )
+
+
 def test_upgrade_keeps_a_published_policy_and_reports_it(unified_job, monkeypatch, capsys):
     job, _, cloud = unified_job
     fake_portal(monkeypatch, cloud, initialized=False)
@@ -613,20 +1310,42 @@ def test_upgrade_keeps_a_published_policy_and_reports_it(unified_job, monkeypatc
     out = capsys.readouterr().out
     assert "its limits and grants are unchanged" in out
     assert "governed access published policy kept" in out
+    assert "require owner publication" not in out
 
 
-def test_access_failure_is_reported_without_failing_the_deployment(unified_job, monkeypatch):
+@pytest.mark.parametrize("status", [None, 401, 403, 500])
+def test_access_failure_is_reported_without_failing_the_deployment(
+    unified_job, monkeypatch, capsys, status
+):
     from claude_foundry.portal_client import PortalError
 
     job, _, _ = unified_job
 
     class Refusing:
         def __init__(self, *args):
-            raise PortalError(403, "Only the owner can turn on budget access")
+            if status is None:
+                raise OSError("placeholder connection failure")
+            raise PortalError(status, "placeholder access failure")
 
     monkeypatch.setattr("claude_foundry.portal_client.PortalClient", Refusing)
     job.deploy(verify=False)
-    assert any("not turned on automatically" in w and "owner" in w for w in job.warnings)
+    out = capsys.readouterr().out
+    assert "governed access not turned on" in out
+    assert "require owner publication" not in out
+    warning = next(w for w in job.warnings if "not turned on automatically" in w)
+    reason = (
+        "placeholder connection failure"
+        if status is None
+        else f"Portal returned {status}: placeholder access failure"
+    )
+    assert reason in warning
+    if status == 403:
+        assert "As the portal owner, open Budgets & limits, set limits and publish." in warning
+        assert "rerun" not in warning
+    else:
+        assert "Rerun the deploy" in warning
+        assert "publish" not in warning
+    assert warning in out
 
 
 @pytest.mark.parametrize("partial", [False, True])
@@ -664,6 +1383,9 @@ def test_unified_qualifies_with_operator_directly_without_creating_baseline_api(
     assert all(m["qualified"] for m in saved["models"])
     assert len(saved["models"]) == (2 if partial else 1)
     assert not any("gateway" in c or "observability" in c for c in runner.calls)
+    assert not any(
+        "--route-propagation-wait" in c or "--access-propagation-wait" in c for c in runner.calls
+    )
     assert not cloud
 
 
