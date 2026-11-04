@@ -205,6 +205,8 @@ def deploy_runtime(job, primary, settings, deployments, portal_identity, content
         "portalPrincipalId": portal_identity,
         "foundryName": primary["foundry_name"],
         "foundryResourceGroup": primary["foundry_resource_group"],
+        "insightsName": job.n["insights"],
+        "insightsResourceGroup": job.n["resource_group"],
         "deployments": deployments,
         "portalVnetName": job.n["portal"] + "-vnet",
         "privateStorage": True,
