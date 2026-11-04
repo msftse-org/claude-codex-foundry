@@ -36,6 +36,8 @@ The [portal validation record](../portal/VALIDATION.md) lists outstanding produc
 
 Use the [observability queries](observability.md) to track requests, failures, latency, and tokens. Monitor 401/403 authorization failures separately from 429 throttling and 5xx backend errors. An empty Live Metrics pane alone is not proof of no traffic; inspect ingested Logs and the configured resource/API scope.
 
+Short `Azure ... retrying in ...` lines mean the ARM client is waiting through a transient failure; it stops after six attempts or a five-minute request budget, and fails rather than shortening a server delay above 60 seconds or beyond the remaining budget. POST is retried only when its caller explicitly marks it safe to repeat.
+
 The portal's usage page reads operational metadata. Cost analysis uses retained token metrics, current planning rates, and a short query cache. It does not ingest invoices. Document log retention, sampling, access to identity data, and alert ownership in your organization's operating procedures.
 
 The portal can scale down independently of inference. Published APIM policies continue to operate if the portal is unavailable; administrators cannot make new publications until it recovers.

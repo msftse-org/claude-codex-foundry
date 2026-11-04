@@ -9,6 +9,11 @@ Changes are listed under **Unreleased** when they merge into `release/next`, aft
 ### Administrators
 
 - **Rejected requests no longer hold budget.** When Azure rejects a request before the model runs (throttling, sign-in or routing errors, or an invalid request such as an unsupported tool schema), its whole reservation is released at once. Before, each one held its full worst-case cost for the rest of the month, so a burst of throttled retries or failed tool calls could block a capped user. Content-filter rejections, 5xx errors and interrupted streams still stay held, because they can follow billable work.
+- **Deployments ride out brief Azure errors.** Supported Azure management steps now retry temporary outages and throttling automatically instead of stopping on the first failure. Persistent failures show short, readable errors instead of full HTML pages.
+
+### Upgrade notes
+
+- No administrator action or configuration changes are needed for the Azure retry improvements.
 
 ## release-2026-11-01
 
