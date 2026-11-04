@@ -1,0 +1,12 @@
+# Owners review changes to these sensitive paths when branch rules require
+# code-owner review: identity, budget enforcement, infrastructure, deployment,
+# and the repository's own rules. Add co-owners as the team grows.
+/src/claude_foundry/auth.py @orsharon7
+/src/claude_foundry/portal/auth.py @orsharon7
+/src/claude_foundry/portal/budget_*.py @orsharon7
+/budget/ @orsharon7
+/infra/ @orsharon7
+/scripts/deploy.py @orsharon7
+/scripts/register_*.py @orsharon7
+/.github/ @orsharon7
+/AGENTS.md @orsharon7

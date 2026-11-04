@@ -1,0 +1,38 @@
+name: Task
+description: One reviewable change toward a user story.
+title: "Task: "
+labels: [task]
+body:
+  - type: markdown
+    attributes:
+      value: "This repository is public. Leave out customer names, tenant or subscription IDs, endpoints, emails and logs. Assign yourself before you start."
+  - type: input
+    id: story
+    attributes:
+      label: User story
+      placeholder: "#123"
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: What changes
+      description: The behavior after this task, and the files or components involved.
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: How it will be verified
+      description: Tests to add, and the live check on your own test deployment if it touches Azure, the gateway, the runtime, the portal or the installer.
+    validations:
+      required: true
+  - type: dropdown
+    id: live
+    attributes:
+      label: Needs a live test deployment?
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
